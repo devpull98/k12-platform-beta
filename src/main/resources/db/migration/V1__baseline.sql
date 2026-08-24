@@ -1,0 +1,4 @@
+-- Flyway baseline — schema starts here.
+-- Domain aggregates will be added from V2__*.sql onward.
+-- This script intentionally left empty so Flyway establishes its history table
+-- without creating any tables yet.

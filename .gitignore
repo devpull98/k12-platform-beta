@@ -1,3 +1,14 @@
+# Build output
+target/
+
+# App logs (tailed by Promtail — local only)
+logs/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
 # Compiled class file
 *.class
 

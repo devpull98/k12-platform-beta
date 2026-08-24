@@ -1,0 +1,181 @@
+groups:
+  # ────────────────────────────────────────────────────────────
+  # App — Liveness / Readiness / Business Health
+  # ────────────────────────────────────────────────────────────
+  - name: app.health
+    rules:
+      - alert: AppDown
+        expr: up{job="spring-ticket-ddd"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "App DOWN"
+          description: "spring-ticket-ddd không scrape được > 1 phút → DOWN"
+
+      - alert: AppHighErrorRate
+        expr: |
+          sum(rate(http_server_requests_seconds_count{application="spring-ticket-ddd",status=~"5.."}[5m]))
+          /
+          sum(rate(http_server_requests_seconds_count{application="spring-ticket-ddd"}[5m])) > 0.05
+        for: 2m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "App DEGRADED — error rate > 5%"
+          description: "HTTP 5xx rate {{ $value | humanizePercentage }} trong 2 phút"
+
+      - alert: AppHighLatencyP95
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(http_server_requests_seconds_bucket{application="spring-ticket-ddd"}[5m])) by (le)
+          ) > 1.0
+        for: 2m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "App DEGRADED — p95 latency > 1s"
+          description: "p95 latency {{ $value | humanizeDuration }}"
+
+  # ────────────────────────────────────────────────────────────
+  # JVM
+  # ────────────────────────────────────────────────────────────
+  - name: jvm.health
+    rules:
+      - alert: JvmHeapHigh
+        expr: |
+          jvm_memory_used_bytes{application="spring-ticket-ddd", area="heap"}
+          /
+          jvm_memory_max_bytes{application="spring-ticket-ddd", area="heap"} > 0.85
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "JVM Heap > 85%"
+          description: "Heap usage {{ $value | humanizePercentage }}"
+
+      - alert: JvmHeapCritical
+        expr: |
+          jvm_memory_used_bytes{application="spring-ticket-ddd", area="heap"}
+          /
+          jvm_memory_max_bytes{application="spring-ticket-ddd", area="heap"} > 0.95
+        for: 2m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "JVM Heap > 95% — sắp OOM"
+          description: "Heap usage {{ $value | humanizePercentage }}"
+
+  # ────────────────────────────────────────────────────────────
+  # HikariCP (DB Connection Pool)
+  # ────────────────────────────────────────────────────────────
+  - name: hikari.health
+    rules:
+      - alert: HikariPoolExhausted
+        expr: hikaricp_connections_pending{application="spring-ticket-ddd"} > 5
+        for: 1m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "HikariCP — có thread đang chờ connection"
+          description: "{{ $value }} threads đang chờ DB connection"
+
+      - alert: HikariAcquireLatencyHigh
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(hikaricp_connections_acquire_seconds_bucket{application="spring-ticket-ddd"}[5m])) by (le, pool)
+          ) > 0.5
+        for: 2m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "HikariCP acquire p95 > 500ms"
+          description: "Pool acquire p95 {{ $value | humanizeDuration }}"
+
+  # ────────────────────────────────────────────────────────────
+  # MySQL
+  # ────────────────────────────────────────────────────────────
+  - name: mysql.health
+    rules:
+      - alert: MySQLDown
+        expr: mysql_up == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: dba
+        annotations:
+          summary: "MySQL DOWN"
+
+      - alert: MySQLConnectionsHigh
+        expr: mysql_global_status_threads_connected / mysql_global_variables_max_connections > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          team: dba
+        annotations:
+          summary: "MySQL connections > 80% max"
+          description: "{{ $value | humanizePercentage }} connections đang dùng"
+
+      - alert: MySQLSlowQueriesHigh
+        expr: rate(mysql_global_status_slow_queries[5m]) > 1
+        for: 5m
+        labels:
+          severity: warning
+          team: dba
+        annotations:
+          summary: "MySQL slow queries > 1/s"
+
+  # ────────────────────────────────────────────────────────────
+  # Redis
+  # ────────────────────────────────────────────────────────────
+  - name: redis.health
+    rules:
+      - alert: RedisDown
+        expr: redis_up == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "Redis DOWN"
+
+      - alert: RedisMemoryHigh
+        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.85
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Redis memory > 85%"
+          description: "{{ $value | humanizePercentage }} memory đang dùng"
+
+  # ────────────────────────────────────────────────────────────
+  # Kafka
+  # ────────────────────────────────────────────────────────────
+  - name: kafka.health
+    rules:
+      - alert: KafkaDown
+        expr: up{job="kafka"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "Kafka exporter DOWN"
+
+      - alert: KafkaConsumerLagHigh
+        expr: sum(kafka_consumergroup_lag) by (consumergroup, topic) > 1000
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Kafka consumer lag > 1000"
+          description: "Group {{ $labels.consumergroup }} topic {{ $labels.topic }} lag={{ $value }}"

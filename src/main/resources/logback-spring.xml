@@ -1,0 +1,42 @@
+<configuration>
+  <springProperty scope="context" name="appName" source="spring.application.name"/>
+
+  <!-- Console: human-readable khi dev -->
+  <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder>
+      <pattern>%d{HH:mm:ss.SSS} %-5level [%X{traceId:-}] %logger{36} - %msg%n</pattern>
+    </encoder>
+  </appender>
+
+  <!-- File: JSON để Promtail extract traceId → link log↔trace trong Grafana -->
+  <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <file>logs/app.log</file>
+    <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+      <fileNamePattern>logs/app.%d{yyyy-MM-dd}.log</fileNamePattern>
+      <maxHistory>7</maxHistory>
+    </rollingPolicy>
+    <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+      <customFields>{"application":"${appName}"}</customFields>
+    </encoder>
+  </appender>
+
+  <root level="INFO">
+    <appender-ref ref="CONSOLE"/>
+    <appender-ref ref="FILE"/>
+  </root>
+
+  <logger name="org.springframework" level="WARN"/>
+
+  <!-- profile dev: bật SQL + domain DEBUG -->
+  <springProfile name="dev">
+    <logger name="org.hibernate.SQL" level="DEBUG"/>
+    <logger name="org.hibernate.orm.jdbc.bind" level="TRACE"/>
+    <logger name="com.ticketdd" level="DEBUG"/>
+  </springProfile>
+
+  <!-- profile prod: tắt hết noise -->
+  <springProfile name="prod">
+    <logger name="org.hibernate.SQL" level="WARN"/>
+    <logger name="com.ticketdd" level="INFO"/>
+  </springProfile>
+</configuration>
