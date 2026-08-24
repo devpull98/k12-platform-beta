@@ -1,3 +1,11 @@
+# Build output
+target/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
 # Compiled class file
 *.class
 
