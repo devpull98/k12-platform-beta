@@ -20,9 +20,31 @@
     </encoder>
   </appender>
 
+  <!-- profile prod: đẩy log JSON sang Kafka topic cho ELK team consume -->
+  <springProfile name="prod">
+    <appender name="KAFKA" class="com.ticketdd.logging.KafkaLogAppender">
+      <topic>${LOG_KAFKA_TOPIC:-spring-ticket-ddd-logs}</topic>
+      <bootstrapServers>${LOG_KAFKA_BOOTSTRAP_SERVERS:-localhost:9092}</bootstrapServers>
+      <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+        <customFields>{"application":"${appName}"}</customFields>
+      </encoder>
+    </appender>
+
+    <!-- neverBlock: drop log events rather than stall the caller if the queue fills up -->
+    <appender name="ASYNC_KAFKA" class="ch.qos.logback.classic.AsyncAppender">
+      <appender-ref ref="KAFKA"/>
+      <queueSize>2048</queueSize>
+      <neverBlock>true</neverBlock>
+      <includeCallerData>false</includeCallerData>
+    </appender>
+  </springProfile>
+
   <root level="INFO">
     <appender-ref ref="CONSOLE"/>
     <appender-ref ref="FILE"/>
+    <springProfile name="prod">
+      <appender-ref ref="ASYNC_KAFKA"/>
+    </springProfile>
   </root>
 
   <logger name="org.springframework" level="WARN"/>

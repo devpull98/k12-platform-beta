@@ -20,24 +20,40 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512m
-          cpus: "0.5"
+          memory: 384m
+          cpus: "0.4"
         reservations:
-          memory: 128m
+          memory: 96m
 
   alertmanager:
     image: prom/alertmanager:v0.27.0
     volumes:
-      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml.template:ro
+    # Alertmanager has no built-in ${VAR} expansion of its config file (unlike
+    # Promtail's -config.expand-env), so sed-substitute the Telegram
+    # placeholders into a real config before starting it. Secrets are
+    # escaped for sed's replacement syntax first — a literal "&" or "#" in a
+    # secret is otherwise a sed metacharacter and corrupts the substitution.
+    # Google Chat no longer goes through templating here: webhook_configs
+    # posts to the app's own relay endpoint instead (see alertmanager.yml).
+    entrypoint: ["/bin/sh", "-c"]
     command:
-      - "--config.file=/etc/alertmanager/alertmanager.yml"
-      - "--storage.path=/alertmanager"
+      - >-
+        esc() { printf '%s' "$$1" | sed -e 's/[&\\#]/\\&/g'; };
+        TBT=$$(esc "$$TELEGRAM_BOT_TOKEN");
+        TCI=$$(esc "$$TELEGRAM_CHAT_ID");
+        sed
+        -e "s#\$${TELEGRAM_BOT_TOKEN}#$$TBT#g"
+        -e "s#\$${TELEGRAM_CHAT_ID}#$$TCI#g"
+        /etc/alertmanager/alertmanager.yml.template > /tmp/alertmanager.yml &&
+        exec /bin/alertmanager --config.file=/tmp/alertmanager.yml --storage.path=/alertmanager
     environment:
-      GOOGLE_CHAT_WEBHOOK_URL: "${GOOGLE_CHAT_WEBHOOK_URL}"
       TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN}"
       TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID}"
     ports:
       - "${ALERTMANAGER_PORT:-9093}:9093"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - observability
     deploy:
@@ -59,10 +75,10 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512m
-          cpus: "0.5"
+          memory: 320m
+          cpus: "0.3"
         reservations:
-          memory: 128m
+          memory: 96m
 
   tempo:
     image: grafana/tempo:2.6.1
@@ -78,10 +94,10 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512m
-          cpus: "0.5"
+          memory: 320m
+          cpus: "0.3"
         reservations:
-          memory: 128m
+          memory: 96m
 
   promtail:
     image: grafana/promtail:3.1.2
@@ -98,8 +114,8 @@ services:
     deploy:
       resources:
         limits:
-          memory: 128m
-          cpus: "0.2"
+          memory: 96m
+          cpus: "0.1"
 
   grafana:
     image: grafana/grafana:11.3.2
@@ -122,10 +138,60 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512m
-          cpus: "0.5"
+          memory: 384m
+          cpus: "0.4"
         reservations:
+          memory: 96m
+
+  # --- Cross-stack metrics test services ---
+  # Minimal non-Java services whose only purpose is proving the Prometheus →
+  # Grafana pipeline works for other languages/frameworks, not real domain
+  # code. Each exposes /metrics (Prometheus text format) and /work (dummy
+  # endpoint that generates request-count/latency/error-rate samples).
+  # DB_HOST=host.docker.internal reaches the MySQL container from the root
+  # docker-compose.yml (a separate compose project/network) via its published
+  # host port — same host.docker.internal convention Prometheus already uses
+  # to scrape the host-run Spring app, rather than bridging the two networks.
+  express-metrics:
+    build: ./express-metrics
+    ports:
+      - "${EXPRESS_METRICS_PORT:-3001}:3000"
+    environment:
+      DB_HOST: host.docker.internal
+      DB_PORT: "3306"
+      DB_USER: ticket_user
+      DB_PASSWORD: ticket_pass
+      DB_NAME: ticket_dd
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - observability
+    deploy:
+      resources:
+        limits:
           memory: 128m
+          cpus: "0.2"
+
+  laravel-metrics:
+    build: ./laravel-metrics
+    ports:
+      - "${LARAVEL_METRICS_PORT:-8001}:8000"
+    environment:
+      DB_CONNECTION: mysql
+      DB_HOST: host.docker.internal
+      DB_PORT: "3306"
+      DB_DATABASE: ticket_dd
+      DB_USERNAME: ticket_user
+      DB_PASSWORD: ticket_pass
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - observability
+    deploy:
+      resources:
+        limits:
+          memory: 192m
+          cpus: "0.2"
 
 volumes:
   loki-data:

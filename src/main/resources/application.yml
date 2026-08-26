@@ -7,9 +7,21 @@ spring:
       enabled: true
 
   datasource:
-    url: jdbc:mysql://localhost:3306/ticket_dd?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&createDatabaseIfNotExist=true
-    username: ticket_user
-    password: ticket_pass
+    url: ${DB_URL:jdbc:mysql://localhost:3306/ticket_dd?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&createDatabaseIfNotExist=true}
+    username: ${DB_USERNAME:ticket_user}
+    password: ${DB_PASSWORD:ticket_pass}
+    hikari:
+      # MySQL max_connections is tuned to 300 (docker/mysql); leave headroom for
+      # Flyway/admin connections and any other pool sharing the instance.
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:60}
+      minimum-idle: ${DB_POOL_MIN_IDLE:10}
+      connection-timeout: 3000
+      # Fail app startup after one bounded attempt instead of hanging if MySQL is unreachable.
+      initialization-fail-timeout: 3000
+      validation-timeout: 1000
+      idle-timeout: 300000
+      max-lifetime: 1800000
+      pool-name: ticket-hikari
 
   jpa:
     open-in-view: false
@@ -22,6 +34,10 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
+    # Small bounded retry for the container-startup race (mysql not accepting
+    # connections yet), not an unbounded loop.
+    connect-retries: 3
+    connect-retries-interval: 2s
 
   data:
     redis:
@@ -32,9 +48,25 @@ spring:
 
   kafka:
     bootstrap-servers: localhost:9092
+    # Fail app startup fast if the broker is unreachable, instead of KafkaAdmin
+    # retrying topic auto-creation forever in the background.
+    admin:
+      fail-fast: true
+      properties:
+        request.timeout.ms: 5000
+    producer:
+      properties:
+        max.block.ms: 5000
+        delivery.timeout.ms: 15000
+        request.timeout.ms: 5000
     consumer:
       group-id: spring-ticket-ddd
       auto-offset-reset: earliest
+      properties:
+        session.timeout.ms: 10000
+        request.timeout.ms: 10000
+        reconnect.backoff.ms: 500
+        reconnect.backoff.max.ms: 5000
 
 resilience4j:
   ratelimiter:
@@ -61,6 +93,14 @@ resilience4j:
 server:
   port: 8080
 
+google:
+  chat:
+    webhook-url: ${GOOGLE_CHAT_WEBHOOK_URL:}
+
+telegram:
+  bot-token: ${TELEGRAM_BOT_TOKEN:}
+  chat-id: ${TELEGRAM_CHAT_ID:}
+
 management:
   endpoints:
     web:
@@ -70,6 +110,19 @@ management:
     health:
       show-details: always
       show-components: always
+      probes:
+        enabled: true
+      group:
+        # Liveness: internal runtime only — never check DB/Redis/Kafka, or a
+        # dependency outage would make K8s restart-loop a perfectly alive pod.
+        liveness:
+          include: livenessState
+          show-components: always
+        # Readiness: hard dependency only (MySQL). Redis/Mongo/Kafka are soft
+        # deps and must not pull traffic out of rotation if they're down.
+        readiness:
+          include: readinessState,db
+          show-components: always
   health:
     circuitbreakers:
       enabled: true
@@ -78,6 +131,12 @@ management:
   metrics:
     tags:
       application: ${spring.application.name}
+    distribution:
+      # _bucket series for histogram_quantile() — off by default per meter.
+      # Grafana's HTTP/HikariCP p95-p99 panels need these to render at all.
+      percentiles-histogram:
+        http.server.requests: true
+        hikaricp.connections.acquire: true
   otlp:
     tracing:
       endpoint: http://localhost:4318/v1/traces

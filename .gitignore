@@ -9,6 +9,9 @@ logs/
 *.iml
 .vscode/
 
+# Local secrets (real webhook/token values) — see observability/.env.example for the template
+observability/.env
+
 # Compiled class file
 *.class
 

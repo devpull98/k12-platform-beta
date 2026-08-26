@@ -45,3 +45,12 @@ providers:
     updateIntervalSeconds: 30
     options:
       path: /var/lib/grafana/dashboards/mongodb
+
+  - name: test-services
+    orgId: 1
+    folder: Test Services
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards/test-services

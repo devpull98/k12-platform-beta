@@ -1,3 +1,14 @@
+spring:
+  datasource:
+    # No local fallback on purpose: fail fast at startup if these aren't set,
+    # rather than silently connecting to the dev DB.
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:100}
+      minimum-idle: ${DB_POOL_MIN_IDLE:20}
+
 logging:
   level:
     com.ticketdd: INFO

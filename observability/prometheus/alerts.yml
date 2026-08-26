@@ -4,33 +4,36 @@ groups:
   # ────────────────────────────────────────────────────────────
   - name: app.health
     rules:
+      # service_type="springboot" is attached at scrape-config level (see
+      # prometheus.yml) to every Spring Boot job — matches any app instance,
+      # current or future, without naming a specific service here.
       - alert: AppDown
-        expr: up{job="spring-ticket-ddd"} == 0
+        expr: up{service_type="springboot"} == 0
         for: 1m
         labels:
           severity: critical
           team: backend
         annotations:
           summary: "App DOWN"
-          description: "spring-ticket-ddd không scrape được > 1 phút → DOWN"
+          description: "{{ $labels.job }} ({{ $labels.instance }}) không scrape được > 1 phút → DOWN"
 
       - alert: AppHighErrorRate
         expr: |
-          sum(rate(http_server_requests_seconds_count{application="spring-ticket-ddd",status=~"5.."}[5m]))
+          sum(rate(http_server_requests_seconds_count{status=~"5.."}[5m])) by (application, job)
           /
-          sum(rate(http_server_requests_seconds_count{application="spring-ticket-ddd"}[5m])) > 0.05
+          sum(rate(http_server_requests_seconds_count[5m])) by (application, job) > 0.05
         for: 2m
         labels:
           severity: warning
           team: backend
         annotations:
           summary: "App DEGRADED — error rate > 5%"
-          description: "HTTP 5xx rate {{ $value | humanizePercentage }} trong 2 phút"
+          description: "{{ $labels.application }}: HTTP 5xx rate {{ $value | humanizePercentage }} trong 2 phút"
 
       - alert: AppHighLatencyP95
         expr: |
           histogram_quantile(0.95,
-            sum(rate(http_server_requests_seconds_bucket{application="spring-ticket-ddd"}[5m])) by (le)
+            sum(rate(http_server_requests_seconds_bucket[5m])) by (le, application, job)
           ) > 1.0
         for: 2m
         labels:
@@ -38,7 +41,7 @@ groups:
           team: backend
         annotations:
           summary: "App DEGRADED — p95 latency > 1s"
-          description: "p95 latency {{ $value | humanizeDuration }}"
+          description: "{{ $labels.application }}: p95 latency {{ $value | humanizeDuration }}"
 
   # ────────────────────────────────────────────────────────────
   # JVM
@@ -47,29 +50,29 @@ groups:
     rules:
       - alert: JvmHeapHigh
         expr: |
-          jvm_memory_used_bytes{application="spring-ticket-ddd", area="heap"}
+          jvm_memory_used_bytes{area="heap"}
           /
-          jvm_memory_max_bytes{application="spring-ticket-ddd", area="heap"} > 0.85
+          jvm_memory_max_bytes{area="heap"} > 0.85
         for: 5m
         labels:
           severity: warning
           team: backend
         annotations:
           summary: "JVM Heap > 85%"
-          description: "Heap usage {{ $value | humanizePercentage }}"
+          description: "{{ $labels.application }}: heap usage {{ $value | humanizePercentage }}"
 
       - alert: JvmHeapCritical
         expr: |
-          jvm_memory_used_bytes{application="spring-ticket-ddd", area="heap"}
+          jvm_memory_used_bytes{area="heap"}
           /
-          jvm_memory_max_bytes{application="spring-ticket-ddd", area="heap"} > 0.95
+          jvm_memory_max_bytes{area="heap"} > 0.95
         for: 2m
         labels:
           severity: critical
           team: backend
         annotations:
           summary: "JVM Heap > 95% — sắp OOM"
-          description: "Heap usage {{ $value | humanizePercentage }}"
+          description: "{{ $labels.application }}: heap usage {{ $value | humanizePercentage }}"
 
   # ────────────────────────────────────────────────────────────
   # HikariCP (DB Connection Pool)
@@ -77,19 +80,19 @@ groups:
   - name: hikari.health
     rules:
       - alert: HikariPoolExhausted
-        expr: hikaricp_connections_pending{application="spring-ticket-ddd"} > 5
+        expr: hikaricp_connections_pending > 5
         for: 1m
         labels:
           severity: warning
           team: backend
         annotations:
           summary: "HikariCP — có thread đang chờ connection"
-          description: "{{ $value }} threads đang chờ DB connection"
+          description: "{{ $labels.application }}: {{ $value }} threads đang chờ DB connection"
 
       - alert: HikariAcquireLatencyHigh
         expr: |
           histogram_quantile(0.95,
-            sum(rate(hikaricp_connections_acquire_seconds_bucket{application="spring-ticket-ddd"}[5m])) by (le, pool)
+            sum(rate(hikaricp_connections_acquire_seconds_bucket[5m])) by (le, pool, application)
           ) > 0.5
         for: 2m
         labels:
@@ -97,7 +100,7 @@ groups:
           team: backend
         annotations:
           summary: "HikariCP acquire p95 > 500ms"
-          description: "Pool acquire p95 {{ $value | humanizeDuration }}"
+          description: "{{ $labels.application }}: pool acquire p95 {{ $value | humanizeDuration }}"
 
   # ────────────────────────────────────────────────────────────
   # MySQL
@@ -155,6 +158,20 @@ groups:
         annotations:
           summary: "Redis memory > 85%"
           description: "{{ $value | humanizePercentage }} memory đang dùng"
+
+  # ────────────────────────────────────────────────────────────
+  # MongoDB
+  # ────────────────────────────────────────────────────────────
+  - name: mongodb.health
+    rules:
+      - alert: MongoDBDown
+        expr: mongodb_up == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "MongoDB DOWN"
 
   # ────────────────────────────────────────────────────────────
   # Kafka

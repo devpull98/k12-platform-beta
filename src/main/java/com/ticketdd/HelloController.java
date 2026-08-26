@@ -29,6 +29,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.random.RandomGenerator;
 
@@ -47,6 +48,15 @@ public class HelloController {
 
     private final AtomicLong kafkaProduced = new AtomicLong();
     private final AtomicLong kafkaConsumed = new AtomicLong();
+
+    // Backpressure for selfPing(): without this, fixedDelay=500 fires a new
+    // batch every 500ms regardless of whether the previous batch's HTTP
+    // calls (each holding a Mongo/HikariCP connection) have finished —
+    // pool.submit() returns immediately, so nothing throttles submission
+    // under load. That unbounded pile-up is what drove the Mongo driver
+    // wait-queue into the thousands during a long-running session.
+    private static final int MAX_SELF_PING_IN_FLIGHT = 30;
+    private final AtomicInteger selfPingInFlight = new AtomicInteger();
 
     private final EntityManager em;
     private final StringRedisTemplate redis;
@@ -296,12 +306,18 @@ public class HelloController {
             "/hello/slow"
         );
         for (int i = 0; i < count; i++) {
+            if (selfPingInFlight.get() >= MAX_SELF_PING_IN_FLIGHT) {
+                break; // downstream still draining the previous batch — skip the rest of this tick
+            }
             String uri = uris.get(RNG.nextInt(uris.size()));
+            selfPingInFlight.incrementAndGet();
             pool.submit(() -> {
                 try {
                     restClient.get().uri(uri).retrieve().body(String.class);
                 } catch (Exception e) {
                     log.warn("ping {} failed: {}", uri, e.getMessage());
+                } finally {
+                    selfPingInFlight.decrementAndGet();
                 }
             });
         }

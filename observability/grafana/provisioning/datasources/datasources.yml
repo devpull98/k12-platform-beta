@@ -31,3 +31,12 @@ datasources:
         filterByTraceID: true
       serviceMap:
         datasourceUid: prometheus
+
+  - name: Alertmanager
+    type: alertmanager
+    uid: alertmanager
+    url: http://alertmanager:9093
+    access: proxy
+    jsonData:
+      implementation: prometheus
+      handleGrafanaManagedAlerts: false
