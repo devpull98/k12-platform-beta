@@ -1,5 +1,14 @@
 # Kịch bản Test Liveness / Readiness Probe (Manual Test Guide)
 
+> [!WARNING]
+> **Chưa cập nhật cho uni-realtime.** Các kịch bản dưới đây viết cho service bán vé cũ:
+> chúng giả định readiness group có `db` (MySQL) và một app duy nhất ở port 8080. Gateway
+> Giai đoạn 1 **không có hard dependency nào** để gate readiness (§9.7 — mất engine thì trả
+> `CONNECTION_DEGRADED`, không rút khỏi rotation). Giữ lại vì phần đối chiếu với
+> `SYSTEM_MONITORING_OBSERVABILITY_TECHNICAL_STANDARD.md` vẫn đúng; viết lại kịch bản khi
+> probe được nối dây ở Giai đoạn 1.
+
+
 Tài liệu này mô tả cách giả lập thủ công 3 case Liveness/Readiness cho service
 `spring-ticket-ddd`, đối chiếu với chuẩn tại
 `docs/SYSTEM_MONITORING_OBSERVABILITY_TECHNICAL_STANDARD.md` — Mục VI

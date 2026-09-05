@@ -1,190 +1,149 @@
-# spring-ticket-ddd
+# uni-realtime
 
-Học Domain-Driven Design với Spring Boot: hệ thống bán vé (ticket booking) thiết kế để chịu tải ~50k lượt mua vé đồng thời, không oversell, dùng Java virtual threads.
+Nền tảng game học tập thời gian thực: giáo viên mở phiên, học sinh vào phòng từ thiết bị
+riêng, trả lời câu hỏi có đếm giờ, bảng điểm cập nhật trực tiếp cho cả phòng.
+Giai đoạn 1 nhắm 2–3k học sinh đồng thời; thiết kế viết cho 50k+.
+
+> Repo này trước đây chứa project học DDD bán vé (Spring/JPA). Toàn bộ code đó đã được
+> thay bằng hệ thống hiện tại; **chỉ phần observability được giữ lại**. Lịch sử git trước
+> nhánh `feat/uni-realtime-p1-scaffold` nói về project cũ.
+
+**Thiết kế là nguồn sự thật, không phải code:**
+`docs/specs/tech-design/EdTech_Game_Realtime_Architecture_v3.0.md`.
+Điểm vào của mọi task: `docs/work/NOJIRA-uni-p1-realtime-core/_context.md`.
 
 ## Stack
 
 | Concern | Công nghệ |
 |---------|-----------|
-| Language | Java 25 (virtual threads) |
-| Framework | Spring Boot 4.1.1 / Spring 7, Maven |
-| Relational DB | MySQL 8.4 + Flyway migrations |
-| Cache / Lock | Redis 7.4 (maxmemory 256 MB, allkeys-lru) |
-| Messaging | Kafka (KRaft mode, no ZooKeeper) |
-| Document DB | MongoDB 7.0 |
-| Resilience | Resilience4j 2.4.0 (`@RateLimiter`, `@CircuitBreaker`) |
+| Language | Java 25 |
+| Bootstrap / actuator | Spring Boot 4.1.1 (không nằm trên đường đi của gói tin) |
+| Biên WebSocket | Netty (pipeline tự dựng) |
+| Game engine | Apache Pekko 1.1.3 — mỗi phòng một actor đơn luồng |
+| Giao thức | Protobuf 4.29.3, một schema cho cả hai chặng (ADR-1) |
 | Metrics | Micrometer + Prometheus → Grafana |
 | Tracing | Micrometer OTel bridge + OTLP → Tempo |
-| Logging | Logback (JSON) + Promtail → Loki |
+| Logging | Logback JSON + Promtail → Loki |
 | Alerting | Alertmanager → Telegram / Google Chat |
+
+Giai đoạn 1 **không có datastore trên hot path** — không MySQL, không Redis, không Kafka.
 
 ## Prerequisites
 
 - JDK 25
-- Maven 3.9+
-- Docker Desktop (để chạy infra và observability stack)
-- Node.js 18+ (để chạy scripts/)
+- Maven 3.9+ (chưa commit wrapper; Maven bundled của IntelliJ dùng được:
+  `%LOCALAPPDATA%\Programs\IntelliJ IDEA Ultimate\plugins\maven-plugin\lib\maven3\bin\mvn.cmd`)
+- Docker Desktop (chỉ cần cho observability stack)
+- Node.js 18+ (cho `scripts/daily-report.mjs`)
+
+## Module
+
+Mọi module Maven nằm dưới `modules/` với prefix `uni-`. Thư mục còn lại ở root **không phải**
+module: `docs/`, `observability/` (compose stack Grafana), `scripts/`.
+
+```
+modules/
+  uni-protocol/        game_message.proto + code sinh ra. Cả hai service cùng phụ thuộc
+  uni-observability/   observability dùng chung: Prometheus/OTLP, log JSON, Kafka log
+                       appender, relay webhook Alertmanager
+  uni-gateway/         biên WebSocket: handshake, ticket auth, rate limit, fan-out,
+                       backpressure, định tuyến học được từ engine
+  uni-engine/          RoomActor FSM, chấm điểm, dedupe, tick coalescing, sở hữu phòng
+docs/
+observability/         <- compose stack Grafana/Prometheus/Loki/Tempo
+scripts/
+pom.xml                <- aggregator
+```
+
+Chỉ `uni-gateway` và `uni-engine` deploy được; hai module còn lại là thư viện.
+Chọn module bằng artifactId (`-pl :uni-engine`) chứ không bằng đường dẫn — lệnh chạy được
+từ root bất kể thư mục nằm đâu.
 
 ## Ports
 
-| Service | Port | Compose file |
-|---------|------|--------------|
-| App | 8080 | — |
-| MySQL | 3306 | `docker-compose.yml` |
-| Redis | 6379 | `docker-compose.yml` |
-| Kafka | 9092 | `docker-compose.yml` |
-| Kafka UI | 8090 | `docker-compose.yml` |
-| MongoDB | 27017 | `docker-compose.yml` |
-| mysqld-exporter | 9104 | `docker-compose.yml` |
-| redis-exporter | 9121 | `docker-compose.yml` |
-| kafka-exporter | 9308 | `docker-compose.yml` |
-| node-exporter | 9100 | `docker-compose.yml` (host network) |
-| mongodb-exporter | 9216 | `docker-compose.yml` |
+| Service | Port | Ghi chú |
+|---------|------|---------|
+| Gateway — actuator | 8080 | `/actuator/prometheus`, `/actuator/health` |
+| Gateway — WebSocket | 9000 | plaintext; TLS terminate ở LB/ingress |
+| Engine — actuator | 8090 | |
+| Engine — internal frame channel | 9100 | TCP length-prefixed protobuf |
 | Prometheus | 9090 | `observability/docker-compose.yml` |
 | Alertmanager | 9093 | `observability/docker-compose.yml` |
 | Grafana | 3000 | `observability/docker-compose.yml` |
 | Loki | 3100 | `observability/docker-compose.yml` |
-| Tempo HTTP | 4318 | `observability/docker-compose.yml` |
-| Tempo gRPC | 4317 | `observability/docker-compose.yml` |
+| Tempo HTTP / gRPC | 4318 / 4317 | `observability/docker-compose.yml` |
 
 ## Chạy local
 
-### Bước 1 — Start infra
-
 ```bash
-docker compose up -d
+mvn clean install                  # build + test toàn bộ
+
+mvn -pl :uni-gateway spring-boot:run    # terminal 1
+mvn -pl :uni-engine spring-boot:run     # terminal 2
+
+cd observability && docker compose up -d   # terminal 3 (tuỳ chọn)
 ```
 
-Khởi động: MySQL, Redis, Kafka, MongoDB và tất cả exporter. `spring-boot-docker-compose` trong app sẽ tự start/stop khi chạy `mvn spring-boot:run`, nên bước này là tuỳ chọn cho lần đầu.
-
-### Bước 2 — Start app
+Chạy instance thứ hai để thấy route cache học `owner_pod_id` (§8.2):
 
 ```bash
-mvn spring-boot:run
+mvn -pl :uni-gateway spring-boot:run -Dspring-boot.run.arguments=--server.port=8081
+ENGINE_POD_ID=engine-1 ENGINE_FRAME_PORT=9101 mvn -pl :uni-engine spring-boot:run \
+  -Dspring-boot.run.arguments=--server.port=8091
 ```
 
-App chạy tại `http://localhost:8080`. Các endpoint test:
-
-| Endpoint | Mô tả |
-|----------|-------|
-| `GET /hello` | Ping cơ bản |
-| `GET /hello/db` | Test MySQL (`SELECT 1`) |
-| `GET /hello/redis` | Test Redis (SET/GET) |
-| `GET /hello/redis/stress` | Redis stress: String + Hash + List + INCR |
-| `GET /hello/kafka` | Gửi message lên `test.ping` |
-| `GET /hello/mongo` | Insert doc vào MongoDB, trả về count |
-| `GET /hello/slow` | Giả lập latency phân phối (70% fast / 20% medium / 10% slow) |
-| `GET /hello/stats` | Kafka produced/consumed/lag counter |
-| `GET /actuator/prometheus` | Prometheus metrics |
-| `GET /actuator/health` | Health check (MySQL, Redis, Mongo, Kafka, Circuit breaker) |
-
-`HelloController` có scheduler tự ping 10–20 request ngẫu nhiên mỗi 500ms (virtual threads) để có đủ sample cho histogram p95/p99.
-
-### Bước 3 — Start observability (tuỳ chọn)
-
-```bash
-cd observability
-docker compose up -d
-```
+Prometheus đã cấu hình sẵn 4 job (`gateway-1`, `gateway-2`, `engine-1`, `engine-2`) scrape
+qua `host.docker.internal`.
 
 - Grafana: http://localhost:3000 (admin / admin)
 - Prometheus: http://localhost:9090
 - Alertmanager: http://localhost:9093
 
-## Workflow 3 terminal
+## Build & test
 
 ```bash
-# Terminal 1 — infra
-docker compose up -d
-
-# Terminal 2 — observability
-cd observability && docker compose up -d
-
-# Terminal 3 — app
-mvn spring-boot:run
+mvn clean install                              # tất cả module + test
+mvn -pl :uni-protocol test                     # round-trip protobuf
+mvn -pl :uni-engine test -Dtest=RoomActorTest  # 1 test class
+mvn -DskipTests package                        # build jar
 ```
 
-Tắt theo thứ tự ngược lại. Hai compose project có network riêng biệt; Prometheus scrape app và exporter qua `host.docker.internal`.
+Surefire đã bật `-Dio.netty.leakDetection.level=paranoid` cho mọi module — rò rỉ buffer
+trong test fan-out là **build fail**, không phải dòng log lướt qua.
 
 ## Observability
 
-Grafana auto-provision **5 folder dashboard**:
+Stack ở `observability/` chạy như một compose project riêng, không phụ thuộc app.
+Xem `observability/README.md`.
 
-| Folder | Dashboard | Metrics chính |
-|--------|-----------|--------------|
-| Application | Spring Boot App | HTTP rate/latency/errors, JVM heap/GC, HikariCP pool, Resilience4j, Logs |
-| MySQL | MySQL Overview (7362) | Connections, QPS, InnoDB buffer |
-| MySQL | MySQL Detail (14057) | Slow queries, lock waits, replication |
-| Redis | Redis Exporter 1.x (763) | Memory %, commands/s, hit rate, keyspace |
-| Redis | Redis HA (11835) | Connections, blocked clients, evictions |
-| Kafka | Kafka Exporter Overview (7589) | Message rate, consumer lag, partition offsets |
-| MongoDB | MongoDB Dashboard (20867) | Connections, opcounters, dbstats, cursor metrics |
+Cả hai service pin `spring-boot:run` về root repo, nên log JSON ghi vào `logs/` ở root
+(`logs/uni-gateway.log`, `logs/uni-engine.log`) chứ không rơi vào `modules/`.
+Promtail tail `logs/*.log` và promote `application` + `traceId` thành label để nối
+Loki ↔ Tempo.
 
-Node Exporter (dashboard 1860 có thể import thêm): CPU, RAM, disk I/O, network của host.
+Bật alert: copy `observability/.env.example` → `observability/.env`, điền
+`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `GOOGLE_CHAT_WEBHOOK_URL`.
+Thử tay: `GET /internal/test-alert/oom`, `/internal/test-alert/down`,
+`/internal/test-alert/test?container=...&status=...`.
 
-**Alerts** — `observability/prometheus/alerts.yml`:
-- App down / error rate high / latency p95 high
-- JVM heap > 85% / 95%
-- HikariCP pool exhausted
-- MySQL / Redis / Kafka / MongoDB down
-- Consumer lag > 100 / 1000
-
-Copy `observability/.env.example` → `observability/.env` và điền `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `GOOGLE_CHAT_WEBHOOK_URL` để bật alert.
+> Dashboard và alert rule của MySQL / Redis / Kafka / MongoDB vẫn còn trong
+> `observability/` nhưng **đang nằm im**: Giai đoạn 1 không chạy exporter nào cho chúng, mà
+> một series vắng mặt thì không bao giờ khớp `== 0`. Chúng sống lại nguyên vẹn khi Giai
+> đoạn 2 thêm Redis/Kafka — nên giữ chứ không xoá.
 
 ## Scripts
 
 ```bash
-# Tạo 5 domain Kafka topics (idempotent — bỏ qua nếu topic đã tồn tại)
-node scripts/kafka-setup.mjs
-
-# Sinh Markdown health report từ Prometheus API → reports/
-node scripts/daily-report.mjs
+node scripts/daily-report.mjs      # sinh Markdown health report từ Prometheus API → reports/
 ```
 
-Env vars cho scripts:
-- `KAFKA_BROKERS` — default `localhost:9092`
-- `PROMETHEUS_URL` — default `http://localhost:9090`
-- `REPORT_DIR` — default `./reports`
+Env: `PROMETHEUS_URL` (mặc định `http://localhost:9090`), `REPORT_DIR` (mặc định `./reports`).
 
-## Kafka topics
+## Tài liệu
 
-`scripts/kafka-setup.mjs` tạo 5 domain topics (3 partitions, replication factor 1):
-
-| Topic | Vai trò |
-|-------|---------|
-| `booking.seat-held` | Booking context → seat hold confirmed |
-| `booking.seat-released` | Booking context → seat released (timeout/cancel) |
-| `order.placed` | Order context → order created |
-| `order.confirmed` | Order context → order confirmed after payment |
-| `payment.requested` | Order context → trigger payment |
-
-Topic `test.ping` tự tạo khi app start (dùng cho `HelloController`).
-
-## Schema migrations
-
-Flyway quản lý schema MySQL. `ddl-auto: validate` — Hibernate báo lỗi khi start nếu entity không khớp schema.
-
-Khi thêm aggregate/entity mới:
-1. Viết Flyway migration `src/main/resources/db/migration/V{N}__<tên>.sql`
-2. Tạo JPA entity trong `infrastructure/`
-3. Chạy app — Hibernate validate sẽ xác nhận schema match
-
-## Architecture
-
-Xem `docs/architecture/project-overview.md` để đọc đầy đủ về DDD layering, bounded context boundaries, concurrency design.
-
-## Build & test
-
-```bash
-mvn spring-boot:run                         # chạy app
-mvn test                                    # tất cả tests (cần Docker)
-mvn test -Dtest=ArchitectureTests           # boundary check, không cần Docker
-mvn test -Dtest=ClassName#methodName        # chạy 1 test cụ thể
-mvn -DskipTests package                     # build jar
-
-docker compose up -d                        # start infra
-docker compose down -v                      # stop và xoá volumes
-
-cd observability && docker compose up -d    # start monitoring
-cd observability && docker compose down -v  # stop monitoring
-```
+| File | Nội dung |
+|------|----------|
+| `docs/specs/tech-design/EdTech_Game_Realtime_Architecture_v3.0.md` | Thiết kế hợp nhất — nguồn sự thật |
+| `docs/work/NOJIRA-uni-p1-realtime-core/_context.md` | Phạm vi Giai đoạn 1, quyết định đã chốt, rủi ro đã biết |
+| `docs/work/NOJIRA-uni-p1-realtime-core/plan.md` | 13 task + 1 spike, kèm acceptance criteria |
+| `CLAUDE.md` | Ràng buộc bất biến khi sửa code trong repo này |

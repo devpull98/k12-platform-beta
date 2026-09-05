@@ -1,0 +1,69 @@
+spring:
+  application:
+    name: uni-engine
+
+# No virtual threads: room logic runs on Pekko dispatchers, one thread at a time per room.
+
+server:
+  # Actuator/management only. Frame-channel traffic uses the Netty port below.
+  port: ${SERVER_PORT:8090}
+
+uni:
+  engine:
+    # Internal frame channel (length-prefixed protobuf over one long-lived TCP connection
+    # per gateway pod, multiplexed by room_id — not one connection per room).
+    frame-port: ${ENGINE_FRAME_PORT:9100}
+    # Stamped into InternalHeader.owner_pod_id on every response; this is what the gateway
+    # route cache learns from.
+    pod-id: ${ENGINE_POD_ID:engine-0}
+    # Phase 1 ownership is room_id % pod-count, isolated behind RoomOwnership so Phase 2
+    # can swap in Cluster Sharding by replacing one class (decision B2).
+    pod-count: ${ENGINE_POD_COUNT:1}
+
+  room:
+    # Ceiling on broadcast frequency, NOT a tick rate: a silent room emits zero packets
+    # (ADR-4). Phase 1 implements COALESCE only; a definition asking for FIXED is rejected
+    # at load time.
+    coalesce-window-ms: 200
+    # The single-threaded room handler is measured, warned about, and never interrupted —
+    # Java cannot safely abort a running handler (10.5).
+    handler-warn-threshold-ms: 10
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+      show-components: always
+      probes:
+        enabled: true
+      group:
+        liveness:
+          include: livenessState
+          show-components: always
+        readiness:
+          include: readinessState
+          show-components: always
+  metrics:
+    tags:
+      application: ${spring.application.name}
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+  otlp:
+    tracing:
+      endpoint: ${OTLP_ENDPOINT:http://localhost:4318/v1/traces}
+  tracing:
+    sampling:
+      probability: 1.0
+
+google:
+  chat:
+    webhook-url: ${GOOGLE_CHAT_WEBHOOK_URL:}
+
+telegram:
+  bot-token: ${TELEGRAM_BOT_TOKEN:}
+  chat-id: ${TELEGRAM_CHAT_ID:}

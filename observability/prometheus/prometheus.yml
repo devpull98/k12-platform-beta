@@ -15,45 +15,46 @@ scrape_configs:
   # alert rules (AppDown et al.) can match "any app instance" generically
   # instead of hardcoding one job name — add the same label when onboarding
   # a new service, no alerts.yml change needed.
-  - job_name: spring-ticket-ddd
+  # Two gateway and two engine instances by default: route-cache learning (8.2) and
+  # per-pod fan-out are only observable with more than one instance of each, and the
+  # dashboards are built to prove that, not a single-instance happy path.
+  # Run a 2nd instance with: mvn -pl gateway spring-boot:run -Dspring-boot.run.arguments=--server.port=8081
+  - job_name: gateway-1
     metrics_path: /actuator/prometheus
     static_configs:
       - targets: ["host.docker.internal:8080"]
         labels:
           service_type: springboot
-          application: spring-ticket-ddd
+          application: uni-gateway
 
-  # service-2: 2nd instance of the same jar (same jar/config, different
-  # port + spring.application.name) — kept running by default so the
-  # multi-service dashboards/alerts have a real 2nd service to prove
-  # against, not just a single-instance happy path.
-  - job_name: service-2
+  - job_name: gateway-2
     metrics_path: /actuator/prometheus
     static_configs:
       - targets: ["host.docker.internal:8081"]
         labels:
           service_type: springboot
-          application: service-2
+          application: uni-gateway-2
 
-  - job_name: mysql
+  - job_name: engine-1
+    metrics_path: /actuator/prometheus
     static_configs:
-      - targets: ["host.docker.internal:9104"]
+      - targets: ["host.docker.internal:8090"]
+        labels:
+          service_type: springboot
+          application: uni-engine
 
-  - job_name: redis
+  - job_name: engine-2
+    metrics_path: /actuator/prometheus
     static_configs:
-      - targets: ["host.docker.internal:9121"]
+      - targets: ["host.docker.internal:8091"]
+        labels:
+          service_type: springboot
+          application: uni-engine-2
 
-  - job_name: kafka
-    static_configs:
-      - targets: ["host.docker.internal:9308"]
-
-  - job_name: node
-    static_configs:
-      - targets: ["host.docker.internal:9100"]
-
-  - job_name: mongodb
-    static_configs:
-      - targets: ["host.docker.internal:9216"]
+  # No mysql / redis / kafka / mongodb / node jobs: those exporters lived in the root
+  # docker-compose.yml, which Phase 1 does not have (no datastore on the hot path).
+  # alerts.yml still carries their rules — an absent series never evaluates to == 0, so
+  # they stay dormant rather than firing, and come back the moment an exporter does.
 
   # Cross-stack metrics test services (see docker-compose.yml) — on the same
   # "observability" network as Prometheus, so scraped by service name rather

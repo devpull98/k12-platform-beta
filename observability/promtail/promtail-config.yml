@@ -14,12 +14,19 @@ scrape_configs:
       - targets:
           - localhost
         labels:
-          job: "${APP_JOB_NAME:-spring-app}"
-          __path__: /logs/app.log
+          job: "${APP_JOB_NAME:-uni-realtime}"
+          # Glob, not one file: gateway and engine each write their own
+          # logs/<spring.application.name>.log so their lines never interleave.
+          __path__: /logs/*.log
 
     pipeline_stages:
       # Extract trace_id from structured log line so Loki→Tempo links work
       - regex:
           expression: '.*"traceId":"(?P<trace_id>[a-f0-9]+)".*'
+      # LogstashEncoder stamps every line with the service name; promote it to a label so
+      # a Loki query can separate gateway from engine.
+      - regex:
+          expression: '.*"application":"(?P<application>[^"]+)".*'
       - labels:
           trace_id:
+          application:

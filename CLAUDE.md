@@ -2,67 +2,140 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project purpose
+## What this repository is
 
-This is a learning project: practicing Domain-Driven Design (tactical + strategic patterns) with Spring Boot, using Java virtual threads, in the shape of a ticket-selling system designed to handle ~50k concurrent purchase attempts without overselling. The user is implementing the domain code themselves — Claude's role here is to pair on design, review, and infrastructure, not to author bounded-context business logic unless explicitly asked.
+A realtime classroom game platform: a teacher starts a session, students join rooms from
+their own devices, answer timed questions, and see a shared scoreboard update live.
+Target for Phase 1 is 2–3k concurrent students; the design is written for 50k+.
 
-The repository currently contains only the project skeleton (build config, package structure, base config, docker-compose for local infra, testcontainers-backed test scaffold). No domain logic exists yet.
+The repo previously held a Spring/JPA ticket-selling DDD exercise. That code was removed
+on branch `feat/uni-realtime-p1-scaffold` and replaced by this system. Only the
+observability work survived the switch — see below. Git history before that point is about
+the old project and is not a guide to this one.
+
+**The design is already written and is the source of truth**, not the code:
+`docs/specs/tech-design/EdTech_Game_Realtime_Architecture_v3.0.md` (1528 lines). Do not
+read it whole — the work package names the sections that matter.
+
+**Entry point for any task:** `docs/work/NOJIRA-uni-p1-realtime-core/_context.md`, then
+`plan.md` in the same folder. Read those before touching code. Do not glob `docs/` looking
+for context.
 
 ## Stack
 
-- **Java 25**, Maven build (`pom.xml`, no wrapper committed — install Maven/JDK 25 locally or use an IDE's bundled toolchain)
-- **Spring Boot 4.1.1** (Spring Framework 7)
-- **MySQL 8.4** — primary datastore (JPA/Hibernate); custom Dockerfile at `docker/mysql/` with utf8mb4 and connection tuning (max 300 connections). Schema managed by **Flyway** (`flyway-mysql`); `ddl-auto: validate`. Migrations live in `src/main/resources/db/migration/`. Add aggregates starting from `V2__*.sql`.
-- **Redis** — seat-hold / distributed locking / rate-limiting during the purchase flow
-- **Kafka** — async domain events between bounded contexts (e.g. order placed → inventory/payment reactions)
-- **Resilience4j** (`resilience4j-spring-boot4`, pinned to `2.4.0` explicitly — not yet in `resilience4j-bom`) — `@RateLimiter` on ingress (booking `interfaces/` hot endpoints, e.g. seat-hold) and `@CircuitBreaker` around outbound `infrastructure/` adapters (payment gateway, any synchronous cross-context call)
-- **Virtual threads are enabled** (`spring.threads.virtual.enabled: true` in `src/main/resources/application.yml`) — blocking JDBC/Redis/Kafka clients are fine on the request path; avoid `synchronized` blocks around blocking I/O (they pin virtual threads to carrier threads) and prefer `ReentrantLock` where locking is needed in that path.
-- **Observability** — `observability/` folder contains a portable Prometheus + Loki + Tempo + Promtail + Grafana stack (separate compose project). App exports metrics to `/actuator/prometheus` and traces via OTLP HTTP to `localhost:4318`. Logs are written to `logs/app.log` and tailed by Promtail. See `observability/README.md`.
+- **Java 25**, Maven multi-module (no wrapper committed; IntelliJ's bundled Maven works —
+  `%LOCALAPPDATA%\Programs\IntelliJ IDEA Ultimate\plugins\maven-plugin\lib\maven3\bin\mvn.cmd`)
+- **Spring Boot 4.1.1** — boots the process and serves `/actuator/*`. It is **not** on the
+  packet path in either service.
+- **Netty** — the WebSocket edge (gateway) and the internal frame channel (both sides),
+  hand-built pipelines
+- **Apache Pekko 1.1.3** (typed actors) — one single-threaded actor per room owns that
+  room's state
+- **Protobuf 4.29.3** — one schema (`modules/uni-protocol/`) for both the WebSocket hop and the
+  internal hop, generated once (ADR-1)
+- **Observability** — `observability/` holds a portable Prometheus + Loki + Tempo +
+  Promtail + Grafana + Alertmanager stack (separate compose project). Both services export
+  `/actuator/prometheus`, send OTLP traces to `localhost:4318`, and write JSON logs to
+  `logs/<spring.application.name>.log` for Promtail. See `observability/README.md`.
+
+Phase 1 has **no datastore on the hot path** — no MySQL, no Redis, no Kafka. If a task
+starts reaching for one, it has left Phase 1 scope; stop and check `_context.md`.
 
 ## Commands
 
 ```
-mvn spring-boot:run          # run the app (auto-starts docker-compose.yml services via spring-boot-docker-compose)
-mvn test                     # run tests (spins up MySQL/Redis/Kafka via Testcontainers — requires Docker running)
-mvn test -Dtest=ArchitectureTests      # boundary check only, no Docker needed
-mvn test -Dtest=ClassName#methodName   # run a single test method
-mvn -DskipTests package      # build the jar without running tests
-docker compose up -d         # start MySQL/Redis/Kafka manually
-docker compose down -v       # tear down infra containers and volumes
+mvn clean install                            # build everything + run tests
+mvn -pl :uni-protocol test                   # protobuf round-trip
+mvn -pl :uni-engine test -Dtest=RoomActorTest
+mvn -pl :uni-gateway spring-boot:run         # gateway: actuator 8080, WebSocket 9000
+mvn -pl :uni-engine spring-boot:run          # engine:  actuator 8090, frame channel 9100
+mvn -pl :uni-gateway spring-boot:run -Dspring-boot.run.arguments=--server.port=8081  # 2nd instance
+cd observability && docker compose up -d     # Grafana on :3000
 ```
 
-There is no linter/formatter configured yet.
+Select modules by artifactId (`-pl :uni-engine`), not by path — the selector then works from
+the repo root regardless of where the module directory sits.
 
-## Architecture
+Surefire already passes `-Dio.netty.leakDetection.level=paranoid` for every module — a
+leak in a fan-out test is a build failure, not a log line to skim past.
 
-DDD-oriented layering, one package tree per bounded context under `com.ticketdd`:
+There is no linter/formatter configured.
+
+## Module layout
+
+Every Maven module lives under `modules/` with a `uni-` prefix. Everything else at the repo
+root is not a module: `docs/`, `observability/` (the Grafana compose stack), `scripts/`.
 
 ```
-com.ticketdd
-├── order/              # Order bounded context (order lifecycle, payment orchestration)
-│   ├── domain/          # aggregates, entities, value objects, domain events, repository ports — no framework types
-│   ├── application/     # use-case services / command handlers, orchestrate domain + ports
-│   ├── infrastructure/  # JPA repo impls, Kafka producers/consumers, Redis adapters — implements domain ports
-│   └── interfaces/      # REST controllers, request/response DTOs
-└── booking/             # Ticket/Booking bounded context (ticket inventory, seat/ticket hold, oversell prevention)
-    ├── domain/
-    ├── application/
-    ├── infrastructure/
-    └── interfaces/
+modules/uni-protocol/        game_message.proto + generated Java. Depended on by BOTH
+                             services — never copy the .proto into a second module.
+modules/uni-observability/   Plumbing shared by both services: Prometheus/OTLP wiring, JSON
+                             logging, Kafka log appender (prod profile only), Alertmanager
+                             webhook relay. Inherited from the removed project.
+modules/uni-gateway/         WebSocket edge: handshake, ticket auth, rate limiting, room
+                             registry, zero-copy fan-out, backpressure, learned routing.
+modules/uni-engine/          Game engine: RoomActor FSM, scoring, dedupe, tick coalescing,
+                             room ownership, internal frame channel server.
 ```
 
-Each context's `domain/` package must stay free of Spring/JPA/Kafka/Redis imports — those live in `infrastructure/` behind ports declared in `domain/`. This boundary is the main thing to enforce when reviewing code in this repo.
+Only `uni-gateway` and `uni-engine` are deployable; the other two are libraries.
 
-Cross-context communication is expected to go through Kafka domain events (`infrastructure/`), not direct calls between `booking` and `order` application services — this is the concurrency-critical seam: booking/seat-hold must resolve fast (Redis) while order/payment can be eventually consistent.
+Both services scan `com.uni.realtime` so `uni-observability`'s beans are picked up.
+Narrowing that scan silently disables alerting while everything still starts.
 
-These boundaries are enforced at test time by `src/test/java/com/ticketdd/ArchitectureTests.java` (ArchUnit): `domain` can't depend on frameworks or on `application`/`infrastructure`/`interfaces`, `application` can't depend on `infrastructure`/`interfaces`, and `order`/`booking` can't depend on each other. A failing `ArchitectureTests` run means a boundary was crossed, not that the test is wrong — fix the dependency direction rather than loosening the rule, unless the user explicitly decides to change the architecture.
+Both service poms pin `spring-boot:run` to the repo root
+(`<workingDirectory>${session.executionRootDirectory}</workingDirectory>`). Logback writes a
+relative `logs/` path and Promtail mounts the root one — without that pin the log file lands
+under `modules/` and nothing reaches Loki.
 
-## Concurrency design intent
+## Rules that matter more than they look
 
-The core hard problem this project exists to practice is: 50k concurrent buyers, finite seats, zero oversell.
-- **Redis** is the intended mechanism for short-lived seat holds / distributed locks during the "reserve" step (fast path, avoids hammering MySQL under load).
-- **MySQL** is the system of record for confirmed bookings/orders — expect optimistic locking (version column) on the ticket-inventory aggregate rather than long-held pessimistic locks.
-- **Kafka** decouples booking confirmation from downstream effects (payment, notifications) so the hot path stays short.
-- **Virtual threads** are the concurrency model for handling many simultaneous in-flight requests cheaply — this only pays off if I/O on the request path is virtual-thread-friendly (no thread-pinning `synchronized`, no artificially small blocking connection pools sized for platform threads).
+These are the failure modes the design doc spends its length on. Violating one produces
+code that passes a naive test and breaks in production.
 
-When the user adds entities, they need a Flyway migration script (`V{N}__description.sql` in `src/main/resources/db/migration/`) — `ddl-auto: validate` means Hibernate will fail to start if the schema doesn't match the entities. Remind the user to add a migration file whenever a new entity or column is introduced.
+- **`client_timestamp_ms` must never touch the scoring path** (§9.4). It is client wall
+  clock, forgeable. Response time is `server_received_at − server_question_started_at`,
+  both stamped by the engine off an **injected `Clock`** — never
+  `System.currentTimeMillis()` called inline, or nothing is deterministically testable.
+- **Fan-out uses `retainedDuplicate()`, never `retain()`** (§10.3). With `retain()` the
+  first client gets the bytes and every other client gets zero. A one-client test passes
+  anyway — fan-out tests need ≥ 2 clients, and the plan mandates 12.
+- **`room_id` comes from the channel attributes bound at handshake, never from the
+  payload** (§10.6). A payload whose `room_id` disagrees is a security event: close the
+  channel.
+- **One backpressure mechanism, end to end** (§10.2): actor mailbox → engine stops reading
+  → TCP window → gateway sees `!isWritable()` → `autoRead(false)` on the client socket. No
+  app-level queue anywhere between the mailbox and the socket. Adding one destroys the
+  main reason gRPC was rejected.
+- **A silent room broadcasts zero packets** (ADR-4, §6.2). 200ms is a ceiling on
+  frequency, not a tick. Critical messages (`ANSWER_ACK`, `GAME_OVER`, `QUESTION_STARTED`,
+  `TEACHER_COMMAND`, `CONNECTION_DEGRADED`) bypass coalescing entirely.
+- **Room ownership lives behind `RoomOwnership` and nowhere else** (decision B2). Phase 2
+  replaces that one class with Cluster Sharding. If `% N` appears anywhere else, that
+  swap becomes a rewrite.
+- **The gateway never computes where a room lives.** It learns from
+  `InternalHeader.owner_pod_id` on responses (§8.2). This is why Phase 2 will not need to
+  touch the gateway.
+- **Losing an engine pod must not close client WebSockets** (§9.7). Send
+  `CONNECTION_DEGRADED` and hold the socket open; mass reconnect turns one pod's failure
+  into the whole system's.
+- **No DB/Redis/HTTP call inside a Netty EventLoop** (§13.2), and no `synchronized` around
+  blocking I/O anywhere.
+
+## Known Phase 1 trade-offs — deliberate, documented, not bugs to fix
+
+- No Cluster Sharding: losing an engine pod kills its rooms until the pod returns. Accepted
+  at 2–3k CCU, **must go before Phase 2**, and the UI has to show it.
+- No Redis snapshot, no `RESYNCING` state, no Kafka, no dashboard fan-in, no LZ4.
+- PH-3: the client-side contract (ring buffer, `sequence`, RESYNC) does not exist yet, so
+  the "zero data loss" SLA has no basis regardless of server correctness. Do not publish it.
+
+## Governance
+
+The framework kit referenced by the session hook (`scripts/governance-check.sh`,
+`validate-sdd-gate.sh`, `validate-trace.sh`, `rules/{stack}/`, `project-context.yaml`) is
+**not installed in this repo**. Those gates cannot run. `plan.md` substitutes real build
+and test commands. Do not report a gate as passing when its script does not exist; run the
+`onboarding` skill first if real gates are wanted.
+
+Never commit directly to `main`. Work on a feature branch and open a PR.

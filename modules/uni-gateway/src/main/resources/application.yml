@@ -1,0 +1,69 @@
+spring:
+  application:
+    name: uni-gateway
+
+# Virtual threads are deliberately NOT enabled. The hot path is Netty event loops, and the
+# servlet container here only serves actuator — turning them on would suggest the request
+# path works differently than it does.
+
+server:
+  # Actuator/management only. Game traffic uses the Netty port below.
+  port: ${SERVER_PORT:8080}
+
+uni:
+  gateway:
+    # Plaintext WebSocket. TLS terminates at the LB/ingress, which must pass the WS upgrade
+    # through and keep its idle timeout above the client heartbeat period (30s).
+    ws-port: ${GATEWAY_WS_PORT:9000}
+    # Netty event loops = cores x 2, fixed. Never do DB/Redis/HTTP work on one.
+    event-loop-multiplier: 2
+
+  engine:
+    # Every engine pod the gateway holds a frame-channel connection to. Room ownership is
+    # LEARNED from owner_pod_id on responses, so this list is only the dial list — the
+    # gateway never hashes a room id itself.
+    pods: ${ENGINE_PODS:localhost:9100}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+      show-components: always
+      probes:
+        enabled: true
+      group:
+        # Liveness stays internal-only: an engine outage must not make Kubernetes restart a
+        # perfectly alive gateway.
+        liveness:
+          include: livenessState
+          show-components: always
+        # The gateway has no hard dependency to gate readiness on. It is deliberately
+        # useful even when every engine pod is unreachable — it answers CONNECTION_DEGRADED
+        # instead of dropping sockets (9.7).
+        readiness:
+          include: readinessState
+          show-components: always
+  metrics:
+    tags:
+      application: ${spring.application.name}
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+  otlp:
+    tracing:
+      endpoint: ${OTLP_ENDPOINT:http://localhost:4318/v1/traces}
+  tracing:
+    sampling:
+      probability: 1.0
+
+google:
+  chat:
+    webhook-url: ${GOOGLE_CHAT_WEBHOOK_URL:}
+
+telegram:
+  bot-token: ${TELEGRAM_BOT_TOKEN:}
+  chat-id: ${TELEGRAM_CHAT_ID:}

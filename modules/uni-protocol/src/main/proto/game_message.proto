@@ -1,0 +1,273 @@
+syntax = "proto3";
+
+package uni.realtime.v1;
+
+option java_package = "com.uni.realtime.protocol";
+option java_multiple_files = true;
+
+// One schema for BOTH hops (ADR-1):
+//   * client  <-> gateway   over WebSocket binary frames
+//   * gateway <-> engine    over the length-prefixed internal frame channel
+//
+// The only difference between the two is `internal`: the gateway fills it in on the way
+// down and MUST strip it on the way back out to a client. Everything else is identical,
+// which is what lets a frame be forwarded without a re-encode.
+
+// ---------------------------------------------------------------------------
+// Envelope
+// ---------------------------------------------------------------------------
+
+message GameMessage {
+  MessageType type = 1;
+
+  // Authoritative room identity. On the client hop the gateway OVERWRITES this from the
+  // channel attributes bound at handshake -- a client-supplied room_id is never trusted
+  // (10.6). A mismatch is a security event, not a routing hint.
+  string room_id = 2;
+
+  string student_id = 3;
+
+  // Dense per-room index assigned at join. Deltas address players by index instead of by
+  // student_id so a broadcast stays small.
+  uint32 student_index = 4;
+
+  // Monotonic per-student counter, assigned by the client. Basis of dedupe (9.5):
+  // sequence <= last_seen replays the stored ack instead of scoring twice.
+  uint64 sequence = 5;
+
+  // TELEMETRY ONLY. Client wall clock, unverifiable, trivially forged.
+  //
+  // MUST NOT be read anywhere on the scoring path (9.4 rule 5).
+  // Response time is server_received_at minus server_question_started_at, both stamped by
+  // the engine. If you find yourself reaching for this field to compute a score, the
+  // design has drifted -- stop and re-read 9.4.
+  int64 client_timestamp_ms = 6;
+
+  // Set on the internal frame channel only; absent on the WebSocket hop.
+  InternalHeader internal = 7;
+
+  oneof payload {
+    // client -> server
+    JoinRoom join_room = 20;
+    SubmitAnswer submit_answer = 21;
+    Resync resync = 22;
+    TeacherCommand teacher_command = 23;
+
+    // server -> client
+    RoomStateSnapshot room_state_snapshot = 40;
+    AnswerAck answer_ack = 41;
+    QuestionStarted question_started = 42;
+    StudentJoined student_joined = 43;
+    GameOver game_over = 44;
+    ConnectionDegraded connection_degraded = 45;
+  }
+}
+
+// Gateway <-> Engine only. Never reaches a client.
+message InternalHeader {
+  // Stamped by the engine pod that owns the room. The gateway LEARNS routing from this
+  // value (8.2) instead of computing a hash itself -- which is the whole reason Phase 2
+  // can swap modulo ownership for Cluster Sharding without touching the gateway.
+  string owner_pod_id = 1;
+
+  // Fencing token: incremented every time a room actor (re)starts, so a zombie actor
+  // cannot overwrite newer state. Phase 1 always sends 0 -- the field exists now so
+  // Phase 2 does not have to renumber the schema.
+  uint64 epoch = 2;
+
+  // Generated at the WebSocket handshake and carried all the way into the actor, so a
+  // log line in the engine joins to the gateway span that produced it (15.3).
+  string trace_id = 3;
+
+  // Which gateway pod the frame came from. Engine sends ONE copy per gateway pod and the
+  // gateway fans out locally (decision B1) -- this is the return address for that copy.
+  string gateway_pod_id = 4;
+
+  RoutingStatus routing_status = 5;
+
+  // Decides bypass-coalescing and drop-under-backpressure behaviour (5.4). Carried
+  // explicitly so the gateway does not have to re-derive it from `type`.
+  DeliveryClass delivery_class = 6;
+}
+
+// ---------------------------------------------------------------------------
+// Client -> server payloads
+// ---------------------------------------------------------------------------
+
+message JoinRoom {
+  // Short-lived signed ticket issued by POST /session/{id}/join. Verified once at
+  // handshake; the auth handler then removes itself from the pipeline.
+  string ticket = 1;
+  string display_name = 2;
+  string client_version = 3;
+}
+
+message SubmitAnswer {
+  string question_id = 1;
+  // Repeated to cover multi-select without a schema change; single-choice sends one.
+  repeated string answer_ids = 2;
+  string free_text = 3;
+}
+
+// Sent after a reconnect (9.3). Carries what the client believes it has, so the server
+// can replay the gap instead of the student losing the round.
+message Resync {
+  uint64 last_acked_seq = 1;
+  // Submissions the client sent but never saw an ack for. Replayed through the same
+  // dedupe table, so re-sending an already-scored answer is harmless.
+  repeated GameMessage pending = 2;
+}
+
+message TeacherCommand {
+  enum Command {
+    COMMAND_UNSPECIFIED = 0;
+    START_GAME = 1;
+    NEXT_STEP = 2;
+    PAUSE = 3;
+    END_GAME = 4;
+    KICK_STUDENT = 5;
+  }
+  Command command = 1;
+  string target_student_id = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Server -> client payloads
+// ---------------------------------------------------------------------------
+
+message RoomStateSnapshot {
+  // true only on join/resync. Steady-state broadcasts are deltas (6.2) -- sending full
+  // state on every tick is exactly the cost coalescing exists to avoid.
+  bool full = 1;
+  GamePhase phase = 2;
+  repeated PlayerState players = 3;
+  string current_question_id = 4;
+  int64 server_question_started_at_ms = 5;
+  int64 deadline_ms = 6;
+}
+
+message PlayerState {
+  string student_id = 1;
+  uint32 student_index = 2;
+  string display_name = 3;
+  uint32 score = 4;
+  bool answered_current = 5;
+  bool connected = 6;
+}
+
+// CRITICAL (5.4): bypasses coalescing, never dropped under backpressure.
+message AnswerAck {
+  string question_id = 1;
+  // Echoes GameMessage.sequence being acked. A replayed ack carries the ORIGINAL values,
+  // not a recomputed score (9.5).
+  uint64 acked_sequence = 2;
+  bool accepted = 3;
+  RejectReason reject_reason = 4;
+  uint32 awarded_points = 5;
+  uint32 total_score = 6;
+
+  // Both stamped by the engine off its injected Clock, the moment the message left the
+  // mailbox. The pair below is the ONLY sanctioned basis for response time (9.4).
+  int64 server_received_at_ms = 7;
+  uint32 response_time_ms = 8;
+}
+
+// CRITICAL: starts the scoring window, so it cannot wait for a coalescing tick.
+message QuestionStarted {
+  string question_id = 1;
+  uint32 step_index = 2;
+  string prompt = 3;
+  repeated Choice choices = 4;
+  // Server-authoritative start of the scoring window.
+  int64 server_question_started_at_ms = 5;
+  uint32 duration_ms = 6;
+}
+
+message Choice {
+  string answer_id = 1;
+  string text = 2;
+}
+
+message StudentJoined {
+  string student_id = 1;
+  uint32 student_index = 2;
+  string display_name = 3;
+}
+
+message GameOver {
+  repeated PlayerState final_standings = 1;
+  string reason = 2;
+}
+
+// CRITICAL. Sent when the engine hop is broken (9.7). The WebSocket stays OPEN on
+// purpose: closing it would trigger a reconnect storm against a system already in
+// trouble, and the client can render a degraded banner instead.
+message ConnectionDegraded {
+  enum Reason {
+    REASON_UNSPECIFIED = 0;
+    ENGINE_UNREACHABLE = 1;
+    ROOM_UNAVAILABLE = 2;
+    OVERLOADED = 3;
+  }
+  Reason reason = 1;
+  string message = 2;
+  bool retryable = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum MessageType {
+  MESSAGE_TYPE_UNSPECIFIED = 0;
+
+  JOIN_ROOM = 1;
+  SUBMIT_ANSWER = 2;
+  RESYNC = 3;
+  TEACHER_COMMAND = 4;
+  HEARTBEAT = 5;
+  UPDATE_DRAFT = 6;
+
+  ROOM_STATE_SNAPSHOT = 20;
+  ANSWER_ACK = 21;
+  QUESTION_STARTED = 22;
+  STUDENT_JOINED = 23;
+  GAME_OVER = 24;
+  CONNECTION_DEGRADED = 25;
+}
+
+enum GamePhase {
+  GAME_PHASE_UNSPECIFIED = 0;
+  LOBBY = 1;
+  PLAYING = 2;
+  FINISHED = 3;
+  // Phase 2 (9.6). Declared now so the client state machine does not need a breaking
+  // update later; the Phase 1 engine never emits it.
+  RESYNCING = 4;
+}
+
+// 5.4. CRITICAL bypasses tick coalescing and is never dropped when a channel goes
+// non-writable -- the channel is closed instead. BEST_EFFORT is coalesced and dropped.
+enum DeliveryClass {
+  DELIVERY_CLASS_UNSPECIFIED = 0;
+  CRITICAL = 1;
+  BEST_EFFORT = 2;
+}
+
+enum RejectReason {
+  REJECT_REASON_UNSPECIFIED = 0;
+  NONE = 1;
+  PAST_DEADLINE = 2;
+  DUPLICATE_SEQUENCE = 3;
+  UNKNOWN_QUESTION = 4;
+  WRONG_PHASE = 5;
+  RATE_LIMIT_EXCEEDED = 6;
+}
+
+enum RoutingStatus {
+  ROUTING_STATUS_UNSPECIFIED = 0;
+  OK = 1;
+  // The receiving engine pod does not own this room. owner_pod_id carries the pod that
+  // does, so the gateway can correct its cache on the next send (8.2).
+  NOT_OWNER = 2;
+}
