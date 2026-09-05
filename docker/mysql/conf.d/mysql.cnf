@@ -1,0 +1,27 @@
+[mysqld]
+# Character set
+character-set-server     = utf8mb4
+collation-server         = utf8mb4_unicode_ci
+
+# Connection tuning
+max_connections          = 300
+wait_timeout             = 300
+interactive_timeout      = 300
+connect_timeout          = 10
+
+# InnoDB tuning for concurrent workloads
+innodb_buffer_pool_size  = 256M
+innodb_log_file_size     = 64M
+innodb_flush_log_at_trx_commit = 1
+innodb_lock_wait_timeout = 30
+
+# Slow query logging (useful during load testing)
+slow_query_log           = 1
+slow_query_log_file      = /var/log/mysql/slow.log
+long_query_time          = 1
+
+[client]
+default-character-set    = utf8mb4
+
+[mysql]
+default-character-set    = utf8mb4

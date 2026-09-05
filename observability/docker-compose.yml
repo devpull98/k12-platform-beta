@@ -1,0 +1,198 @@
+networks:
+  observability:
+    driver: bridge
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.53.4
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=7d"
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - observability
+    deploy:
+      resources:
+        limits:
+          memory: 384m
+          cpus: "0.4"
+        reservations:
+          memory: 96m
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml.template:ro
+    # Alertmanager has no built-in ${VAR} expansion of its config file (unlike
+    # Promtail's -config.expand-env), so sed-substitute the Telegram
+    # placeholders into a real config before starting it. Secrets are
+    # escaped for sed's replacement syntax first — a literal "&" or "#" in a
+    # secret is otherwise a sed metacharacter and corrupts the substitution.
+    # Google Chat no longer goes through templating here: webhook_configs
+    # posts to the app's own relay endpoint instead (see alertmanager.yml).
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        esc() { printf '%s' "$$1" | sed -e 's/[&\\#]/\\&/g'; };
+        TBT=$$(esc "$$TELEGRAM_BOT_TOKEN");
+        TCI=$$(esc "$$TELEGRAM_CHAT_ID");
+        sed
+        -e "s#\$${TELEGRAM_BOT_TOKEN}#$$TBT#g"
+        -e "s#\$${TELEGRAM_CHAT_ID}#$$TCI#g"
+        /etc/alertmanager/alertmanager.yml.template > /tmp/alertmanager.yml &&
+        exec /bin/alertmanager --config.file=/tmp/alertmanager.yml --storage.path=/alertmanager
+    environment:
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN}"
+      TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID}"
+    ports:
+      - "${ALERTMANAGER_PORT:-9093}:9093"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - observability
+    deploy:
+      resources:
+        limits:
+          memory: 64m
+          cpus: "0.1"
+
+  loki:
+    image: grafana/loki:3.1.2
+    volumes:
+      - ./loki/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki-data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    ports:
+      - "${LOKI_PORT:-3100}:3100"
+    networks:
+      - observability
+    deploy:
+      resources:
+        limits:
+          memory: 320m
+          cpus: "0.3"
+        reservations:
+          memory: 96m
+
+  tempo:
+    image: grafana/tempo:2.6.1
+    volumes:
+      - ./tempo/tempo.yaml:/etc/tempo.yaml:ro
+    command: -config.file=/etc/tempo.yaml
+    ports:
+      - "${TEMPO_OTLP_HTTP_PORT:-4318}:4318"
+      - "${TEMPO_OTLP_GRPC_PORT:-4317}:4317"
+      - "3200:3200"
+    networks:
+      - observability
+    deploy:
+      resources:
+        limits:
+          memory: 320m
+          cpus: "0.3"
+        reservations:
+          memory: 96m
+
+  promtail:
+    image: grafana/promtail:3.1.2
+    volumes:
+      - ./promtail/promtail-config.yml:/etc/promtail/config.yml:ro
+      - ${APP_LOG_DIR:-../logs}:/logs:ro
+    command: -config.file=/etc/promtail/config.yml -config.expand-env=true
+    environment:
+      APP_JOB_NAME: "${APP_JOB_NAME:-spring-app}"
+    networks:
+      - observability
+    depends_on:
+      - loki
+    deploy:
+      resources:
+        limits:
+          memory: 96m
+          cpus: "0.1"
+
+  grafana:
+    image: grafana/grafana:11.3.2
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_FEATURE_TOGGLES_ENABLE: traceqlEditor
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    networks:
+      - observability
+    depends_on:
+      - prometheus
+      - loki
+      - tempo
+    deploy:
+      resources:
+        limits:
+          memory: 384m
+          cpus: "0.4"
+        reservations:
+          memory: 96m
+
+  # --- Cross-stack metrics test services ---
+  # Minimal non-Java services whose only purpose is proving the Prometheus →
+  # Grafana pipeline works for other languages/frameworks, not real domain
+  # code. Each exposes /metrics (Prometheus text format) and /work (dummy
+  # endpoint that generates request-count/latency/error-rate samples).
+  # DB_HOST=host.docker.internal reaches the MySQL container from the root
+  # docker-compose.yml (a separate compose project/network) via its published
+  # host port — same host.docker.internal convention Prometheus already uses
+  # to scrape the host-run Spring app, rather than bridging the two networks.
+  express-metrics:
+    build: ./express-metrics
+    ports:
+      - "${EXPRESS_METRICS_PORT:-3001}:3000"
+    environment:
+      DB_HOST: host.docker.internal
+      DB_PORT: "3306"
+      DB_USER: ticket_user
+      DB_PASSWORD: ticket_pass
+      DB_NAME: ticket_dd
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - observability
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+          cpus: "0.2"
+
+  laravel-metrics:
+    build: ./laravel-metrics
+    ports:
+      - "${LARAVEL_METRICS_PORT:-8001}:8000"
+    environment:
+      DB_CONNECTION: mysql
+      DB_HOST: host.docker.internal
+      DB_PORT: "3306"
+      DB_DATABASE: ticket_dd
+      DB_USERNAME: ticket_user
+      DB_PASSWORD: ticket_pass
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - observability
+    deploy:
+      resources:
+        limits:
+          memory: 192m
+          cpus: "0.2"
+
+volumes:
+  loki-data:
+  grafana-data:

@@ -1,0 +1,218 @@
+services:
+  mysql:
+    build: ./docker/mysql
+    environment:
+      MYSQL_DATABASE: ticket_dd
+      MYSQL_USER: ticket_user
+      MYSQL_PASSWORD: ticket_pass
+      MYSQL_ROOT_PASSWORD: root
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot", "--silent"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 768m
+          cpus: "0.5"
+        reservations:
+          memory: 200m
+
+  redis:
+    image: redis:7.4-alpine
+    ports:
+      - "6379:6379"
+    command: redis-server --maxmemory 192mb --maxmemory-policy allkeys-lru
+    deploy:
+      resources:
+        limits:
+          memory: 256m   # 192mb data + overhead
+          cpus: "0.2"
+        reservations:
+          memory: 64m
+
+  kafka:
+    image: apache/kafka:latest
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,INTERNAL://0.0.0.0:9093,CONTROLLER://0.0.0.0:9094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,INTERNAL://kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,INTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9094
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_HEAP_OPTS: "-Xms256m -Xmx256m"
+    deploy:
+      resources:
+        limits:
+          memory: 640m
+          cpus: "0.6"
+        reservations:
+          memory: 256m
+
+  # Kafka UI — xem topic, message, consumer group. Chỉ bật khi cần: `docker compose --profile tools up -d`
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    profiles: ["tools"]
+    ports:
+      - "8090:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9093
+      LOGGING_LEVEL_ORG_APACHE_KAFKA: ERROR
+      LOGGING_LEVEL_COM_PROVECTUS: WARN
+      JAVA_OPTS: "-Xms128m -Xmx256m"
+    depends_on:
+      - kafka
+    deploy:
+      resources:
+        limits:
+          memory: 320m
+          cpus: "0.3"
+        reservations:
+          memory: 96m
+
+  # --- Exporters (expose metrics cho Prometheus) ---
+
+  mysqld-exporter:
+    image: prom/mysqld-exporter:v0.15.1
+    profiles: ["tools"]
+    ports:
+      - "9104:9104"
+    command:
+      - "--mysqld.username=ticket_user:ticket_pass"
+      - "--mysqld.address=mysql:3306"
+      # Standalone instance, no replication — and MySQL 8.4 dropped `SHOW SLAVE
+      # STATUS` (renamed to SHOW REPLICA STATUS), which this collector still uses.
+      - "--no-collect.slave_status"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 64m
+          cpus: "0.1"
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.62.0-alpine
+    profiles: ["tools"]
+    # Default connection-timeout (15s) exceeds Prometheus's 10s scrape_timeout
+    # for the redis job — when redis is actually down, the exporter blocks on
+    # the connect attempt past that window on every single scrape, so
+    # redis_up never gets a sample and RedisDown can't fire. 3s keeps the
+    # exporter's own timeout comfortably inside the scrape window either way.
+    command: ["--connection-timeout=3s"]
+    ports:
+      - "9121:9121"
+    environment:
+      REDIS_ADDR: redis:6379
+    depends_on:
+      - redis
+    deploy:
+      resources:
+        limits:
+          memory: 64m
+          cpus: "0.1"
+
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:latest
+    profiles: ["tools"]
+    ports:
+      - "9308:9308"
+    command:
+      - "--kafka.server=kafka:9093"
+    depends_on:
+      - kafka
+    deploy:
+      resources:
+        limits:
+          memory: 64m
+          cpus: "0.1"
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    profiles: ["tools"]
+    pid: host
+    network_mode: host
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--path.rootfs=/rootfs"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+          cpus: "0.2"
+
+  mongodb:
+    image: mongo:7.0
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ticket_user
+      MONGO_INITDB_ROOT_PASSWORD: ticket_pass
+      MONGO_INITDB_DATABASE: ticket_dd
+    command: ["--wiredTigerCacheSizeGB", "0.25"]
+    volumes:
+      - mongodb-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "0.4"
+        reservations:
+          memory: 160m
+
+  mongodb-exporter:
+    image: percona/mongodb_exporter:0.40
+    profiles: ["tools"]
+    ports:
+      - "9216:9216"
+    environment:
+      MONGODB_URI: "mongodb://ticket_user:ticket_pass@mongodb:27017/admin"
+    command:
+      # Explicit collectors instead of --collect-all: collstats/indexstats need
+      # --discovering-mode and fail with Unauthorized on the internal
+      # system.profile collection, so they're left out rather than worked around.
+      - "--collector.diagnosticdata"
+      - "--collector.replicasetstatus"
+      - "--collector.dbstats"
+      - "--collector.topmetrics"
+      - "--collector.currentopmetrics"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 96m
+          cpus: "0.1"
+
+volumes:
+  mysql-data:
+  mongodb-data:

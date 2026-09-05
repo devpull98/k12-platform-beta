@@ -1,3 +1,17 @@
+# Build output
+target/
+
+# App logs (tailed by Promtail — local only)
+logs/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Local secrets (real webhook/token values) — see observability/.env.example for the template
+observability/.env
+
 # Compiled class file
 *.class
 

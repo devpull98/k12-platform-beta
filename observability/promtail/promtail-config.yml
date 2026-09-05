@@ -1,0 +1,25 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: app-logs
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: "${APP_JOB_NAME:-spring-app}"
+          __path__: /logs/app.log
+
+    pipeline_stages:
+      # Extract trace_id from structured log line so Loki→Tempo links work
+      - regex:
+          expression: '.*"traceId":"(?P<trace_id>[a-f0-9]+)".*'
+      - labels:
+          trace_id:

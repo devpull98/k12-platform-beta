@@ -1,0 +1,56 @@
+apiVersion: 1
+
+providers:
+  - name: app
+    orgId: 1
+    folder: Application
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards/app
+
+  - name: mysql
+    orgId: 1
+    folder: MySQL
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards/mysql
+
+  - name: redis
+    orgId: 1
+    folder: Redis
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards/redis
+
+  - name: kafka
+    orgId: 1
+    folder: Kafka
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards/kafka
+
+  - name: mongodb
+    orgId: 1
+    folder: MongoDB
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards/mongodb
+
+  - name: test-services
+    orgId: 1
+    folder: Test Services
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards/test-services

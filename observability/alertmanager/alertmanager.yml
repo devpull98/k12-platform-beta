@@ -1,0 +1,92 @@
+global:
+  resolve_timeout: 5m
+
+# ── Routing tree ─────────────────────────────────────────────
+# severity=critical → Telegram + Google Chat  (response SLA: 15 phút)
+# severity=warning  → Google Chat             (response SLA: 2 giờ)
+# default           → Google Chat             (response SLA: 8 giờ / next business day)
+
+route:
+  group_by: ["alertname", "team"]
+  group_wait: 30s
+  # group_interval/repeat_interval control how soon Alertmanager will
+  # re-notify the SAME alert group (by group_by key) — this is anti-spam
+  # behavior, not a bug: it applies even if the alert fully resolved and
+  # re-fired, since the dedup key is (receiver, integration, group), not
+  # the specific firing occurrence. Kept short here because this project is
+  # actively iterated on with synthetic failure tests every few minutes; a
+  # real production deployment paging a human on-call would want these
+  # back at production-typical values (e.g. group_interval 5m,
+  # repeat_interval 1h+) to avoid re-paging on every flap.
+  group_interval: 1m
+  repeat_interval: 5m
+  # Notifications disabled: routed to `noop` instead of `default`/`critical`/
+  # `warning` below. Alerts still evaluate and show up in Alertmanager/Prometheus
+  # UI as before — nothing actually goes out to Telegram/Google Chat. To
+  # re-enable, point receiver back to `default` and the two routes' receivers
+  # back to `critical`/`warning`.
+  receiver: noop
+
+  routes:
+    - match:
+        severity: critical
+      receiver: noop
+      repeat_interval: 3m
+
+    - match:
+        severity: warning
+      receiver: noop
+      repeat_interval: 5m
+
+# ── Receivers ────────────────────────────────────────────────
+receivers:
+  - name: noop
+
+  - name: default
+    webhook_configs:
+      # Alertmanager's payload schema doesn't match what Google Chat's
+      # webhook expects — relay through the app, which reshapes it into
+      # Chat's cardsV2 format (com.ticketdd.notification.AlertmanagerWebhookController).
+      - url: "http://host.docker.internal:8080/internal/alertmanager-webhook"
+        send_resolved: true
+
+  - name: warning
+    webhook_configs:
+      # Alertmanager's payload schema doesn't match what Google Chat's
+      # webhook expects — relay through the app, which reshapes it into
+      # Chat's cardsV2 format (com.ticketdd.notification.AlertmanagerWebhookController).
+      - url: "http://host.docker.internal:8080/internal/alertmanager-webhook"
+        send_resolved: true
+
+  - name: critical
+    telegram_configs:
+      - bot_token: "${TELEGRAM_BOT_TOKEN}"
+        chat_id: ${TELEGRAM_CHAT_ID}
+        message: |
+          🔴 *CRITICAL* — {{ .GroupLabels.alertname }}
+          Team: {{ .GroupLabels.team }}
+          {{ range .Alerts }}
+          • {{ .Annotations.summary }}
+          {{ .Annotations.description }}
+          {{ end }}
+        send_resolved: true
+    webhook_configs:
+      # Alertmanager's payload schema doesn't match what Google Chat's
+      # webhook expects — relay through the app, which reshapes it into
+      # Chat's cardsV2 format (com.ticketdd.notification.AlertmanagerWebhookController).
+      - url: "http://host.docker.internal:8080/internal/alertmanager-webhook"
+        send_resolved: true
+
+# ── Inhibit rules ─────────────────────────────────────────────
+inhibit_rules:
+  # Nếu App DOWN thì suppress DEGRADED warnings của cùng app
+  - source_match:
+      alertname: AppDown
+    target_match_re:
+      alertname: "App.*"
+    equal: ["job"]
+  # Nếu MySQL DOWN thì suppress HikariCP warnings
+  - source_match:
+      alertname: MySQLDown
+    target_match:
+      alertname: HikariPoolExhausted
