@@ -27,6 +27,7 @@ public final class GatewayBootstrap {
     private final TicketVerifier ticketVerifier;
     private final RoomRegistry roomRegistry;
     private final GatewayMetrics gatewayMetrics;
+    private final IpAdmissionController ipAdmissionController;
 
     private EventLoopGroup eventLoopGroup;
     private Channel serverChannel;
@@ -37,13 +38,17 @@ public final class GatewayBootstrap {
      * builds fresh per channel, the registry is exactly this pod's one {@code room_id ->
      * Set<Channel>} map and must be the same instance a {@code Broadcaster} fans out through.
      * {@code gatewayMetrics} is likewise one shared instance (Task 12) so its metrics are
-     * registered once, eagerly, rather than re-registered per connection.
+     * registered once, eagerly, rather than re-registered per connection. {@code
+     * ipAdmissionController} (Task 7, §5.6 L1) is shared for the same reason: it counts
+     * handshake attempts per IP across every connection, not just one.
      */
-    public GatewayBootstrap(int port, TicketVerifier ticketVerifier, RoomRegistry roomRegistry, GatewayMetrics gatewayMetrics) {
+    public GatewayBootstrap(int port, TicketVerifier ticketVerifier, RoomRegistry roomRegistry,
+            GatewayMetrics gatewayMetrics, IpAdmissionController ipAdmissionController) {
         this.port = port;
         this.ticketVerifier = ticketVerifier;
         this.roomRegistry = roomRegistry;
         this.gatewayMetrics = gatewayMetrics;
+        this.ipAdmissionController = ipAdmissionController;
     }
 
     public void start() throws InterruptedException {
@@ -57,7 +62,7 @@ public final class GatewayBootstrap {
                 .childHandler(new ChannelInitializer<SocketChannel>() {
                     @Override
                     protected void initChannel(SocketChannel ch) {
-                        GatewayPipeline.addTo(ch.pipeline(), ticketVerifier, roomRegistry, gatewayMetrics);
+                        GatewayPipeline.addTo(ch.pipeline(), ticketVerifier, roomRegistry, gatewayMetrics, ipAdmissionController);
                     }
                 });
 

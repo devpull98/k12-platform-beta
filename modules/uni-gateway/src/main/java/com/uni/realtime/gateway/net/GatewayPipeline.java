@@ -11,7 +11,9 @@ import io.netty.handler.codec.http.websocketx.WebSocketServerProtocolHandler;
 
 /**
  * Fixed handler order for the WebSocket edge (plan.md Task 6 AC) -- do not reorder.
- * {@code BackpressureHandler} (Task 9) goes first since writability is a transport concern
+ * {@code IpAdmissionHandler} (Task 7, §5.6 L1) goes first of all: an IP over budget must not
+ * spend a cycle on anything downstream, including {@code BackpressureHandler}'s bookkeeping.
+ * {@code BackpressureHandler} (Task 9) comes next since writability is a transport concern
  * unrelated to auth state. {@code TicketAuthHandler} must run before anything that trusts
  * {@link ChannelAttributes}, and {@code RoomRouteHandler} must run last so everything
  * downstream already agrees on identity and room ownership.
@@ -30,9 +32,11 @@ public final class GatewayPipeline {
     private GatewayPipeline() {}
 
     public static void addTo(ChannelPipeline pipeline, TicketVerifier ticketVerifier, RoomRegistry roomRegistry,
-            GatewayMetrics gatewayMetrics) {
-        // First, ahead of everything else: writability is a transport-level concern
-        // orthogonal to auth/decoding, and must govern reads regardless of pipeline state.
+            GatewayMetrics gatewayMetrics, IpAdmissionController ipAdmissionController) {
+        // Outermost gate: reject an over-budget IP before it costs this pod anything else.
+        pipeline.addLast(new IpAdmissionHandler(ipAdmissionController));
+        // Writability is a transport-level concern orthogonal to auth/decoding, and must
+        // govern reads regardless of pipeline state.
         pipeline.addLast(new BackpressureHandler(gatewayMetrics));
         pipeline.addLast(new HttpServerCodec());
         pipeline.addLast(new HttpObjectAggregator(MAX_HTTP_AGGREGATED_CONTENT_BYTES));

@@ -281,38 +281,57 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 
 ---
 
-### Task 7: Rate limiting phân tầng theo loại thông điệp — ⚠️ MỘT PHẦN XONG (2026-09-06)
+### Task 7: Rate limiting phân tầng theo loại thông điệp — ✅ XONG (2026-09-07)
 
 - **Mode:** sequential after [T6] · parallel with [T8]
 - **Mô tả:** Khoá theo `student_id`, **không** khoá theo IP làm tầng chính — trường học đi sau NAT dùng chung một IP (§10.1).
 - **Kết quả:** `mvn -pl :uni-gateway test -Dtest=RateLimitHandlerTest` 5/5 pass (`EmbeddedChannel`,
-  `Clock` cố định) + `TokenBucketTest` 4/4 pass (logic thuần). Toàn module 24/24, toàn reactor xanh.
+  `Clock` cố định) + `TokenBucketTest` 4/4 pass (logic thuần) + `IpAdmissionControllerTest` 3/3
+  pass (logic thuần) + `IpAdmissionHandlerTest` 3/3 pass (`EmbeddedChannel` với remote address
+  giả lập được). Toàn module 52/52, toàn reactor `mvn clean install` xanh. **Prove-it**: tạm bỏ
+  qua verdict của `IpAdmissionController` trong `IpAdmissionHandler` — xác nhận đúng 1 test Red
+  trước khi trả lại Green.
 - **File dự kiến:** `modules/uni-gateway/src/main/java/.../net/RateLimitHandler.java`
 - **Dependency:** Task 6
 - **Acceptance criteria:**
   - [x] Bucket riêng theo loại: `SUBMIT_ANSWER` 3/refill 1s · `UPDATE_DRAFT` 10/refill 10s · `HEARTBEAT` 2/refill 1 mỗi 30s
   - [x] Khoá bucket là `student_id` lấy từ `ChannelAttributes` (cụ thể: mỗi connection/`RateLimitHandler`
         đã gắn với đúng 1 student_id sau `TicketAuthHandler`, nên bucket state per-instance = per-student_id)
-  - [ ] L1 theo IP (nếu bật) đặt **300 handshake/phút**, không phải 5 — **chưa hiện thực**, xem ghi chú
+  - [x] L1 theo IP đặt **4.000 handshake/phút** (cập nhật: quyết định Business 2026-09-06 nâng từ
+        300 → 4.000, xem system-architecture.md §5.6 — con số trong AC gốc của plan.md đã lỗi
+        thời trước khi Task 7 được hiện thực đầy đủ). Hiện thực ở `IpAdmissionController` +
+        `IpAdmissionHandler`, gắn làm handler **đầu tiên** trong `GatewayPipeline` (trước cả
+        `BackpressureHandler`) — điểm gắn trước đây chưa tồn tại, nay có rồi
   - [x] Vượt ngưỡng → `RATE_LIMIT_EXCEEDED`, **không** đóng channel (chỉ áp dụng đúng nghĩa cho
-        `SUBMIT_ANSWER` — xem ghi chú về `UPDATE_DRAFT`/`HEARTBEAT`)
+        `SUBMIT_ANSWER` — xem ghi chú về `UPDATE_DRAFT`/`HEARTBEAT`). Riêng L1 (IP) là control ở
+        tầng handshake, không phải per-message — vượt ngưỡng L1 **đóng channel** (đúng bản chất
+        "chống DDoS thô", khác hẳn ngữ nghĩa `RATE_LIMIT_EXCEEDED` của các bucket per-message)
 - **Verification:** `mvn -pl :uni-gateway test -Dtest=RateLimitTest`. Case bắt buộc: **500 client sau cùng một IP đều kết nối được** — đây là kịch bản khách hàng thật.
   (Tên file test thật là `RateLimitHandlerTest`, khớp class `RateLimitHandler` — `RateLimitTest`
-  trong plan có vẻ là tên rút gọn.)
+  trong plan có vẻ là tên rút gọn.) Với L1, case tương đương là `IpAdmissionControllerTest`
+  (4.000 lần admit cùng 1 IP đều `true`) — 500 < 4.000 nên không mâu thuẫn với case gốc.
 - **Ghi chú quan trọng:**
   - **"tổng 15/15s"** trong AC gốc không hiện thực thành bucket thứ tư riêng — ba cửa sổ thời
     gian khác nhau (1s/10s/30s) không gộp thành một cửa sổ chung có nghĩa rõ ràng; đọc đây là
     tổng ước lượng thô, không phải cơ chế cần code.
-  - **L1 IP-based admission control (300 handshake/phút)** là "nếu bật" theo chính AC — đây là
-    control ở tầng handshake/ingress, không phải per-message như `RateLimitHandler`. Không hiện
-    thực ở Task 7 vì chưa có điểm gắn (chưa có admission-control component nào trong repo).
-    Case bắt buộc "500 client cùng IP đều kết nối được" **vẫn đúng theo cấu trúc** — vì không có
-    cơ chế nào theo dõi IP ở đây cả, test xác nhận 500 `RateLimitHandler` độc lập không hề đụng
-    nhau.
+  - **L1 IP-based admission control**: khác hẳn cơ chế per-message theo `student_id` mà
+    `RateLimitHandler` làm — đây là control ở tầng kết nối/handshake, chạy tại
+    `IpAdmissionHandler.channelActive` (mỗi TCP connection mới = 1 lần thử handshake), **trước**
+    mọi handler khác kể cả `HttpServerCodec`, để một IP vượt ngưỡng không tốn dù một cycle CPU
+    cho HTTP parsing hay WS upgrade. Dùng lại `TokenBucket` (Task 7 đã có sẵn) nhưng nhân theo
+    IP qua một `ConcurrentHashMap` chia sẻ toàn pod (`IpAdmissionController`) — khác
+    `RateLimitHandler` vốn 1 instance/connection vì lúc đó identity đã biết (per-student_id).
+    Case bắt buộc "500 client cùng IP đều kết nối được" **vẫn đúng** — 500 << 4.000, và
+    `IpAdmissionControllerTest.should_trackBudgetsIndependently_perIp` xác nhận IP khác không hề
+    bị ảnh hưởng bởi một IP đã vượt ngưỡng.
   - **`UPDATE_DRAFT`/`HEARTBEAT` vượt ngưỡng bị drop im lặng, không có `RATE_LIMIT_EXCEEDED`
     thật trên dây** — schema không có payload ack nào cho hai loại này (`UPDATE_DRAFT` còn thiếu
     hẳn payload trong oneof, tech-design.md §G3). Chỉ `SUBMIT_ANSWER` có `AnswerAck.reject_reason`
     để mang tín hiệu này thật sự. Không tự thêm field/message mới vào `.proto` ở task này.
+  - **Không hiện thực L2 (khoá theo `student_id`, 10 handshake/phút) hay L3 (admission control
+    toàn pod, §6.5)** dù cả hai đều xuất hiện ở system-architecture.md §5.6 cạnh L1 — plan.md
+    Task 7's AC chỉ nhắc L1 ("L1 theo IP (nếu bật)"), L2/L3 không nằm trong bất kỳ task nào của
+    `plan.md` tính đến giờ. Mở rộng sang đó ở đây sẽ là tự thêm phạm vi ngoài AC đã giao.
 - **Rollback nếu fail:** revert; tạm chạy không rate limit ở môi trường dev, **không** đưa lên staging.
 
 ---

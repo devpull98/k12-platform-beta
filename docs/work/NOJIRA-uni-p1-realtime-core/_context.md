@@ -192,7 +192,25 @@ progress: "T1, T2, T4, T5, T10 xong. T6 MOT PHAN xong (GatewayPipeline + WS hand
   khong phai thieu sot T3): noi broadcastTarget voi FrameChannelServer/kenh noi bo that; thuc su
   phat QUESTION_STARTED/GAME_OVER/TEACHER_COMMAND/CONNECTION_DEGRADED/StudentJoined ra ngoai
   (chua task nao lam viec nay); luong roi phong (connected=false) - Gateway chua co cach bao
-  Engine. Task sach con lai: Task 13 (cho Sync checkpoint - T7/T9 dong han, T3/T11 da xong)."
+  Engine.
+  2026-09-07 (tiep): T7 dong han (tu 'mot phan' thanh xong). Diem con thieu duy nhat la L1 IP
+  admission control (300->4000 handshake/phut theo quyet dinh 2026-09-06, system-architecture.md
+  §5.6) - truoc day chua co diem gan trong repo, nay them IpAdmissionController (TokenBucket
+  nhan theo IP qua ConcurrentHashMap chia se toan pod, giong khuon RoomRegistry) +
+  IpAdmissionHandler (chay o channelActive, la handler DAU TIEN trong GatewayPipeline - truoc ca
+  BackpressureHandler - de mot IP vuot nguong khong ton cycle CPU nao cho HTTP parsing/WS
+  upgrade). GatewayPipeline.addTo/GatewayBootstrap them tham so IpAdmissionController. Test moi:
+  IpAdmissionControllerTest (3 case, logic thuan) + IpAdmissionHandlerTest (3 case, EmbeddedChannel
+  voi remoteAddress0() override de gia lap IP that vi EmbeddedChannel mac dinh khong tra ve
+  InetSocketAddress). Prove-it: tam bo qua verdict cua controller trong handler - xac nhan dung
+  1/3 test Red truoc khi tra lai Green. mvn -pl :uni-gateway test: 52/52 pass. mvn clean install
+  toan reactor: BUILD SUCCESS (uni-engine 51/51 khong doi). Grep bat buoc van sach. KHONG lam L2
+  (khoa theo student_id, 10 handshake/phut) hay L3 (admission control toan pod, §6.5) - ca hai
+  co trong system-architecture.md §5.6 nhung khong nam trong AC goc cua plan.md Task 7, mo rong
+  se la tu them pham vi. Khong them metric Prometheus rieng cho luot tu choi L1 (chi log.warn,
+  dung khuon TicketAuthHandler xu ly ticket bi tu choi). Task sach con lai: Task 13 (cho Sync
+  checkpoint - chi con T9 dong han, T3/T7/T11 da xong). Task 6 van cho G1a/G1c tu doi dich vu nen
+  tang - khong tu quyet duoc trong noi bo."
 dev_selftest: pending
 qc_status: pending
 trace: pending

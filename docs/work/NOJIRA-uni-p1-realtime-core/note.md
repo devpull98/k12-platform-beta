@@ -546,16 +546,56 @@
   - `modules/uni-engine/src/test/java/com/uni/realtime/engine/room/TickCoalescingTest.java` (mới)
   - `docs/specs/tech-design/NOJIRA-uni-p1-tech-design.md` (sửa — G2a/G2b đánh dấu đã chốt)
 
+## Task 7 (tiếp) — L1 IP admission control (§5.6)
+
+- **Trạng thái:** done (2026-09-07) — Task 7 giờ **xong đầy đủ**, không còn "một phần".
+- **Verification:** `mvn -pl :uni-gateway test -Dtest=IpAdmissionControllerTest` 3/3 pass (logic
+  thuần, `MutableClock`) + `IpAdmissionHandlerTest` 3/3 pass (`EmbeddedChannel` với
+  `remoteAddress0()` override để giả lập IP thật). `GatewayPipelineTest` vẫn 10/10 (thêm
+  `IpAdmissionController` vào lời gọi `GatewayPipeline.addTo` + assert `IpAdmissionHandler` đứng
+  đầu pipeline). Toàn module 52/52, toàn reactor `mvn clean install` xanh.
+- **Điểm gắn trước đây không tồn tại, nay có:** `IpAdmissionHandler` là handler **đầu tiên** trong
+  `GatewayPipeline` (trước cả `BackpressureHandler`), chạy ở `channelActive` — mỗi TCP connection
+  mới tới pod này được tính là 1 lần thử handshake, và bị từ chối (đóng channel) trước khi tốn dù
+  một cycle CPU cho `HttpServerCodec`/WS upgrade/`TicketAuthHandler` nếu IP đã vượt ngưỡng.
+- **Ngưỡng dùng đúng quyết định mới nhất:** `4.000 handshake/phút` (Business, 2026-09-06,
+  system-architecture.md §5.6) — **không phải** con số `300` còn ghi trong AC gốc của plan.md
+  Task 7 (đã lỗi thời trước khi phần này được code).
+- **Tái dùng `TokenBucket`** (đã có từ phần đầu Task 7) nhưng nhân theo IP qua
+  `ConcurrentHashMap<String, TokenBucket>` chia sẻ toàn pod (`IpAdmissionController`, cùng khuôn
+  "một instance chia sẻ" như `RoomRegistry`) — khác `RateLimitHandler` vốn 1 instance/connection
+  vì ở đó identity (`student_id`) đã biết, còn ở đây một connection chưa xác thực chỉ có IP.
+  Known simplification (ghi rõ trong Javadoc): map không có eviction, chấp nhận như cách
+  `RouteCache` chấp nhận "không TTL" — không phải thiếu sót, để dành cho PH-1 nếu cần đo lại.
+- **Prove-it**: tạm bỏ qua verdict của `controller.tryAdmit(ip)` trong `IpAdmissionHandler`
+  (luôn cho qua) — xác nhận đúng 1/3 test của `IpAdmissionHandlerTest` Red
+  (`should_closeChannel_when_ipExceedsL1Budget`), rồi trả lại code đúng để Green.
+- **Cố ý CHƯA làm (ngoài phạm vi AC của Task 7, không phải thiếu sót):**
+  - **L2** (khoá theo `student_id`, 10 handshake/phút) và **L3** (admission control toàn pod, §6.5)
+    — cả hai xuất hiện ở system-architecture.md §5.6 cạnh L1, nhưng **không** nằm trong AC gốc
+    của plan.md Task 7 (chỉ nhắc "L1 theo IP") và cũng không thuộc bất kỳ task nào khác đã liệt
+    kê. Mở rộng sang đó sẽ là tự thêm phạm vi không có trong `plan.md`.
+  - Không thêm metric Prometheus riêng cho lượt từ chối L1 — chỉ `log.warn`, đúng khuôn
+    `TicketAuthHandler` xử lý ticket bị từ chối (cũng chỉ log, không có counter riêng). Task 12
+    đã chốt xong danh sách 5 metric cụ thể; thêm một metric mới ở đây sẽ là mở rộng phạm vi Task 12.
+- **File đụng tới:**
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/IpAdmissionController.java` (mới)
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/IpAdmissionHandler.java` (mới)
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/GatewayPipeline.java` (sửa — thêm handler đầu tiên)
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/GatewayBootstrap.java` (sửa — thêm tham số)
+  - `modules/uni-gateway/src/test/java/com/uni/realtime/gateway/net/GatewayPipelineTest.java` (sửa)
+  - `modules/uni-gateway/src/test/java/com/uni/realtime/gateway/net/IpAdmissionControllerTest.java` (mới)
+  - `modules/uni-gateway/src/test/java/com/uni/realtime/gateway/net/IpAdmissionHandlerTest.java` (mới)
+
 ## Tóm tắt tiến độ
 
-- **10/12 task done đầy đủ (T1, T2, T3, T4, T5, T8, T10, T11, T12) + T6, T7, T9 một phần. SPIKE đạt.**
-- **Đang làm tiếp:** Với T3 xong, task "sạch" duy nhất còn lại không bị chặn bởi câu hỏi kỹ
+- **11/12 task done đầy đủ (T1, T2, T3, T4, T5, T7, T8, T10, T11, T12) + T6, T9 một phần. SPIKE đạt.**
+- **Đang làm tiếp:** Với T3 và T7 xong, task "sạch" duy nhất còn lại không bị chặn bởi câu hỏi kỹ
   thuật/Product treo là Task 13 (walking skeleton) — nhưng Task 13 tự nó phụ thuộc Sync checkpoint
-  (chờ T7/T9 đóng hẳn — T3/T11 đã xong). Lựa chọn thực tế: quay lại chốt G1a/G1c (Task 6) hoặc
-  L1 IP admission control (Task 7) để mở khoá thêm, hoặc dừng ở đây chờ quyết định bên ngoài.
+  (chờ T9 đóng hẳn — T3/T7/T11 đã xong). Lựa chọn thực tế: quay lại chốt G1a/G1c (Task 6) với đội
+  dịch vụ nền tảng để mở khoá nốt, hoặc dừng ở đây chờ quyết định bên ngoài.
 - **Block:**
   - Task 6 **không đóng hẳn được** — chờ G1a/G1c (thuật toán ký + dung sai đồng hồ) từ đội dịch vụ nền tảng.
-  - Task 7 thiếu L1 IP admission control (optional theo AC, nhưng chưa có điểm gắn trong repo).
   - Task 9 thiếu chuỗi mailbox-depth-driven cụ thể (giới hạn kiến trúc 1-connection-nhiều-phòng, không phải bug).
   - ~~`ScoreCalculator` thật và công thức điểm trong `GameDefinition` đều chờ chung 1 quyết định Product (§9.2 câu 1).~~
     **Đã đóng 2026-09-06** — xem mục "ScoreCalculator thật" ở trên. Không còn block nào cho Task 2.

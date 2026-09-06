@@ -41,7 +41,7 @@ class GatewayPipelineTest {
     void should_assembleHandlersInFixedOrderWithNoTlsHandler_when_pipelineBuilt() {
         EmbeddedChannel channel = new EmbeddedChannel();
         GatewayPipeline.addTo(channel.pipeline(), fixedVerifier(ROOM_1_CLAIMS), new RoomRegistry(),
-                new GatewayMetrics(new SimpleMeterRegistry()));
+                new GatewayMetrics(new SimpleMeterRegistry()), new IpAdmissionController());
 
         List<String> handlerClassNames = new ArrayList<>();
         for (Map.Entry<String, ChannelHandler> entry : channel.pipeline()) {
@@ -52,6 +52,7 @@ class GatewayPipelineTest {
         // its own internal helper handlers (handshake/UTF-8 validation) as an implementation
         // detail -- the AC is about the relative order of OUR stages, not Netty's internals.
         assertThat(handlerClassNames).containsSubsequence(
+                "IpAdmissionHandler",
                 "BackpressureHandler",
                 "HttpServerCodec",
                 "HttpObjectAggregator",
