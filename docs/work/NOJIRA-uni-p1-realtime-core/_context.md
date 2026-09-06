@@ -16,16 +16,21 @@
 ## Read order (ONLY — do not glob elsewhere)
 1. `_context.md` (file này)
 2. `plan.md`
-3. Các mục v3.0 liệt kê ở trên — **không đọc toàn bộ 1528 dòng**
+3. `docs/specs/tech-design/NOJIRA-uni-p1-tech-design.md` — hợp đồng còn trống trước T2/T4/T6.
+   **Bắt buộc đọc trước khi code T3 / T6 / T7**; §9 liệt kê thứ đang chặn
+4. Kiến trúc: `docs/architect/system-architecture.md` (đặc tả toàn diện & các quyết định ADR).
+   **Đây là nguồn chính**, không phải v3.0
+5. Các mục v3.0 liệt kê ở trên — chỉ khi cần chiều sâu (phân tích tải, benchmark, phương án đã
+   loại). **Không đọc toàn bộ 1528 dòng**
 
 ## Dependencies
 - **Code:** chưa có — đây là greenfield. Xem "Việc còn mở" bên dưới về vị trí project.
 - **Cross-module:** không
-- **Rules:** `rules/{stack}/` **chưa tồn tại trong repo này** — xem cảnh báo governance bên dưới
+- **Rules:** `rules/spring/` (cài 2026-09-06) — viết theo Netty/Pekko/Protobuf thật, **không** phải convention Spring MVC/JPA mặc định của kit
 
 ## Impact radius
-- **Stores:** không (Giai đoạn 1 chưa có Redis snapshot, chưa có PostgreSQL trên hot path)
-- **Messaging:** không (Kafka bị cắt khỏi Giai đoạn 1)
+- **Stores:** Redis Cluster (chặn replay ticket lúc handshake, lưu Hot Snapshot < 5 KB bất đồng bộ). Tuyệt đối không nằm trên hot path.
+- **Messaging:** Kafka Cluster (async event streaming sau khi nộp bài cho Teacher Dashboard & DB writer).
 - **APIs:** `WS /ws` (biên realtime) · `POST /session/{id}/join` (cấp ticket, đã có ở dịch vụ nền tảng)
 
 ## Phạm vi đã chốt
@@ -38,9 +43,10 @@
 | Tick coalescing (§6.2) | ADR-4, quyết định hình dạng đường broadcast |
 | Lazy-learned routing (§8.2) | **PH-2** — làm ngay thì Giai đoạn 2 không phải sửa Gateway |
 | FSM `LOBBY → PLAYING → FINISHED` | Tối thiểu để chơi được một ván |
+| **Redis Cluster (Ticket SETNX & Snapshot)** | Hạ tầng có sẵn: chặn ticket replay và bảo hiểm Zero Data Loss cho Engine |
+| **Kafka Cluster (Event Streaming)** | Hạ tầng có sẵn: đẩy sự kiện sau trận cho Dashboard và PostgreSQL |
 
-**Ngoài Giai đoạn 1:** snapshot Redis (§9.6) · Cluster Sharding + SBR + fencing (§9.1) ·
-trạng thái `RESYNCING` · Kafka · dashboard fan-in (§11) · nén LZ4.
+**Ngoài Giai đoạn 1:** Cluster Sharding đa node + SBR (§9.1) · trạng thái `RESYNCING` đa node tự động · nén LZ4.
 
 ## Quyết định đã chốt (2026-09-05) — Task 1 không còn bị chặn
 
@@ -70,14 +76,17 @@ trạng thái `RESYNCING` · Kafka · dashboard fan-in (§11) · nén LZ4.
 
 ## Governance — trạng thái thật
 
+Kit đã cài (skill `onboarding`, 2026-09-06): `project-context.yaml`, `rules/spring/`,
+`scripts/governance-check.sh` + 5 gate. `bash scripts/governance-check.sh` hiện **xanh cả 5**.
+
 > [!CAUTION]
-> **Framework kit chưa được cài vào repo này.** Không có `project-context.yaml` ở root,
-> không có `docs/principles.md`, không có `rules/{stack}/`, và `scripts/` chỉ chứa
-> `daily-report.mjs` + `kafka-setup.mjs` — **không có `governance-check.sh`**.
+> **Hai gate xanh vì chưa có gì để kiểm, không phải vì đã phủ.** `validate-trace` skip toàn bộ
+> (`docs/specs/bdd/` không tồn tại → không đòi `@trace` tag nào của code) và ship gate mới chỉ
+> đọc thấy `phase=dev`. Checklist build/test thật trong `plan.md` vẫn là thứ chứng minh code
+> chạy đúng — gate không thay được nó.
 >
-> Vì vậy các gate `validate-sdd-gate` / `validate-trace` / `validate-context-state`
-> **không chạy được**. Checklist trong `plan.md` dùng lệnh build/test thật thay thế.
-> Muốn có gate thật thì chạy skill `onboarding` trước.
+> `docs/principles.md` vẫn chưa có. `validate-skill-graph` được vá để skip ở repo đích (nó kiểm
+> tính toàn vẹn của repo kit: `router.yaml`, `skills/`).
 
 ## State (machine-readable)
 ```yaml
@@ -85,11 +94,15 @@ phase: dev
 track: standard
 last_skill: tdd
 next_skill: tdd
-progress: "T1 xong (protocol + round-trip test). Ke tiep: T2 RoomActor, T4 frame codec, T6 GW pipeline - 3 nhanh song song"
+progress: "T1 xong (protocol + round-trip test). T2 xong (RoomActor: FSM, server timestamp,
+  dedupe, watchdog - 9/9 test pass, xem note.md). ScoreCalculator dung PlaceholderScoreCalculator
+  tam vi cong thuc diem Product chua chot (§9.2 cau 1). Con lai 6 cau hoi ky thuat chan T3/T6
+  o docs/specs/tech-design/NOJIRA-uni-p1-tech-design.md. Ke tiep: SPIKE Pekko timer (truoc T3),
+  song song T4 frame codec / T6 GW pipeline (phan khong dung ticket signing)"
 dev_selftest: pending
 qc_status: pending
 trace: pending
-updated: "2026-09-05"
+updated: "2026-09-06"
 ```
 
 **Ship-ready khi:** `dev_selftest: pass` **và** `qc_status ∈ {pass, na}` **và** `trace: pass`.

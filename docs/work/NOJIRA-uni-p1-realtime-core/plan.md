@@ -90,22 +90,27 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 
 ---
 
-### Task 2: Hiện thực `RoomActor` — FSM, chấm điểm, server timestamp, dedupe
+### Task 2: Hiện thực `RoomActor` — FSM, chấm điểm, server timestamp, dedupe — ✅ XONG (2026-09-06)
 
 - **Mode:** sequential after [T1] · parallel with [T4, T6]
 - **Mô tả:** Lõi game engine. Pekko Typed, đơn luồng, `Clock` tiêm vào. Gồm luôn watchdog đo-và-cảnh-báo.
+- **Kết quả:** `mvn -pl :uni-engine test -Dtest=RoomActorTest` 8/8 pass; `mvn -pl :uni-engine test`
+  (toàn module) 9/9 pass, leak detection `paranoid` sạch. Chi tiết: `note.md`.
 - **File dự kiến:** `modules/uni-engine/src/main/java/.../room/RoomActor.java`, `.../room/RoomState.java`, `.../scoring/ScoreCalculator.java`
 - **Dependency:** Task 1
 - **Acceptance criteria:**
-  - [ ] FSM `LOBBY → PLAYING → FINISHED`; `FINISHED` kết thúc bằng `Behaviors.stopped()`
-  - [ ] `server_received_at = clock.millis()` đóng dấu **ngay khi lấy khỏi mailbox**, trước mọi xử lý
-  - [ ] `response_time_ms = server_received_at − server_question_started_at`
-  - [ ] Từ chối khi `server_received_at > deadline + GRACE(500ms)`, ACK kèm lý do
-  - [ ] **`client_timestamp_ms` không xuất hiện ở bất kỳ đâu trong đường chấm điểm** (grep được)
-  - [ ] `LastSeenSequenceTable` (`student_id → last_seq`): `sequence ≤ last_seen` → **gửi lại ACK cũ**, không im lặng bỏ, không cộng điểm lần hai
-  - [ ] `Clock` là tham số constructor — **không** gọi `System.currentTimeMillis()` trực tiếp
-  - [ ] Watchdog: đo `System.nanoTime()` quanh `handle()`, ghi metric, `log.warn` khi > 10ms. **Không cố ngắt** (§10.5)
+  - [x] FSM `LOBBY → PLAYING → FINISHED`; `FINISHED` kết thúc bằng `Behaviors.stopped()`
+  - [x] `server_received_at = clock.millis()` đóng dấu **ngay khi lấy khỏi mailbox**, trước mọi xử lý
+  - [x] `response_time_ms = server_received_at − server_question_started_at`
+  - [x] Từ chối khi `server_received_at > deadline + GRACE(500ms)`, ACK kèm lý do
+  - [x] **`client_timestamp_ms` không xuất hiện ở bất kỳ đâu trong đường chấm điểm** (grep được)
+  - [x] `LastSeenSequenceTable` (`student_id → last_seq`): `sequence ≤ last_seen` → **gửi lại ACK cũ**, không im lặng bỏ, không cộng điểm lần hai
+  - [x] `Clock` là tham số constructor — **không** gọi `System.currentTimeMillis()` trực tiếp
+  - [x] Watchdog: đo `System.nanoTime()` quanh `handle()`, ghi metric, `log.warn` khi > 10ms. **Không cố ngắt** (§10.5)
 - **Verification:** `mvn -pl :uni-engine test -Dtest=RoomActorTest` — dùng `BehaviorTestKit`, không mạng. Phải có case: gian lận `client_timestamp_ms` → điểm không đổi; gửi lại cùng `sequence` → điểm không đổi + ACK cũ trả lại.
+- **Ghi chú còn treo:** `ScoreCalculator` dùng `PlaceholderScoreCalculator` tạm (flat, đánh dấu rõ
+  TEMPORARY) vì công thức điểm Quiz Product chưa chốt (tech-design.md §9.2 câu 1). Thay bằng
+  công thức thật khi Product quyết — không được lặng lẽ trở thành mặc định production.
 - **Rollback nếu fail:** revert commit; T3/T11 chưa bắt đầu nên không kéo theo gì.
 
 ---
