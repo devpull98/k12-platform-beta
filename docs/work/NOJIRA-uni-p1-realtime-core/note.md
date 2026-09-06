@@ -17,13 +17,14 @@
   - `client_timestamp_ms` **không** xuất hiện ở đâu trên đường chấm điểm — cấu trúc `SubmitAnswer` command tách field này khỏi mọi thứ `RoomState.submitAnswer` nhận vào; grep xác nhận `.clientTimestampMs()` không được gọi ở bất kỳ đâu trong `uni-engine`. Test `should_ignoreClientTimestampMs_when_computingScoreAndResponseTime` xác nhận forge giá trị này không đổi điểm/response time.
   - Watchdog: đo `System.nanoTime()` quanh mỗi handler, ghi Micrometer `Timer` (`engine.room.actor.processing.time`), `log.warn` khi > 10ms, **không** cố ngắt actor (test dùng `ScoreCalculator` giả lập chậm 15ms).
 - **Cố ý chưa làm (ngoài phạm vi Task 2, không phải thiếu sót):**
-  - `ScoreCalculator` thật — dùng `PlaceholderScoreCalculator` (flat 100 điểm, đánh dấu rõ TEMPORARY) vì công thức điểm Product chưa chốt (tech-design.md §9.2 câu 1). Không được lặng lẽ trở thành default production.
+  - ~~`ScoreCalculator` thật — dùng `PlaceholderScoreCalculator` (flat 100 điểm, đánh dấu rõ TEMPORARY) vì công thức điểm Product chưa chốt (tech-design.md §9.2 câu 1). Không được lặng lẽ trở thành default production.~~
+    **Đã đóng 2026-09-06** — xem mục "ScoreCalculator thật" bên dưới.
   - Join room / `student_index` / broadcast / tick coalescing — thuộc Task 3, 8, 11, không phải Task 2.
 - **File đụng tới:**
   - `modules/uni-engine/src/main/java/com/uni/realtime/engine/room/RoomActor.java` (mới)
   - `modules/uni-engine/src/main/java/com/uni/realtime/engine/room/RoomState.java` (mới)
   - `modules/uni-engine/src/main/java/com/uni/realtime/engine/scoring/ScoreCalculator.java` (mới)
-  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/scoring/PlaceholderScoreCalculator.java` (mới)
+  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/scoring/PlaceholderScoreCalculator.java` (mới, **đã xoá 2026-09-06** — xem bên dưới)
   - `modules/uni-engine/src/test/java/com/uni/realtime/engine/room/RoomActorTest.java` (mới)
 
 ## Task 4 — Internal Frame Channel: FrameCodec + FrameChannelServer (Engine)
@@ -440,6 +441,53 @@
     `RoomActorTest`/`FrameChannelServerTest`/`BackpressureTest` (2 module)/`GatewayPipelineTest`/
     `FanoutTest`/`FrameChannelClientTest` theo chữ ký constructor mới).
 
+## ScoreCalculator thật — công thức điểm Quiz Phase 1 (bổ sung Task 2, 2026-09-06)
+
+- **Trạng thái:** done (2026-09-06)
+- **Bối cảnh:** Product chốt công thức điểm Quiz 2026-09-06 (system-architecture.md §2.5): trắc
+  nghiệm 1-trong-4 đáp án, nhị phân đúng/sai — đúng = 100 điểm, sai = 0, không bonus theo tốc độ.
+  Đóng nốt "Ghi chú còn treo" của Task 2 (`PlaceholderScoreCalculator`).
+- **Verification:** `mvn -pl :uni-engine test` (toàn module, target xoá sạch trước khi chạy) →
+  46/46 pass, không leak, không deprecation warning. `mvn test` toàn reactor từ root → BUILD
+  SUCCESS (uni-protocol/uni-observability/uni-gateway/uni-engine đều xanh). Grep bắt buộc:
+  `grep -rn "client_timestamp_ms\|clientTimestampMs" modules/uni-engine/src/main --include=*.java`
+  → chỉ khớp doc-comment + field truyền qua (không đụng đường chấm điểm);
+  `grep -rn "\.retain()" modules/uni-gateway/src/main --include=*.java` → rỗng.
+- **Phạm vi đã làm:**
+  - `ScoreCalculator.award(...)` mở rộng nhận thêm `List<String> correctAnswerIds` (chữ ký cũ chỉ
+    có `answerIds` + `responseTimeMs`, không đủ để biết đúng/sai).
+  - Xoá `PlaceholderScoreCalculator` — không còn lý do tồn tại khi công thức thật đã có.
+  - Viết `FormulaScoreCalculator` (bọc `ScoringFormula` của Task 11) thay vì một class chấm điểm
+    đứng riêng — quyết định thiết kế: ban đầu viết thử `BinaryChoiceScoreCalculator` độc lập rồi
+    **tự nhận ra và xoá**, vì nó nhân đôi đúng cơ chế `ScoringFormula` (cây biểu thức đóng) đã
+    xây ở Task 11 và mâu thuẫn với chính câu đã ghi trong system-architecture.md §2.5 ("biểu diễn
+    đúng bằng tập toán tử giới hạn ở guardrail — không cần mở rộng"). `FormulaScoreCalculator`
+    tính đúng/sai bằng so khớp tập hợp chính xác (`Set.copyOf` — không phải superset/subset),
+    rồi giao `isCorrect`/`responseTimeMs` cho `ScoringFormula.evaluate(...)`.
+    `FormulaScoreCalculator.binaryChoice()` = `Multiply(IsCorrect(), Constant(100))`, đúng công
+    thức Phase 1.
+  - Nối `correctAnswerIds` qua `RoomState.startQuestion(...)` (3 tham số, thêm field
+    `currentCorrectAnswerIds`) và `RoomActor.StartQuestion` (3 field).
+  - `RoomActorTest` cập nhật dùng `FormulaScoreCalculator.binaryChoice()` thay placeholder, thêm
+    test `should_award0_when_answerDoesNotMatchTheCorrectChoice`.
+  - Test mới `FormulaScoreCalculatorTest` (3 case): đúng/sai theo exact-match độc lập với công
+    thức; công thức khác (Constant 50) chứng minh tính tổng quát, không hardcode 100/0 trong
+    Java; `binaryChoice()` khớp đúng quyết định Phase 1 (100/0, không bonus tốc độ).
+  - Cập nhật kèm `GatewayPipeline.MAX_HTTP_AGGREGATED_CONTENT_BYTES`: 8KB → 50KB, khớp quyết định
+    "trần chung mọi gói WS" cùng ngày 2026-09-06 (system-architecture.md §1.1/§7.5) — sửa cùng
+    lúc để tránh code lệch tài liệu, dù đây không phải một phần trực tiếp của công thức điểm.
+- **Cố ý chưa làm:** không có gì mới ngoài phạm vi Task 2/11 đã ghi trước đó (join room,
+  broadcast, tick coalescing vẫn thuộc Task 3/8).
+- **File đụng tới:**
+  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/scoring/ScoreCalculator.java` (sửa)
+  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/scoring/PlaceholderScoreCalculator.java` (xoá)
+  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/scoring/FormulaScoreCalculator.java` (mới)
+  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/room/RoomState.java` (sửa)
+  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/room/RoomActor.java` (sửa)
+  - `modules/uni-engine/src/test/java/com/uni/realtime/engine/room/RoomActorTest.java` (sửa)
+  - `modules/uni-engine/src/test/java/com/uni/realtime/engine/scoring/FormulaScoreCalculatorTest.java` (mới)
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/GatewayPipeline.java` (sửa)
+
 ## Tóm tắt tiến độ
 
 - **9/12 task done đầy đủ (T1, T2, T4, T5, T8, T10, T11, T12) + T6, T7, T9 một phần. SPIKE đạt.**
@@ -456,4 +504,5 @@
   - Task 6 **không đóng hẳn được** — chờ G1a/G1c (thuật toán ký + dung sai đồng hồ) từ đội dịch vụ nền tảng.
   - Task 7 thiếu L1 IP admission control (optional theo AC, nhưng chưa có điểm gắn trong repo).
   - Task 9 thiếu chuỗi mailbox-depth-driven cụ thể (giới hạn kiến trúc 1-connection-nhiều-phòng, không phải bug).
-  - `ScoreCalculator` thật và công thức điểm trong `GameDefinition` đều chờ chung 1 quyết định Product (§9.2 câu 1).
+  - ~~`ScoreCalculator` thật và công thức điểm trong `GameDefinition` đều chờ chung 1 quyết định Product (§9.2 câu 1).~~
+    **Đã đóng 2026-09-06** — xem mục "ScoreCalculator thật" ở trên. Không còn block nào cho Task 2.

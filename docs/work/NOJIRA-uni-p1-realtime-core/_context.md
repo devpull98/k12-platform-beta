@@ -66,18 +66,18 @@
 
 | # | Câu hỏi | Quyết định | Hệ quả |
 |---|---|---|---|
-| 1 | Công thức điểm Quiz GĐ1 (Product) | Trắc nghiệm 1/4 đáp án, đúng = 100đ, sai = 0đ, không bonus tốc độ | Mở khoá `ScoreCalculator` thật (T2) và `scoring_formula` thật trong Game Definition (T11) — **implementation thật chưa viết**, vẫn đang dùng `PlaceholderScoreCalculator`. Chi tiết: [system-architecture.md §2.5](../../architect/system-architecture.md#25-game-definition--guardrails) |
+| 1 | Công thức điểm Quiz GĐ1 (Product) | Trắc nghiệm 1/4 đáp án, đúng = 100đ, sai = 0đ, không bonus tốc độ | **Đã hiện thực 2026-09-06**: `FormulaScoreCalculator.binaryChoice()` (T2, bọc `ScoringFormula` của T11) thay `PlaceholderScoreCalculator` (đã xoá). 46/46 test `uni-engine` pass. Chi tiết: [system-architecture.md §2.5](../../architect/system-architecture.md#25-game-definition--guardrails) |
 | 2 | Hệ thống chạy bao nhiêu giờ/ngày (Business) | Chạy **cả ngày**; ca điểm/thi đấu chỉ 18h50–21h30 | Rủi ro "chỉ chạy 4–6 tiếng/ngày" ở ADR-002 **không xảy ra** — giữ nguyên Pekko Cluster Sharding luôn-bật, không cần đảo ngược |
-| 3 | Quy mô trường lớn nhất sau 1 NAT IP (Business) | Ước lượng **4.000** (theo quy mô phiên/lớp lớn nhất thực tế đang chạy — không phải số đo IP trực tiếp) | Ngưỡng L1 rate-limit theo IP nâng từ 300 → **4.000 handshake/phút**. Cần PH-1 xác nhận lại bằng số đo thật |
-| — | (Ngoài 5 câu ở §7.5) Trần `HttpObjectAggregator` ở Gateway | Nâng **8KB → 50KB** — trần chung mọi gói WS, tách biệt với ràng buộc cứng `RoomStateSnapshot < 5KB` (giữ nguyên) | Pipeline Netty Gateway (Task 6) cần cập nhật hằng số này trong code — **chưa sửa code**, mới ghi vào tài liệu |
+| 3 | Quy mô trường lớn nhất sau 1 NAT IP (Business) | Ước lượng **4.000** (theo quy mô phiên/lớp lớn nhất thực tế đang chạy — không phải số đo IP trực tiếp) | Ngưỡng L1 rate-limit theo IP nâng từ 300 → **4.000 handshake/phút**. Cần PH-1 xác nhận lại bằng số đo thật. **Chưa có code** — L1 admission control vẫn chưa có điểm gắn trong repo (xem Task 7) |
+| — | (Ngoài 5 câu ở §7.5) Trần `HttpObjectAggregator` ở Gateway | Nâng **8KB → 50KB** — trần chung mọi gói WS, tách biệt với ràng buộc cứng `RoomStateSnapshot < 5KB` (giữ nguyên) | **Đã sửa code 2026-09-06**: `GatewayPipeline.MAX_HTTP_AGGREGATED_CONTENT_BYTES` = 50KB |
 
 **Còn treo:** câu 1 (`missed_step_policy` mặc định) và câu 3 (ngân sách hạ tầng hàng tháng) của
 system-architecture.md §7.5 — Product/Business chưa trả lời.
 
 > [!NOTE]
-> Các quyết định trên mới **ghi vào tài liệu** (`system-architecture.md`, tech-design.md).
-> Code chưa được cập nhật theo (hằng số 50KB, ngưỡng L1 4000, `ScoreCalculator` thật) — đây là
-> việc TDD kế tiếp khi quay lại các task liên quan.
+> Cập nhật 2026-09-06: công thức điểm Quiz và trần `HttpObjectAggregator` **đã có code thật**
+> (xem hàng tương ứng ở trên). Vẫn còn treo: ngưỡng L1 IP 4000 mới ở tài liệu, chưa có code
+> (chưa có điểm gắn — Task 7); `missed_step_policy` mặc định và ngân sách hạ tầng vẫn chờ trả lời.
 
 ## Phụ thuộc ngoài phạm vi — đã biết, chưa xử lý
 
@@ -158,9 +158,21 @@ progress: "T1, T2, T4, T5, T10 xong. T6 MOT PHAN xong (GatewayPipeline + WS hand
   ca diem 18h50-21h30, ADR-002 giu nguyen khong dao nguoc), nguong L1 NAT IP (uoc luong 4000,
   chua phai so do that, cho PH-1). Them 1 quyet dinh moi ngoai 5 cau: tran HttpObjectAggregator
   Gateway 8KB->50KB (KHONG phai cau tra loi cho G2a - G2a van con treo). Da ghi vao
-  system-architecture.md + tech-design.md; CODE CHUA SUA (hang so 50KB/4000, ScoreCalculator
-  that) - viec TDD ke tiep. Con treo: missed_step_policy mac dinh (Product), ngan sach ha tang
-  (Business), G1a/G1c/G2a/G2b/G3 (ky thuat)"
+  system-architecture.md + tech-design.md.
+  2026-09-06 (vong 3): dong not ScoreCalculator that. Xoa PlaceholderScoreCalculator. Vet thu
+  BinaryChoiceScoreCalculator dung rieng ROI tu nhan ra trung lap voi ScoringFormula (T11) va
+  mau thuan voi chinh cau da ghi o §2.5 ('bieu dien dung bang tap toan tu gioi han - khong can
+  mo rong') - xoa, thay bang FormulaScoreCalculator boc ScoringFormula,
+  FormulaScoreCalculator.binaryChoice() = Multiply(IsCorrect(), Constant(100)).
+  ScoreCalculator.award() them tham so correctAnswerIds, noi qua RoomState.startQuestion (3
+  tham so) va RoomActor.StartQuestion (3 field). Test moi: FormulaScoreCalculatorTest (3 case)
+  + RoomActorTest.should_award0_when_answerDoesNotMatchTheCorrectChoice. Cung sua luon
+  GatewayPipeline.MAX_HTTP_AGGREGATED_CONTENT_BYTES 8KB->50KB (khop quyet dinh cung ngay, tranh
+  code lech tai lieu). mvn -pl :uni-engine test: 46/46 pass. mvn test toan reactor tu root:
+  BUILD SUCCESS ca 4 module. Grep bat buoc sach: client_timestamp_ms chi o doc-comment/field
+  telemetry, .retain() rong o uni-gateway/src/main. Khong con 'Ghi chu con treo' nao cho Task 2.
+  Con treo thuc su: missed_step_policy mac dinh (Product), ngan sach ha tang (Business),
+  G1a/G1c/G2a/G2b/G3 (ky thuat), nguong L1 IP 4000 moi o tai lieu chua co code."
 dev_selftest: pending
 qc_status: pending
 trace: pending

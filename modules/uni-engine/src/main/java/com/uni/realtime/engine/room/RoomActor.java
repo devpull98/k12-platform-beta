@@ -30,7 +30,7 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
 
     public record StartGame() implements Command {}
 
-    public record StartQuestion(String questionId, long durationMs) implements Command {}
+    public record StartQuestion(String questionId, long durationMs, List<String> correctAnswerIds) implements Command {}
 
     /**
      * clientTimestampMs rides along because the real wire envelope carries it (telemetry
@@ -98,7 +98,7 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
     }
 
     private Behavior<Command> onStartQuestion(StartQuestion command) {
-        state.startQuestion(command.questionId(), command.durationMs());
+        state.startQuestion(command.questionId(), command.durationMs(), command.correctAnswerIds());
         return this;
     }
 

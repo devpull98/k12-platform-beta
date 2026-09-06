@@ -1,7 +1,7 @@
 package com.uni.realtime.engine.room;
 
 import com.uni.realtime.engine.metrics.EngineMetrics;
-import com.uni.realtime.engine.scoring.PlaceholderScoreCalculator;
+import com.uni.realtime.engine.scoring.FormulaScoreCalculator;
 import com.uni.realtime.engine.scoring.ScoreCalculator;
 import com.uni.realtime.protocol.GameMessage;
 import com.uni.realtime.protocol.GamePhase;
@@ -28,14 +28,17 @@ import static org.assertj.core.api.Assertions.assertThat;
  * no real clock (test-patterns.mdc) — a {@link MutableClock} stands in for the injected
  * {@code Clock} the design mandates (§5.1 rule 4).
  *
- * <p>ScoreCalculator is deliberately the {@link PlaceholderScoreCalculator} everywhere here:
- * the real formula is a Product decision that has not been made (tech-design.md §9.2 Q1),
- * and nothing in this test suite depends on what the formula actually is, only on the fact
- * that it is never fed client_timestamp_ms.
+ * <p>ScoreCalculator is the real {@link FormulaScoreCalculator#binaryChoice()} (Product decided
+ * the formula 2026-09-06 — system-architecture.md §2.5). Every room in this suite is started
+ * with {@code correctAnswerIds = List.of("a")} via {@link #startGameAndQuestion}, so a
+ * submission of {@code "a"} is genuinely correct and scores 100 -- this test suite is not
+ * re-verifying the formula itself (see {@code FormulaScoreCalculatorTest} for that), only that
+ * RoomActor wires the question's correct answer through correctly.
  */
 class RoomActorTest {
 
     private static final long DURATION_MS = 25_000;
+    private static final List<String> CORRECT_ANSWER = List.of("a");
 
     private MutableClock clock;
     private BehaviorTestKit<RoomActor.Command> testKit;
@@ -44,7 +47,7 @@ class RoomActorTest {
     void setUp() {
         clock = new MutableClock(Instant.parse("2026-09-06T09:00:00Z"));
         testKit = BehaviorTestKit.create(
-                RoomActor.create("room-101", clock, new PlaceholderScoreCalculator(), new EngineMetrics(new SimpleMeterRegistry())));
+                RoomActor.create("room-101", clock, FormulaScoreCalculator.binaryChoice(), new EngineMetrics(new SimpleMeterRegistry())));
     }
 
     @Test
@@ -85,6 +88,20 @@ class RoomActorTest {
         assertThat(ack.getServerReceivedAtMs()).isEqualTo(clock.millis());
         assertThat(ack.getAwardedPoints()).isEqualTo(100);
         assertThat(ack.getTotalScore()).isEqualTo(100);
+    }
+
+    @Test
+    void should_award0_when_answerDoesNotMatchTheCorrectChoice() {
+        startGameAndQuestion("q-1"); // correct answer is "a"
+        TestInbox<GameMessage> inbox = TestInbox.create();
+
+        testKit.run(new RoomActor.SubmitAnswer(
+                "student-1", 1L, "q-1", List.of("b"), 0L, inbox.getRef()));
+
+        var ack = inbox.receiveMessage().getAnswerAck();
+        assertThat(ack.getAccepted()).isTrue(); // accepted as a valid, on-time submission...
+        assertThat(ack.getAwardedPoints()).isZero(); // ...just scored 0, being wrong
+        assertThat(ack.getTotalScore()).isZero();
     }
 
     @Test
@@ -159,7 +176,7 @@ class RoomActorTest {
 
     @Test
     void should_logWarnAndKeepRunning_when_handlerExceedsWatchdogThreshold() {
-        ScoreCalculator slowCalculator = (answerIds, responseTimeMs) -> {
+        ScoreCalculator slowCalculator = (answerIds, correctAnswerIds, responseTimeMs) -> {
             try {
                 Thread.sleep(15); // > WATCHDOG_THRESHOLD_MS(10), well clear of scheduler jitter
             } catch (InterruptedException e) {
@@ -170,7 +187,7 @@ class RoomActorTest {
         BehaviorTestKit<RoomActor.Command> slowTestKit = BehaviorTestKit.create(
                 RoomActor.create("room-slow", clock, slowCalculator, new EngineMetrics(new SimpleMeterRegistry())));
         slowTestKit.run(new RoomActor.StartGame());
-        slowTestKit.run(new RoomActor.StartQuestion("q-1", DURATION_MS));
+        slowTestKit.run(new RoomActor.StartQuestion("q-1", DURATION_MS, CORRECT_ANSWER));
         TestInbox<GameMessage> inbox = TestInbox.create();
 
         slowTestKit.run(new RoomActor.SubmitAnswer(
@@ -186,7 +203,7 @@ class RoomActorTest {
 
     private void startGameAndQuestion(String questionId) {
         testKit.run(new RoomActor.StartGame());
-        testKit.run(new RoomActor.StartQuestion(questionId, DURATION_MS));
+        testKit.run(new RoomActor.StartQuestion(questionId, DURATION_MS, CORRECT_ANSWER));
     }
 
     /** Stands in for the injected Clock (§5.1 rule 4) so tests control elapsed time exactly. */

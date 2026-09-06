@@ -23,7 +23,9 @@ import io.netty.handler.codec.http.websocketx.WebSocketServerProtocolHandler;
 public final class GatewayPipeline {
 
     public static final String WEBSOCKET_PATH = "/ws";
-    private static final int MAX_HTTP_AGGREGATED_CONTENT_BYTES = 8 * 1024;
+
+    /** Product decision 2026-09-06 (system-architecture.md §1.1/§7.5): 50KB cap on every WS message. */
+    private static final int MAX_HTTP_AGGREGATED_CONTENT_BYTES = 50 * 1024;
 
     private GatewayPipeline() {}
 

@@ -94,8 +94,8 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 
 - **Mode:** sequential after [T1] · parallel with [T4, T6]
 - **Mô tả:** Lõi game engine. Pekko Typed, đơn luồng, `Clock` tiêm vào. Gồm luôn watchdog đo-và-cảnh-báo.
-- **Kết quả:** `mvn -pl :uni-engine test -Dtest=RoomActorTest` 8/8 pass; `mvn -pl :uni-engine test`
-  (toàn module) 9/9 pass, leak detection `paranoid` sạch. Chi tiết: `note.md`.
+- **Kết quả:** `mvn -pl :uni-engine test -Dtest=RoomActorTest` 9/9 pass; `mvn -pl :uni-engine test`
+  (toàn module) 46/46 pass, leak detection `paranoid` sạch. Chi tiết: `note.md`.
 - **File dự kiến:** `modules/uni-engine/src/main/java/.../room/RoomActor.java`, `.../room/RoomState.java`, `.../scoring/ScoreCalculator.java`
 - **Dependency:** Task 1
 - **Acceptance criteria:**
@@ -108,9 +108,15 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
   - [x] `Clock` là tham số constructor — **không** gọi `System.currentTimeMillis()` trực tiếp
   - [x] Watchdog: đo `System.nanoTime()` quanh `handle()`, ghi metric, `log.warn` khi > 10ms. **Không cố ngắt** (§10.5)
 - **Verification:** `mvn -pl :uni-engine test -Dtest=RoomActorTest` — dùng `BehaviorTestKit`, không mạng. Phải có case: gian lận `client_timestamp_ms` → điểm không đổi; gửi lại cùng `sequence` → điểm không đổi + ACK cũ trả lại.
-- **Ghi chú còn treo:** `ScoreCalculator` dùng `PlaceholderScoreCalculator` tạm (flat, đánh dấu rõ
-  TEMPORARY) vì công thức điểm Quiz Product chưa chốt (tech-design.md §9.2 câu 1). Thay bằng
-  công thức thật khi Product quyết — không được lặng lẽ trở thành mặc định production.
+- **Cập nhật 2026-09-06 (sau khi Product chốt công thức, system-architecture.md §2.5):**
+  `PlaceholderScoreCalculator` đã bị xoá, thay bằng `FormulaScoreCalculator` (bọc
+  `ScoringFormula` — cây biểu thức đóng của Task 11 — thay vì một class chấm điểm đứng riêng,
+  tránh nhân đôi cơ chế). `FormulaScoreCalculator.binaryChoice()` hiện thực đúng công thức
+  Phase 1: trắc nghiệm 1-trong-4, nhị phân đúng/sai, đúng = 100 điểm, sai = 0, không bonus tốc
+  độ. `ScoreCalculator.award(...)` mở rộng nhận thêm `correctAnswerIds`, nối qua
+  `RoomState.startQuestion(...)` (3 tham số) và `RoomActor.StartQuestion` (3 field). Test mới:
+  `FormulaScoreCalculatorTest` (3 case) + `RoomActorTest.should_award0_when_answerDoesNotMatchTheCorrectChoice`.
+  `mvn -pl :uni-engine test` 46/46 pass. Không còn "Ghi chú còn treo" nào cho Task 2.
 - **Rollback nếu fail:** revert commit; T3/T11 chưa bắt đầu nên không kéo theo gì.
 
 ---
@@ -218,7 +224,9 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 - **File dự kiến:** `modules/uni-gateway/src/main/java/.../net/GatewayBootstrap.java`, `.../auth/TicketAuthHandler.java`, `.../net/RoomRouteHandler.java`
 - **Dependency:** Task 1
 - **Acceptance criteria:**
-  - [x] Pipeline đúng thứ tự: `HttpServerCodec → HttpObjectAggregator(8KB) → WebSocketServerProtocolHandler → TicketAuthHandler → RateLimitHandler → ProtobufDecoder → RoomRouteHandler`
+  - [x] Pipeline đúng thứ tự: `HttpServerCodec → HttpObjectAggregator(50KB) → WebSocketServerProtocolHandler → TicketAuthHandler → RateLimitHandler → ProtobufDecoder → RoomRouteHandler`
+        (cập nhật 2026-09-06: cap chung mọi gói WS chốt ở 50KB — system-architecture.md §1.1/§7.5 —
+        thay cho 8KB tạm ban đầu)
   - [x] `TicketAuthHandler` **tự gỡ khỏi pipeline** sau handshake — mỗi gói sau đó không verify lại chữ ký
   - [x] Ticket hợp lệ → ghi `ChannelAttributes{student_id, room_id, session_id}`
   - [x] **`room_id` luôn đọc từ `ChannelAttributes`, không bao giờ từ payload** (§10.6)
@@ -407,8 +415,10 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
     `GameDefinition`/`DefinitionLoader`; việc THỰC THI hàng rào này lúc chạy (đếm transition
     thật trong một phiên) chưa có nơi nào tiêu thụ `GameDefinition` — `RoomActor` (Task 2) chưa
     được nối với nó. Đây là "gắn dây" tương lai (Task 13 hoặc tương đương), không phải thiếu ở T11.
-  - Công thức điểm CỤ THỂ cho quiz vẫn là câu hỏi Product chưa chốt (tech-design.md §9.2 câu 1)
-    — `ScoringFormulaTest` chỉ minh hoạ khả năng biểu diễn, không phải công thức thật.
+  - Công thức điểm CỤ THỂ cho quiz đã được Product chốt 2026-09-06 (system-architecture.md §2.5)
+    và hiện thực ở Task 2 qua `FormulaScoreCalculator.binaryChoice()` — `ScoringFormulaTest` ở
+    đây vẫn giữ nguyên vai trò minh hoạ khả năng biểu diễn của `ScoringFormula` nói chung, còn
+    công thức thật (100/0, không bonus tốc độ) có test riêng ở `FormulaScoreCalculatorTest`.
   - Không xây dựng tầng deserialize JSON/YAML cho definition "upload bởi người vận hành" (§2.5)
     — chưa có quyết định định dạng dây nào, tự bịa sẽ là phát minh hạ tầng ngoài phạm vi.
 - **Rollback nếu fail:** revert; tạm hardcode một quiz cố định để T11 chạy được.

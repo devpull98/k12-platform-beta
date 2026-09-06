@@ -3,18 +3,19 @@ package com.uni.realtime.engine.scoring;
 import java.util.List;
 
 /**
- * Isolated on purpose: the Phase-1 quiz scoring formula is a Product decision that has not
- * been made yet (tech-design.md §9.2 question 1). Keeping this boundary separate from
- * {@link com.uni.realtime.engine.room.RoomState} lets the FSM / timestamp / dedupe path be
- * built and tested now, and the real formula dropped in later without touching RoomState.
+ * Isolated on purpose: RoomState never has to know how a formula decides correctness or
+ * points, only that it can ask for a score given what the student submitted, what would have
+ * been correct, and how fast they answered.
  */
 public interface ScoreCalculator {
 
     /**
-     * @param answerIds     the student's chosen answer(s) for the current question
+     * @param answerIds      the student's chosen answer(s) for the current question
+     * @param correctAnswerIds the question's correct answer(s), from the Game Definition/
+     *                       question data the room is currently running
      * @param responseTimeMs {@code server_received_at - server_question_started_at} (9.4) —
      *                        never derived from client_timestamp_ms
      * @return points to add to the student's total for this submission
      */
-    int award(List<String> answerIds, long responseTimeMs);
+    int award(List<String> answerIds, List<String> correctAnswerIds, long responseTimeMs);
 }

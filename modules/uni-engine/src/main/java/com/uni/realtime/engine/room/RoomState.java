@@ -33,6 +33,7 @@ final class RoomState {
 
     private GamePhase phase = GamePhase.LOBBY;
     private String currentQuestionId;
+    private List<String> currentCorrectAnswerIds = List.of();
     private long serverQuestionStartedAtMs;
     private long deadlineMs;
 
@@ -50,8 +51,9 @@ final class RoomState {
         phase = GamePhase.PLAYING;
     }
 
-    void startQuestion(String questionId, long durationMs) {
+    void startQuestion(String questionId, long durationMs, List<String> correctAnswerIds) {
         this.currentQuestionId = questionId;
+        this.currentCorrectAnswerIds = correctAnswerIds;
         this.serverQuestionStartedAtMs = clock.millis();
         this.deadlineMs = serverQuestionStartedAtMs + durationMs;
     }
@@ -97,7 +99,7 @@ final class RoomState {
         }
 
         long responseTimeMs = serverReceivedAtMs - serverQuestionStartedAtMs;
-        int awarded = scoreCalculator.award(answerIds, responseTimeMs);
+        int awarded = scoreCalculator.award(answerIds, currentCorrectAnswerIds, responseTimeMs);
         int newTotal = totalScoreByStudent.merge(studentId, awarded, Integer::sum);
 
         GameMessage ack = buildAck(studentId, sequence, questionId, true, RejectReason.NONE,
