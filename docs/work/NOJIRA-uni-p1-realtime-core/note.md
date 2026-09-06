@@ -356,15 +356,38 @@
   - `modules/uni-engine/src/test/java/com/uni/realtime/engine/definition/DefinitionLoaderTest.java` (mới)
   - `modules/uni-engine/src/test/java/com/uni/realtime/engine/definition/ScoringFormulaTest.java` (mới)
 
+## SPIKE — Pekko scheduler capacity (1.000 timer đồng thời)
+
+- **Trạng thái:** ĐẠT (2026-09-06). Báo cáo đầy đủ: `spike-pekko-timer.md`.
+- **Cách đo:** harness thật (không mock) — 1.000 actor Pekko rỗng, mỗi actor tự hẹn lại đúng 1
+  single-shot timer/chu kỳ 200ms (đúng cơ chế ADR-4, không dùng `startTimerAtFixedRate` vì
+  periodic timer sẽ tự che độ trôi cần đo). Ép `-XX:ActiveProcessorCount=2` để khớp đúng ngưỡng
+  "CPU < 30% ở 2 vCPU" của plan.md (máy dev có nhiều lõi hơn môi trường mục tiêu).
+- **Kết quả (2 lần chạy độc lập, mỗi lần 20 giây, ~91.000 mẫu):**
+  - p99 độ lệch: 36–37ms (ngưỡng đạt: < 50ms)
+  - CPU đỉnh: 5–6% (ngưỡng đạt: < 30%)
+  - Nhất quán giữa 2 lần chạy — không phải kết quả may rủi.
+- **Quyết định: GO.** Giữ nguyên thiết kế single-shot timer mỗi actor (ADR-4) cho Task 3, không
+  cần đổi sang "flush wheel" gom lô ở tầng pod.
+- **Giới hạn đã ghi rõ trong báo cáo:** đo trên actor rỗng (chưa cạnh tranh CPU với business
+  logic thật), đo trên máy dev mô phỏng 2 vCPU (không phải cgroup quota thật của K8s) — cả hai
+  vẫn thuộc PH-1 (load test harness thật) để xác nhận lại ở quy mô/môi trường gần production hơn.
+- **File đụng tới:**
+  - `modules/uni-engine/src/test/java/com/uni/realtime/engine/spike/SchedulerCapacitySpike.java` (mới —
+    có `main()`, tên không khớp pattern Surefire nên không chạy trong `mvn test` thường; xác
+    nhận 37/37 test `uni-engine` không đổi thời gian chạy sau khi thêm file này)
+  - `docs/work/NOJIRA-uni-p1-realtime-core/spike-pekko-timer.md` (mới)
+
 ## Tóm tắt tiến độ
 
-- **8/12 task done đầy đủ (T1, T2, T4, T5, T8, T10, T11) + T6, T7, T9 một phần.**
-- **Đang làm tiếp:** SPIKE Pekko timer (bắt buộc trước Task 3), hoặc quay lại chốt
-  G1a/G1c/G2a/G2b để đóng hẳn T3/T6. Các task còn lại (T3, T12, T13) đều bị chặn bởi SPIKE
-  hoặc bởi câu hỏi kỹ thuật/Product chưa chốt — không còn task nào "sạch" để làm TDD tiếp mà
-  không đụng một trong hai thứ đó, trừ Task 12 (nền quan sát, song song toàn tuyến).
+- **8/12 task done đầy đủ (T1, T2, T4, T5, T8, T10, T11) + T6, T7, T9 một phần. SPIKE đạt.**
+- **Đang làm tiếp:** Task 3 (tick coalescing) giờ đã hết block về mặt kỹ thuật scheduler, nhưng
+  **vẫn còn chờ G2a/G2b** (N lần flush, cách mã hoá delta) — chưa thể bắt đầu TDD thật cho T3.
+  Lựa chọn sạch nhất hiện tại: Task 12 (nền quan sát, song song toàn tuyến, không phụ thuộc gì
+  đang treo), hoặc quay lại chốt G1a/G1c/G2a/G2b để mở khoá T3/T6.
 - **Block:**
-  - Task 3 (tick coalescing) vẫn chờ G2a/G2b (tech-design.md §9.1) — N lần flush và cách mã hoá delta chưa chốt.
+  - Task 3 (tick coalescing): SPIKE đã đạt, nhưng vẫn chờ G2a/G2b (tech-design.md §9.1) — N lần
+    flush và cách mã hoá delta chưa chốt.
   - Task 6 **không đóng hẳn được** — chờ G1a/G1c (thuật toán ký + dung sai đồng hồ) từ đội dịch vụ nền tảng.
   - Task 7 thiếu L1 IP admission control (optional theo AC, nhưng chưa có điểm gắn trong repo).
   - Task 9 thiếu chuỗi mailbox-depth-driven cụ thể (giới hạn kiến trúc 1-connection-nhiều-phòng, không phải bug).

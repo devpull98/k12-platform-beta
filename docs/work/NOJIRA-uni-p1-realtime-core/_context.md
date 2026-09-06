@@ -120,10 +120,13 @@ progress: "T1, T2, T4, T5, T10 xong. T6 MOT PHAN xong (GatewayPipeline + WS hand
   (§9.2 cau 1). T11 xong: GameDefinition + Step (co nextStepIds tao graph) + ScoringFormula
   (sealed interface dong, 7 toan tu, khong eval/script) + DefinitionLoader (tu choi luc nap:
   rong, tick_mode FIXED, maxTransitions<=0, startStepId/nextStepIds khong ton tai, chu trong
-  DFS 3 mau) - 37/37 test o uni-engine, da prove-it bang cach vo hieu hoa rejectCycles. Toan
-  reactor xanh. Ke tiep: SPIKE Pekko timer (truoc T3) hoac quay lai chot G1a/G1c/G2a/G2b de
-  dong han T3/T6 - khong con task nao sach de lam tiep ngoai Task 12 (observability, song
-  song toan tuyen)"
+  DFS 3 mau) - 37/37 test o uni-engine, da prove-it bang cach vo hieu hoa rejectCycles.
+  SPIKE Pekko scheduler DAT: 1000 actor, single-shot timer tu hen lai moi chu ky 200ms,
+  -XX:ActiveProcessorCount=2, 2 lan chay doc lap deu p99 lech 36-37ms (<50ms) va CPU dinh
+  5-6% (<30%) - quyet dinh GO, giu nguyen thiet ke ADR-4, khong can flush wheel. Bao cao day
+  du: spike-pekko-timer.md. Toan reactor xanh. Ke tiep: Task 3 van con bi chan boi G2a/G2b
+  (chua phai scheduler nua) - lua chon sach nhat la Task 12 (observability, song song toan
+  tuyen) hoac quay lai chot G1a/G1c/G2a/G2b"
 dev_selftest: pending
 qc_status: pending
 trace: pending

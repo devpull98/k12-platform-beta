@@ -115,15 +115,22 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 
 ---
 
-### SPIKE (time-box 4 giờ): Pekko scheduler chịu được bao nhiêu timer đồng thời?
+### SPIKE (time-box 4 giờ): Pekko scheduler chịu được bao nhiêu timer đồng thời? — ✅ ĐẠT (2026-09-06)
 
 - **Mode:** sequential after [T2] — **chạy TRƯỚC T3**
 - **Mô tả:** ADR-4 khiến mỗi phòng dirty tự hẹn một single-shot timer. §16.3 đã nhận đây là rủi ro chính của Engine nhưng chưa ai đo. Pekko dùng hashed-wheel scheduler, `tick-duration` mặc định 10ms.
 - **Câu hỏi cần trả lời:** ~1.000 `startSingleTimer` đồng thời/pod ở độ phân giải 200ms có giữ được độ chính xác và không ăn hết CPU không?
 - **Cách làm:** spawn 1.000 actor rỗng, mỗi actor hẹn timer 200ms theo nhịp ngẫu nhiên; đo độ lệch thực tế so với hạn hẹn (p50/p99) và CPU. Không cần Gateway, không cần mạng.
 - **Đạt nếu:** p99 độ lệch < 50ms và CPU < 30% ở 2 vCPU.
+- **Kết quả thật (2 lần chạy độc lập, `-XX:ActiveProcessorCount=2`):** p99 lệch 36–37ms (< 50ms) ·
+  CPU đỉnh 5–6% (< 30%). **GO** — giữ nguyên single-shot timer mỗi actor, không cần flush wheel.
+  Chi tiết đầy đủ: `spike-pekko-timer.md`.
 - **Nếu không đạt:** đổi thiết kế sang **một flush wheel gom lô ở tầng pod** (một timer duy nhất quét danh sách phòng dirty) thay vì timer mỗi actor. Ghi lại quyết định vào v3.0 §6.2.
 - **Output:** ghi theo `templates/spike-template.md`, đặt tại `docs/work/NOJIRA-uni-p1-realtime-core/spike-pekko-timer.md`
+- **Harness:** `modules/uni-engine/src/test/java/.../spike/SchedulerCapacitySpike.java` — có
+  `main()`, tên KHÔNG khớp pattern `*Test`/`*Tests` của Surefire nên không chạy trong `mvn test`
+  bình thường (đã xác nhận: 37/37 test uni-engine không đổi thời gian chạy). Chạy tay theo
+  hướng dẫn trong javadoc của file.
 
 ---
 
