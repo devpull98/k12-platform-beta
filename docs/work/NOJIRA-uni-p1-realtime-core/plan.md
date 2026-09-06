@@ -148,18 +148,29 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 
 ---
 
-### Task 4: Internal Frame Channel — codec + phía server (Engine)
+### Task 4: Internal Frame Channel — codec + phía server (Engine) — ✅ XONG (2026-09-06)
 
 - **Mode:** sequential after [T1] · parallel with [T2, T6]
 - **Mô tả:** TCP dài hạn + length-prefixed Protobuf (ADR-1). Dùng handler có sẵn của Netty, **không tự viết parser**.
+- **Kết quả:** `mvn -pl :uni-engine test -Dtest=FrameCodecTest` 4/4 pass (EmbeddedChannel);
+  `mvn -pl :uni-engine test -Dtest=FrameChannelServerTest` 1/1 pass (socket thật, port ephemeral —
+  bonus so với yêu cầu, chứng minh bootstrap thật sự bindable). Toàn module 14/14, leak detection
+  `paranoid` sạch. Chi tiết: `note.md`.
 - **File dự kiến:** `modules/uni-engine/src/main/java/.../net/FrameChannelServer.java`, `.../net/FrameCodec.java`
 - **Dependency:** Task 1
 - **Acceptance criteria:**
-  - [ ] `LengthFieldPrepender(4)` + `LengthFieldBasedFrameDecoder(1MB, 0, 4, 0, 4)`
-  - [ ] **Một connection dùng chung cho mọi phòng** giữa mỗi cặp (GW pod, Engine pod) — multiplex bằng `room_id`, không phải một connection mỗi phòng
-  - [ ] Gói bị chia thành nhiều mảnh TCP vẫn ráp đúng
-  - [ ] Gói vượt `maxFrameLength` → đóng connection + log, không OOM
+  - [x] `LengthFieldPrepender(4)` + `LengthFieldBasedFrameDecoder(1MB, 0, 4, 0, 4)`
+  - [x] **Một connection dùng chung cho mọi phòng** giữa mỗi cặp (GW pod, Engine pod) — multiplex bằng `room_id`, không phải một connection mỗi phòng
+  - [x] Gói bị chia thành nhiều mảnh TCP vẫn ráp đúng
+  - [x] Gói vượt `maxFrameLength` → đóng connection + log, không OOM
 - **Verification:** `mvn -pl :uni-engine test -Dtest=FrameCodecTest` dùng `EmbeddedChannel`, **bắt buộc có case ghi từng byte một** để chứng minh framing đúng khi phân mảnh.
+- **Ghi chú:** protobuf encode/decode viết tay bằng `GameMessage.parseFrom`/`toByteArray` thay vì
+  `netty-codec-protobuf` (có sẵn transitively nhưng cần prototype reflection) — đơn giản hơn và
+  vẫn đúng tinh thần "không tự viết parser" (phần framing vẫn 100% Netty). Netty 4.2.17 đã
+  deprecate `NioEventLoopGroup`; `FrameChannelServer` dùng `MultiThreadIoEventLoopGroup` +
+  `NioIoHandler.newFactory()` thay thế — không còn warning deprecation khi build.
+  `FrameChannelServer` chỉ bootstrap + gọi callback `Consumer<GameMessage>`; định tuyến gói tin
+  tới đúng `RoomActor` theo `room_id` là việc của Task 10 (`RoomOwnership`), chưa làm ở đây.
 - **Rollback nếu fail:** revert; nhánh T2 không bị ảnh hưởng.
 
 ---
