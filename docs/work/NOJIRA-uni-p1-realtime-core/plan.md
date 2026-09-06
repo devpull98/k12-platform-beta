@@ -372,21 +372,38 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 
 ---
 
-### Task 11: Game Definition tối giản + `MAX_TRANSITIONS`
+### Task 11: Game Definition tối giản + `MAX_TRANSITIONS` — ✅ XONG (2026-09-06)
 
 - **Mode:** sequential after [T2] · parallel with [T3]
 - **Mô tả:** Đủ để chơi trọn một ván quiz. Kèm rào chắn runtime tối thiểu (§10.5).
+- **Kết quả:** `mvn -pl :uni-engine test -Dtest=DefinitionLoaderTest` 8/8 pass +
+  `ScoringFormulaTest` 6/6 pass (thêm ngoài yêu cầu — chứng minh tập toán tử giới hạn tính
+  đúng, không chỉ đúng cấu trúc dữ liệu). **Prove-it**: tạm vô hiệu hoá `rejectCycles(...)`,
+  xác nhận đúng 2/8 test chu trình fail, rồi bật lại. Toàn module 37/37, toàn reactor xanh.
 - **File dự kiến:** `modules/uni-engine/src/main/java/.../definition/GameDefinition.java`, `.../definition/DefinitionLoader.java`
 - **Dependency:** Task 2
 - **Acceptance criteria:**
-  - [ ] Định nghĩa được: danh sách step, thời lượng mỗi step, `tick_mode`, công thức điểm
-  - [ ] **Validate DAG lúc nạp** — phát hiện chu trình bằng duyệt đồ thị, từ chối definition có chu trình
-  - [ ] **Không script engine, không biểu thức tuỳ ý** — công thức điểm dùng tập toán tử giới hạn
-  - [ ] `MAX_TRANSITIONS` mỗi phiên làm hàng rào cuối
-  - [ ] `missed_step_policy` **có mặt trong schema** với mặc định `ZERO`, dù luồng late join chưa làm ở GĐ1
-  - [ ] `tick_mode` chấp nhận `COALESCE` | `FIXED` trong schema, nhưng loader **từ chối `FIXED`
+  - [x] Định nghĩa được: danh sách step, thời lượng mỗi step, `tick_mode`, công thức điểm
+  - [x] **Validate DAG lúc nạp** — phát hiện chu trình bằng duyệt đồ thị, từ chối definition có chu trình
+  - [x] **Không script engine, không biểu thức tuỳ ý** — công thức điểm dùng tập toán tử giới hạn
+  - [x] `MAX_TRANSITIONS` mỗi phiên làm hàng rào cuối
+  - [x] `missed_step_policy` **có mặt trong schema** với mặc định `ZERO`, dù luồng late join chưa làm ở GĐ1
+  - [x] `tick_mode` chấp nhận `COALESCE` | `FIXED` trong schema, nhưng loader **từ chối `FIXED`
         lúc nạp** ở GĐ1 (chưa có implementation — xem Task 3, quyết định #4)
 - **Verification:** `mvn -pl :uni-engine test -Dtest=DefinitionLoaderTest` — definition có chu trình bị từ chối **lúc nạp**, không phải lúc chạy.
+- **Ghi chú:**
+  - `ScoringFormula` là cây biểu thức `sealed interface` đóng (7 record: `Constant`,
+    `IsCorrect`, `ResponseTimeMs`, `Add`, `Subtract`, `Multiply`, `Divide`, `Min`, `Max`) —
+    không `eval`, không reflection, không hook script nào; đây chính là "tập toán tử giới hạn"
+    của AC, không phải parser cho một mini-language dạng text.
+  - `MAX_TRANSITIONS` mới chỉ là **giá trị cấu hình được validate dương** trong
+    `GameDefinition`/`DefinitionLoader`; việc THỰC THI hàng rào này lúc chạy (đếm transition
+    thật trong một phiên) chưa có nơi nào tiêu thụ `GameDefinition` — `RoomActor` (Task 2) chưa
+    được nối với nó. Đây là "gắn dây" tương lai (Task 13 hoặc tương đương), không phải thiếu ở T11.
+  - Công thức điểm CỤ THỂ cho quiz vẫn là câu hỏi Product chưa chốt (tech-design.md §9.2 câu 1)
+    — `ScoringFormulaTest` chỉ minh hoạ khả năng biểu diễn, không phải công thức thật.
+  - Không xây dựng tầng deserialize JSON/YAML cho definition "upload bởi người vận hành" (§2.5)
+    — chưa có quyết định định dạng dây nào, tự bịa sẽ là phát minh hạ tầng ngoài phạm vi.
 - **Rollback nếu fail:** revert; tạm hardcode một quiz cố định để T11 chạy được.
 
 ---

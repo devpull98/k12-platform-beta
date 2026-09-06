@@ -317,14 +317,55 @@
   - `modules/uni-gateway/src/test/java/com/uni/realtime/gateway/routing/FrameChannelClientTest.java` (sửa)
   - `modules/uni-engine/src/test/java/com/uni/realtime/engine/net/FrameChannelServerTest.java` (sửa)
 
+## Task 11 — Engine: GameDefinition + DefinitionLoader
+
+- **Trạng thái:** done (2026-09-06)
+- **Verification:** `mvn -pl :uni-engine test -Dtest=DefinitionLoaderTest` → 8/8 pass.
+  `ScoringFormulaTest` → 6/6 pass (thêm ngoài yêu cầu). **Prove-it**: tạm comment-out lời gọi
+  `rejectCycles(...)` trong `DefinitionLoader.load()`, chạy lại → đúng 2/8 test (2 case chu
+  trình) fail, không hơn không kém, rồi bật lại → xanh. Toàn module 37/37, toàn reactor xanh.
+- **Phạm vi đã làm:**
+  - `GameDefinition` (record): `steps`, `startStepId`, `tickMode`, `scoringFormula`,
+    `missedStepPolicy` (mặc định dùng `ZERO` theo đúng câu chữ AC — dù bản thân "ZERO có phải
+    default đúng về nghiệp vụ" vẫn là câu hỏi Product mở ở system-architecture.md §7.5), `maxTransitions`.
+  - `Step` (record): `id`, `durationMs`, `nextStepIds` — chính `nextStepIds` là thứ biến danh
+    sách step thành một ĐỒ THỊ (không chỉ chuỗi tuyến tính), cần thiết để "Validate DAG" có ý
+    nghĩa thật.
+  - `ScoringFormula`: cây biểu thức `sealed interface` đóng — 7 record
+    (`Constant`/`IsCorrect`/`ResponseTimeMs`/`Add`/`Subtract`/`Multiply`/`Divide`/`Min`/`Max`),
+    `evaluate(isCorrect, responseTimeMs)` đệ quy. Không `eval`, không reflection — an toàn bằng
+    cấu trúc (compile-time closed set), không phải danh sách đen runtime.
+  - `DefinitionLoader.load(...)`: từ chối (a) steps rỗng, (b) `tickMode == FIXED`, (c)
+    `maxTransitions <= 0`, (d) `startStepId` không tồn tại, (e) `nextStepIds` trỏ tới step
+    không tồn tại (dangling reference), (f) chu trình trong step graph (DFS 3 màu
+    trắng/xám/đen chuẩn, phát hiện back-edge tới node đang nằm trên đường đi hiện tại).
+- **Cố ý chưa làm (thuộc phạm vi khác):**
+  - `MAX_TRANSITIONS` mới là giá trị cấu hình được validate — chưa có nơi nào THỰC THI đếm
+    transition thật lúc chạy (chưa có consumer nào cho `GameDefinition`, kể cả `RoomActor`).
+  - Công thức điểm quiz THẬT vẫn chờ Product quyết (tech-design.md §9.2 câu 1).
+  - Không có tầng deserialize JSON/YAML cho definition "upload bởi người vận hành" — chưa có
+    quyết định định dạng dây, tự bịa sẽ là phát minh hạ tầng ngoài phạm vi.
+- **File đụng tới:**
+  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/definition/TickMode.java` (mới)
+  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/definition/MissedStepPolicy.java` (mới)
+  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/definition/Step.java` (mới)
+  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/definition/ScoringFormula.java` (mới)
+  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/definition/GameDefinition.java` (mới)
+  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/definition/DefinitionRejectedException.java` (mới)
+  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/definition/DefinitionLoader.java` (mới)
+  - `modules/uni-engine/src/test/java/com/uni/realtime/engine/definition/DefinitionLoaderTest.java` (mới)
+  - `modules/uni-engine/src/test/java/com/uni/realtime/engine/definition/ScoringFormulaTest.java` (mới)
+
 ## Tóm tắt tiến độ
 
-- **7/12 task done đầy đủ (T1, T2, T4, T5, T8, T10) + T6, T7, T9 một phần.**
-- **Đang làm tiếp:** SPIKE Pekko timer (bắt buộc trước Task 3), Task 11 (Game Definition tối
-  giản, phụ thuộc T2), hoặc quay lại chốt G1a/G1c/G2a/G2b để đóng hẳn T3/T6.
+- **8/12 task done đầy đủ (T1, T2, T4, T5, T8, T10, T11) + T6, T7, T9 một phần.**
+- **Đang làm tiếp:** SPIKE Pekko timer (bắt buộc trước Task 3), hoặc quay lại chốt
+  G1a/G1c/G2a/G2b để đóng hẳn T3/T6. Các task còn lại (T3, T12, T13) đều bị chặn bởi SPIKE
+  hoặc bởi câu hỏi kỹ thuật/Product chưa chốt — không còn task nào "sạch" để làm TDD tiếp mà
+  không đụng một trong hai thứ đó, trừ Task 12 (nền quan sát, song song toàn tuyến).
 - **Block:**
   - Task 3 (tick coalescing) vẫn chờ G2a/G2b (tech-design.md §9.1) — N lần flush và cách mã hoá delta chưa chốt.
   - Task 6 **không đóng hẳn được** — chờ G1a/G1c (thuật toán ký + dung sai đồng hồ) từ đội dịch vụ nền tảng.
   - Task 7 thiếu L1 IP admission control (optional theo AC, nhưng chưa có điểm gắn trong repo).
   - Task 9 thiếu chuỗi mailbox-depth-driven cụ thể (giới hạn kiến trúc 1-connection-nhiều-phòng, không phải bug).
-  - `ScoreCalculator` thật vẫn chờ Product (câu 1, §9.2 / system-architecture.md §7.5).
+  - `ScoreCalculator` thật và công thức điểm trong `GameDefinition` đều chờ chung 1 quyết định Product (§9.2 câu 1).

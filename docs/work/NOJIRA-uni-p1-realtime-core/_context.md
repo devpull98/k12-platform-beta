@@ -117,8 +117,13 @@ progress: "T1, T2, T4, T5, T10 xong. T6 MOT PHAN xong (GatewayPipeline + WS hand
   "mailbox RoomActor day -> Engine tu dung doc dung ket noi" vi 1 connection multiplex nhieu
   phong (ADR-001) nen khong map 1-1 duoc - gioi han kien truc that, khong phai thieu sot.
   ScoreCalculator dung PlaceholderScoreCalculator tam vi cong thuc diem Product chua chot
-  (§9.2 cau 1). Ke tiep: SPIKE Pekko timer (truoc T3), T11 (Game Definition toi gian, phu
-  thuoc T2), hoac quay lai chot G1a/G1c/G2a/G2b de dong han T3/T6"
+  (§9.2 cau 1). T11 xong: GameDefinition + Step (co nextStepIds tao graph) + ScoringFormula
+  (sealed interface dong, 7 toan tu, khong eval/script) + DefinitionLoader (tu choi luc nap:
+  rong, tick_mode FIXED, maxTransitions<=0, startStepId/nextStepIds khong ton tai, chu trong
+  DFS 3 mau) - 37/37 test o uni-engine, da prove-it bang cach vo hieu hoa rejectCycles. Toan
+  reactor xanh. Ke tiep: SPIKE Pekko timer (truoc T3) hoac quay lai chot G1a/G1c/G2a/G2b de
+  dong han T3/T6 - khong con task nao sach de lam tiep ngoai Task 12 (observability, song
+  song toan tuyen)"
 dev_selftest: pending
 qc_status: pending
 trace: pending
