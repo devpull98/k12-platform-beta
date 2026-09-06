@@ -101,10 +101,13 @@ progress: "T1, T2, T4, T5, T10 xong. T6 MOT PHAN xong (GatewayPipeline + WS hand
   -> hoc tu owner_pod_id -> gui thang, evict khi pod dut ket noi) - 15/15 test o uni-gateway.
   T10 = RoomOwnership/ModuloRoomOwnership (Math.floorMod, khong dung % truc tiep) + 
   RoomOwnershipHandler (tra NOT_OWNER dung dinh dang de FrameChannelClient cua T5 hoc duoc) -
-  21/21 test o uni-engine, grep '% N|modulo' chi khop dung 1 file. Toan reactor xanh.
-  ScoreCalculator dung PlaceholderScoreCalculator tam vi cong thuc diem Product chua chot
-  (§9.2 cau 1). Ke tiep: SPIKE Pekko timer (truoc T3), T7 (rate limit that, phu thuoc T6),
-  hoac T11 (Game Definition toi gian, phu thuoc T2)"
+  21/21 test o uni-engine, grep '% N|modulo' chi khop dung 1 file. T7 MOT PHAN xong: TokenBucket
+  (fixed-window) + RateLimitHandler that (SUBMIT_ANSWER 3/1s, UPDATE_DRAFT 10/10s, HEARTBEAT
+  2/30s, khoa theo student_id qua 1-instance-per-connection) - 24/24 test o uni-gateway; L1
+  IP admission control (300 handshake/phut) CHUA lam vi chua co diem gan trong repo. Toan
+  reactor xanh. ScoreCalculator dung PlaceholderScoreCalculator tam vi cong thuc diem Product
+  chua chot (§9.2 cau 1). Ke tiep: SPIKE Pekko timer (truoc T3), T8 (RoomRegistry + fan-out,
+  phu thuoc T6), hoac T11 (Game Definition toi gian, phu thuoc T2)"
 dev_selftest: pending
 qc_status: pending
 trace: pending

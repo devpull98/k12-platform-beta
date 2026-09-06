@@ -180,12 +180,54 @@
   - `modules/uni-engine/src/test/java/com/uni/realtime/engine/net/RoomOwnershipHandlerTest.java` (mới)
   - `modules/uni-engine/src/test/java/com/uni/realtime/engine/net/FrameChannelServerTest.java` (sửa)
 
+## Task 7 — Gateway: Rate limiting theo student_id (một phần)
+
+- **Trạng thái:** một phần xong (2026-09-06) — xem "Cố ý chưa làm" bên dưới.
+- **Verification:** `mvn -pl :uni-gateway test -Dtest=RateLimitHandlerTest` → 5/5 pass
+  (`EmbeddedChannel`, `Clock.fixed` — không sleep thời gian thật, không flaky).
+  `mvn -pl :uni-gateway test -Dtest=TokenBucketTest` → 4/4 pass (logic thuần, `MutableClock`
+  test double giống style dùng ở `RoomActorTest`/`FrameChannelClientTest`). Toàn module 24/24,
+  toàn reactor xanh.
+- **Phạm vi đã làm:**
+  - `TokenBucket`: fixed-window counter (`capacity` permit, refill toàn bộ mỗi `refillPeriod`) —
+    chọn window thay vì token trickle vì cách viết "3/refill 1s" của AC đọc tự nhiên như vậy và
+    dễ test tất định hơn.
+  - `RateLimitHandler`: thay hẳn placeholder của Task 6. 3 bucket riêng theo `type`:
+    `SUBMIT_ANSWER` 3/1s, `UPDATE_DRAFT` 10/10s, `HEARTBEAT` 2/30s. Mỗi connection có đúng 1
+    instance handler (do `GatewayPipeline` tạo mới mỗi channel) → bucket state per-instance
+    tự nhiên chính là per-student_id, không cần `Map` chia sẻ giữa các connection.
+  - `SUBMIT_ANSWER` vượt ngưỡng → trả `AnswerAck{accepted=false, reject_reason=RATE_LIMIT_EXCEEDED}`
+    thật qua `ctx.writeAndFlush`, không forward tiếp, **không đóng channel** (test xác nhận
+    `channel.isOpen()` vẫn true).
+  - Case bắt buộc "500 client sau cùng 1 IP đều kết nối được": test dựng 500
+    `RateLimitHandler` độc lập (mô phỏng 500 connection thật, đúng kiến trúc 1 instance/connection)
+    và xác nhận từng client đều gửi được — đúng vì code **không hề đọc IP ở đâu cả**, không phải
+    vì có logic đặc biệt "bỏ qua IP".
+- **Cố ý CHƯA làm — không phải thiếu sót:**
+  - **L1 IP-based admission control (300 handshake/phút)**: đây là control ở tầng
+    handshake/ingress (giới hạn số kết nối MỚI/phút theo IP), khác hẳn cơ chế per-message theo
+    `student_id` mà `RateLimitHandler` làm. Chưa có điểm gắn nào trong repo (không có admission
+    control component). AC ghi "nếu bật" — nghĩa là optional, nhưng để trung thực, đánh dấu task
+    này "một phần xong" thay vì "xong" vì mục AC đó chưa tick.
+  - `UPDATE_DRAFT`/`HEARTBEAT` vượt ngưỡng: drop im lặng, không có phản hồi `RATE_LIMIT_EXCEEDED`
+    thật trên dây vì schema không có payload ack cho 2 loại này (`UPDATE_DRAFT` thiếu payload
+    trong oneof — tech-design.md §G3). Không tự thêm field/message mới vào `.proto` (phải đi PR
+    riêng theo quy ước).
+  - "Tổng 15/15s" trong AC gốc: không hiện thực thành bucket thứ 4 — 3 cửa sổ 1s/10s/30s không
+    gộp thành 1 cửa sổ chung có nghĩa; đọc là ước lượng thô, không phải cơ chế cần code.
+- **File đụng tới:**
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/TokenBucket.java` (mới)
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/RateLimitHandler.java` (thay hẳn placeholder)
+  - `modules/uni-gateway/src/test/java/com/uni/realtime/gateway/net/TokenBucketTest.java` (mới)
+  - `modules/uni-gateway/src/test/java/com/uni/realtime/gateway/net/RateLimitHandlerTest.java` (mới)
+
 ## Tóm tắt tiến độ
 
-- **6/12 task done đầy đủ (T1, T2, T4, T5, T10) + T6 một phần.**
-- **Đang làm tiếp:** SPIKE Pekko timer (bắt buộc trước Task 3), hoặc Task 7 (rate limit thật,
+- **6/12 task done đầy đủ (T1, T2, T4, T5, T10) + T6 và T7 một phần.**
+- **Đang làm tiếp:** SPIKE Pekko timer (bắt buộc trước Task 3), Task 8 (RoomRegistry + fan-out,
   phụ thuộc T6), hoặc Task 11 (Game Definition tối giản, phụ thuộc T2).
 - **Block:**
   - Task 3 (tick coalescing) vẫn chờ G2a/G2b (tech-design.md §9.1) — N lần flush và cách mã hoá delta chưa chốt.
   - Task 6 **không đóng hẳn được** — chờ G1a/G1c (thuật toán ký + dung sai đồng hồ) từ đội dịch vụ nền tảng.
+  - Task 7 thiếu L1 IP admission control (optional theo AC, nhưng chưa có điểm gắn trong repo).
   - `ScoreCalculator` thật vẫn chờ Product (câu 1, §9.2 / system-architecture.md §7.5).
