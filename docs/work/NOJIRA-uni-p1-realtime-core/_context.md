@@ -172,11 +172,31 @@ progress: "T1, T2, T4, T5, T10 xong. T6 MOT PHAN xong (GatewayPipeline + WS hand
   BUILD SUCCESS ca 4 module. Grep bat buoc sach: client_timestamp_ms chi o doc-comment/field
   telemetry, .retain() rong o uni-gateway/src/main. Khong con 'Ghi chu con treo' nao cho Task 2.
   Con treo thuc su: missed_step_policy mac dinh (Product), ngan sach ha tang (Business),
-  G1a/G1c/G2a/G2b/G3 (ky thuat), nguong L1 IP 4000 moi o tai lieu chua co code."
+  G1a/G1c/G2a/G2b/G3 (ky thuat), nguong L1 IP 4000 moi o tai lieu chua co code.
+  2026-09-07: T3 (tick coalescing, ADR-4) xong. Truoc khi code phai chot 2 quyet dinh ky thuat
+  dang chan T3 o tech-design.md §9.1: G2b (chon D1-D4 - delta muc nguoi choi, khong dung .proto)
+  va G2a (N=10 lan flush thi gui 1 full snapshot). RoomActor truoc Task 3 khong co roster/join
+  gi ca (Task 2 note da ghi ro thuoc Task 3) - them RoomActor.JoinRoom + RoomState.players
+  (Map<String,PlayerRecord>, index gan 1 lan luc join, khong doi lai). RoomState.isDirty()/
+  flush()/buildDeltaSnapshot()/buildFullSnapshot() thuan du lieu (Pekko-free nhu thiet ke goc);
+  dirty-scheduling that (flushScheduled, lastFlushAtMs, TimerScheduler, Behaviors.withTimers)
+  nam o RoomActor dung theo pseudocode ADR-4 o tech-design v3.0 §6.2. RoomActor.create() them
+  tham so TickMode (sai COALESCE -> IllegalArgumentException ngay luc goi, lop fail-fast thu hai
+  sau DefinitionLoader cua T11) va ActorRef<GameMessage> broadcastTarget (dung khuon replyTo nhu
+  SubmitAnswer/JoinRoom - RoomActor khong biet gi ve transport). Test moi TickCoalescingTest (5
+  case) dung ActorTestKit + ManualTime THAT cua Pekko (khong phai BehaviorTestKit nhu
+  RoomActorTest) vi co che can kiem la timer that su chay. Prove-it: tam doi buildDeltaSnapshot()
+  sang duyet players.keySet() thay vi dirtyStudentIds - xac nhan dung 1/5 test Red truoc khi tra
+  lai Green. mvn -pl :uni-engine test: 51/51 pass. mvn clean install toan reactor: BUILD SUCCESS.
+  Grep bat buoc van sach (client_timestamp_ms, .retain(), % N|modulo). Chua lam (thuoc Task 13,
+  khong phai thieu sot T3): noi broadcastTarget voi FrameChannelServer/kenh noi bo that; thuc su
+  phat QUESTION_STARTED/GAME_OVER/TEACHER_COMMAND/CONNECTION_DEGRADED/StudentJoined ra ngoai
+  (chua task nao lam viec nay); luong roi phong (connected=false) - Gateway chua co cach bao
+  Engine. Task sach con lai: Task 13 (cho Sync checkpoint - T7/T9 dong han, T3/T11 da xong)."
 dev_selftest: pending
 qc_status: pending
 trace: pending
-updated: "2026-09-06"
+updated: "2026-09-07"
 ```
 
 **Ship-ready khi:** `dev_selftest: pass` **và** `qc_status ∈ {pass, na}` **và** `trace: pass`.

@@ -199,10 +199,13 @@ sao: `stack: spring` ở repo này chỉ nghĩa là "boot bằng Spring Boot" �
       thiết kế (dịch vụ đã tồn tại). *Chặn T6.*
 - [x] **G1b** "Một lần" hay "TTL ngắn"? → **ĐÃ CHỐT:** Cưỡng chế vé 1 lần bằng Redis Cluster `SET ticket:{jti} "1" EX 30 NX` tại Gateway handshake. Không còn chặn T6.
 - [ ] **G1c** Dung sai lệch đồng hồ khi kiểm `exp`. *Chặn T6.*
-- [ ] **G2a** `N` = bao nhiêu lần flush thì gửi full snapshot? *Chặn T3.* (Lưu ý: quyết định
-      2026-09-06 về "trần 50KB" là trần chung `HttpObjectAggregator` ở Gateway — **không phải**
-      câu trả lời cho `N`, hai việc tách biệt. G2a **vẫn còn treo**.)
-- [ ] **G2b** Duyệt D1–D4, hay chọn delta mức trường (→ phải sửa `.proto`). *Chặn T3 và client PH-3.*
+- [x] **G2a** `N` = bao nhiêu lần flush thì gửi full snapshot? → **ĐÃ CHỐT (2026-09-06, trong đội):**
+      `N = 10` (~2 giây ở trần 200ms/flush). Hiện thực ở
+      `RoomState.FULL_SNAPSHOT_EVERY_N_FLUSHES`. Không còn chặn T3.
+- [x] **G2b** Duyệt D1–D4, hay chọn delta mức trường? → **ĐÃ CHỐT (2026-09-06, trong đội):** chọn
+      D1–D4 (delta ở mức người chơi, không đụng `.proto`). Hiện thực ở
+      `RoomState.buildDeltaSnapshot()`/`buildFullSnapshot()`. Không còn chặn T3 hay client PH-3
+      (client vẫn phải tự hiện thực phần đọc delta khi PH-3 tới, nhưng định dạng trên dây đã chốt).
 - [ ] **G3** Giữ hay bỏ `UPDATE_DRAFT`. *Không chặn — nhưng người code T7 cần biết trước.*
 
 ### 9.2 Product / Business — tài liệu này **cố ý không điền**

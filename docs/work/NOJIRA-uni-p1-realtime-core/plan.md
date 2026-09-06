@@ -140,23 +140,54 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 
 ---
 
-### Task 3: Tick coalescing trong `RoomActor`
+### Task 3: Tick coalescing trong `RoomActor` — ✅ XONG (2026-09-07)
 
 - **Mode:** sequential after [T2, SPIKE]
 - **Mô tả:** 200ms là **trần tần suất**, không phải nhịp phát (ADR-4). Cách hiện thực phụ thuộc kết quả SPIKE.
+- **Kết quả:** `mvn -pl :uni-engine test -Dtest=TickCoalescingTest` 5/5 pass (`ActorTestKit` +
+  `ManualTime` thật — timer thật sự chạy, không phải `BehaviorTestKit`). Toàn module 51/51,
+  toàn reactor `mvn clean install` xanh. **Prove-it**: tạm đổi `buildDeltaSnapshot()` sang duyệt
+  `players.keySet()` thay vì `dirtyStudentIds` — xác nhận đúng 1 test Red
+  (`should_includeOnlyChangedPlayers_when_flushingADelta`) trước khi trả lại Green.
+- **Trước khi code — hai quyết định kỹ thuật chặn T3 (tech-design.md §9.1 G2a/G2b) đã chốt
+  2026-09-06/07, trong đội (không phải Product/Business):**
+  - **G2b:** chọn D1–D4 — delta ở mức người chơi (mỗi `PlayerState` trong delta là bản đầy đủ
+    của đúng những học sinh đổi kể từ lần flush trước; vắng mặt = không đổi), không đụng `.proto`.
+  - **G2a:** `N = 10` — cứ 10 lần flush thì gửi 1 full snapshot thay vì delta (lưới an toàn cho
+    một delta best-effort bị drop dưới backpressure, vì PH-3 client resync chưa tồn tại).
 - **File dự kiến:** `modules/uni-engine/src/main/java/.../room/RoomActor.java` (mở rộng), `.../room/CoalescingFlush.java`
 - **Dependency:** Task 2, SPIKE
 - **Acceptance criteria:**
-  - [ ] **Phòng im lặng phát 0 gói** — đây là mệnh đề trung tâm của ADR-4, phải có test riêng
-  - [ ] Độ trễ tối đa từ lúc `dirty` tới lúc broadcast ≤ 200ms
-  - [ ] Broadcast là **delta**, không phải full state (full state chỉ khi JOIN)
-  - [ ] `ANSWER_ACK`, `GAME_OVER`, `TEACHER_COMMAND`, `QUESTION_STARTED`, `CONNECTION_DEGRADED` **bypass hoàn toàn** coalescing (§5.4)
-  - [ ] `tick_mode` đọc từ Game Definition (`COALESCE` mặc định), không hardcode toàn cục
-  - [ ] **GĐ1 chỉ hiện thực đường `COALESCE`** (quyết định #4: danh mục GĐ1 chỉ có quiz).
-        `tick_mode: FIXED` vẫn nằm trong schema nhưng **chưa có implementation** →
-        nạp definition có `FIXED` phải **fail nhanh lúc nạp** với thông báo rõ ràng,
-        tuyệt đối không im lặng rơi về `COALESCE`
+  - [x] **Phòng im lặng phát 0 gói** — test riêng `should_broadcastZeroPackets_when_roomStaysSilentAfterInitialActivity`
+  - [x] Độ trễ tối đa từ lúc `dirty` tới lúc broadcast ≤ 200ms — test `should_capBroadcastDelayAt200ms_when_dirtiedRightAfterAPreviousFlush`
+  - [x] Broadcast là **delta**, không phải full state (full state chỉ khi JOIN) — `RoomState.joinRoom()`
+        trả full snapshot trực tiếp cho người vừa vào; `RoomState.buildDeltaSnapshot()` chỉ liệt kê
+        học sinh dirty
+  - [x] `ANSWER_ACK` **bypass hoàn toàn** coalescing — vẫn đi thẳng qua `replyTo` như Task 2, không
+        đụng đường flush. `GAME_OVER`/`TEACHER_COMMAND`/`QUESTION_STARTED`/`CONNECTION_DEGRADED`
+        **chưa được RoomActor phát ra như broadcast nào cả** ở bất kỳ task nào tính đến giờ — nên
+        AC "bypass coalescing" đúng cấu trúc (chúng không đi qua flush), nhưng việc thật sự phát
+        các message này ra ngoài là việc chưa làm, thuộc Task 13 (xem ghi chú)
+  - [x] `tick_mode` đọc từ Game Definition (`COALESCE` mặc định), không hardcode toàn cục —
+        `RoomActor.create(...)` nhận tham số `TickMode`, ném `IllegalArgumentException` ngay khi
+        gọi nếu khác `COALESCE` (test `should_rejectFixedTickMode_when_creatingRoomActor...`)
+  - [x] **GĐ1 chỉ hiện thực đường `COALESCE`**. `tick_mode: FIXED` vẫn nằm trong schema
+        (`DefinitionLoader` đã từ chối từ Task 11) — `RoomActor.create` thêm một lớp fail-fast
+        thứ hai phòng trường hợp gọi thẳng bỏ qua loader
 - **Verification:** `mvn -pl :uni-engine test -Dtest=TickCoalescingTest` với `ManualTime` của Pekko. Case bắt buộc: 5 giây không có input → **đếm đúng 0 gói outbound**.
+- **Ghi chú quan trọng:**
+  - **RoomActor trước Task 3 hoàn toàn không có khái niệm roster/join** (note.md Task 2 đã ghi rõ:
+    "Join room / student_index / broadcast / tick coalescing — thuộc Task 3"). Vì delta cần
+    `PlayerState` thật (student_index, display_name, score, answered_current, connected), Task 3
+    phải thêm `RoomActor.JoinRoom` + roster (`Map<String, PlayerRecord>`) vào `RoomState` — không
+    có nơi nào khác đã làm việc này trước đó.
+  - `RoomActor.create(...)` thêm tham số `ActorRef<GameMessage> broadcastTarget` — nơi các
+    snapshot flush được gửi tới. Giữ đúng khuôn mẫu `replyTo` của `SubmitAnswer`/`JoinRoom`:
+    RoomActor không biết gì về transport (không biết gateway pod nào, không biết socket nào).
+    **Nối `broadcastTarget` với `FrameChannelServer`/kênh nội bộ thật, và thật sự phát
+    `QUESTION_STARTED`/`GAME_OVER`/`CONNECTION_DEGRADED`/`StudentJoined` ra ngoài, là việc của
+    Task 13** — đúng ranh giới đã áp dụng nhất quán ở Task 9/12 (không nối dây nửa vời trước khi
+    có điểm gắn thật).
 - **Rollback nếu fail:** revert; T2 vẫn dùng được (broadcast ngay lập tức, chấp nhận tải cao tạm thời).
 
 ---

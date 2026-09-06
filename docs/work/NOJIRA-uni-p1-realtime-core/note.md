@@ -488,19 +488,72 @@
   - `modules/uni-engine/src/test/java/com/uni/realtime/engine/scoring/FormulaScoreCalculatorTest.java` (mới)
   - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/GatewayPipeline.java` (sửa)
 
+## Task 3 — Tick coalescing trong RoomActor (ADR-4)
+
+- **Trạng thái:** done (2026-09-07)
+- **Chốt trước khi code (tech-design.md §9.1, chặn T3):**
+  - **G2b** (mã hoá delta): chọn D1–D4 — delta ở mức người chơi (`RoomStateSnapshot.full=false`,
+    `players` chỉ chứa học sinh đổi từ lần flush trước, mỗi `PlayerState` là bản đầy đủ, vắng mặt
+    = không đổi, định danh bằng `student_index`). Không đụng `.proto`.
+  - **G2a** (chu kỳ full snapshot): `N = 10` lần flush thì gửi 1 full snapshot thay vì delta —
+    lưới an toàn khi một delta best-effort bị drop dưới backpressure (§5.4), vì PH-3 (client
+    resync thật) chưa tồn tại.
+  - Cả hai là quyết định kỹ thuật "quyết được trong đội" theo đúng phân loại của tech-design.md
+    §9.1 (khác G1a — phải hỏi đội dịch vụ nền tảng), không phải câu hỏi Product/Business.
+- **Verification:** `mvn -pl :uni-engine test -Dtest=TickCoalescingTest` → 5/5 pass. Toàn module
+  51/51, toàn reactor `mvn clean install` xanh, không leak (`-Dio.netty.leakDetection.level=paranoid`
+  bật sẵn qua Surefire toàn cục).
+- **Phạm vi đã làm:**
+  - **Roster chưa từng tồn tại trước Task 3** (Task 2 note đã ghi rõ: join/student_index/broadcast
+    thuộc Task 3). Thêm `RoomActor.JoinRoom(studentId, displayName, replyTo)` và
+    `RoomState.players: Map<String, PlayerRecord>` (index gán 1 lần lúc join, không đổi lại kể cả
+    rejoin — D4). `score` KHÔNG lưu trùng trong `PlayerRecord`: `buildPlayerState()` đọc thẳng từ
+    `totalScoreByStudent` đã có sẵn từ Task 2, tránh hai nguồn sự thật.
+  - `RoomState.isDirty()` / `flush()`: đúng khuôn mẫu pseudocode ADR-4 ở tech-design v3.0 §6.2
+    (`dirty`, `flushScheduled`, `lastFlushAt`, `MIN_INTERVAL_MS=200`) — `dirty`/`flushScheduled`/
+    `lastFlushAt` là state của `RoomActor` (cần `TimerScheduler` + `Clock`, không Pekko-free được);
+    `isDirty()`/`flush()`/đếm N lần flush là state của `RoomState` (thuần dữ liệu, không cần actor).
+  - `RoomActor.create(...)` thêm `TickMode` + `ActorRef<GameMessage> broadcastTarget`. Sai
+    `TickMode` (khác `COALESCE`) → `IllegalArgumentException` ngay lúc gọi `create()`, không chờ
+    tới lúc actor chạy — `DefinitionLoader` (Task 11) đã chặn `FIXED` lúc nạp definition, đây là
+    lớp fail-fast thứ hai phòng ai đó gọi thẳng bỏ qua loader.
+  - `onSubmitAnswer`/`onJoinRoom`/`onStartQuestion` đều gọi `scheduleFlushIfDirty()` sau khi đổi
+    state — bất kỳ thay đổi roster nào (điểm, answered_current, join mới, reset answered_current
+    khi câu hỏi mới bắt đầu) đều đi qua đúng MỘT con đường coalescing, không có đường tắt nào khác.
+  - Dùng `ActorTestKit` + `ManualTime` thật cho `TickCoalescingTest` (không phải `BehaviorTestKit`
+    như `RoomActorTest`) vì cơ chế cần kiểm là timer thật sự chạy — `BehaviorTestKit` không chạy
+    timer. `Clock` test double và `ManualTime` là hai đồng hồ độc lập phải tiến cùng nhau thủ công
+    trong test (`advanceTime()`) — ở production cả hai đều là đồng hồ thật nên tự động khớp.
+  - **Prove-it**: tạm đổi `buildDeltaSnapshot()` sang duyệt toàn bộ `players.keySet()` thay vì chỉ
+    `dirtyStudentIds` — xác nhận đúng 1/5 test Red (`should_includeOnlyChangedPlayers...`), các
+    test khác vẫn Green (đúng — chúng không kiểm nội dung delta), rồi trả lại code đúng để Green
+    lại toàn bộ.
+- **Cố ý chưa làm (thuộc Task 13, không phải thiếu sót Task 3):**
+  - `broadcastTarget` là một `ActorRef<GameMessage>` đơn — đúng khuôn `replyTo` đã dùng cho
+    `SubmitAnswer`/`JoinRoom`, giữ RoomActor không biết gì về transport. Nối nó với
+    `FrameChannelServer`/kênh nội bộ thật (và multi-pod fan-out theo quyết định B1) là Task 13.
+  - `QUESTION_STARTED`, `GAME_OVER`, `TEACHER_COMMAND`, `CONNECTION_DEGRADED`, `StudentJoined`
+    **chưa được RoomActor phát ra ở đâu cả** — không riêng Task 3, chưa task nào implement việc
+    phát các message này. AC "bypass hoàn toàn coalescing" đúng cấu trúc vì chúng không đụng
+    đường flush, nhưng bản thân việc phát chúng ra ngoài vẫn là việc chưa làm.
+  - Không có luồng "rời phòng" (`channelInactive` → `connected=false`) — Gateway (Task 6/8) chưa
+    có cách báo điều này cho Engine. `PlayerRecord.connected` tồn tại trong schema/roster nhưng
+    chỉ được set `true` (lúc join), chưa bao giờ bị set `false`.
+- **File đụng tới:**
+  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/room/RoomState.java` (sửa — roster, dirty, flush, snapshot builders)
+  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/room/RoomActor.java` (sửa — `JoinRoom`, `Flush` timer, `TickMode`, `broadcastTarget`)
+  - `modules/uni-engine/src/test/java/com/uni/realtime/engine/room/RoomActorTest.java` (sửa — constructor mới)
+  - `modules/uni-engine/src/test/java/com/uni/realtime/engine/room/TickCoalescingTest.java` (mới)
+  - `docs/specs/tech-design/NOJIRA-uni-p1-tech-design.md` (sửa — G2a/G2b đánh dấu đã chốt)
+
 ## Tóm tắt tiến độ
 
-- **9/12 task done đầy đủ (T1, T2, T4, T5, T8, T10, T11, T12) + T6, T7, T9 một phần. SPIKE đạt.**
-- **Đang làm tiếp:** Task 3 (tick coalescing) đã hết block về mặt kỹ thuật scheduler (SPIKE đạt),
-  nhưng **vẫn còn chờ G2a/G2b** (N lần flush, cách mã hoá delta) — chưa thể bắt đầu TDD thật cho
-  T3. Với T1/T2/T4/T5/T8/T10/T11/T12 đã xong và SPIKE đạt, **task "sạch" duy nhất còn lại không
-  bị chặn bởi câu hỏi kỹ thuật/Product treo là Task 13 (walking skeleton)** — nhưng Task 13 tự
-  nó phụ thuộc Sync checkpoint (chờ T3/T7 đầy đủ/T9 đầy đủ/T11 — T11 xong nhưng T3/T7/T9 chưa
-  đóng hẳn). Lựa chọn thực tế: quay lại chốt G1a/G1c/G2a/G2b để mở khoá T3/T6, hoặc dừng ở đây
-  chờ quyết định bên ngoài.
+- **10/12 task done đầy đủ (T1, T2, T3, T4, T5, T8, T10, T11, T12) + T6, T7, T9 một phần. SPIKE đạt.**
+- **Đang làm tiếp:** Với T3 xong, task "sạch" duy nhất còn lại không bị chặn bởi câu hỏi kỹ
+  thuật/Product treo là Task 13 (walking skeleton) — nhưng Task 13 tự nó phụ thuộc Sync checkpoint
+  (chờ T7/T9 đóng hẳn — T3/T11 đã xong). Lựa chọn thực tế: quay lại chốt G1a/G1c (Task 6) hoặc
+  L1 IP admission control (Task 7) để mở khoá thêm, hoặc dừng ở đây chờ quyết định bên ngoài.
 - **Block:**
-  - Task 3 (tick coalescing): SPIKE đã đạt, nhưng vẫn chờ G2a/G2b (tech-design.md §9.1) — N lần
-    flush và cách mã hoá delta chưa chốt.
   - Task 6 **không đóng hẳn được** — chờ G1a/G1c (thuật toán ký + dung sai đồng hồ) từ đội dịch vụ nền tảng.
   - Task 7 thiếu L1 IP admission control (optional theo AC, nhưng chưa có điểm gắn trong repo).
   - Task 9 thiếu chuỗi mailbox-depth-driven cụ thể (giới hạn kiến trúc 1-connection-nhiều-phòng, không phải bug).
