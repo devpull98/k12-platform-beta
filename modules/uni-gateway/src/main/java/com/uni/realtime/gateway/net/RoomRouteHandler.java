@@ -1,5 +1,6 @@
 package com.uni.realtime.gateway.net;
 
+import com.uni.realtime.gateway.fanout.RoomRegistry;
 import com.uni.realtime.protocol.GameMessage;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
@@ -15,10 +16,21 @@ import org.slf4j.LoggerFactory;
  * <p>Actually dispatching a validated message to the room's owning Engine pod is Task 5's
  * {@code RouteCache} / Task 9's backpressure chain, not this handler's job -- this only
  * establishes the trust boundary and forwards.
+ *
+ * <p>This is also where a dying channel is deregistered from {@link RoomRegistry} (Task 8):
+ * {@code TicketAuthHandler} removes itself from the pipeline right after the join, so it
+ * cannot see this channel's eventual {@code channelInactive} -- this handler stays for the
+ * whole connection and does.
  */
 public final class RoomRouteHandler extends SimpleChannelInboundHandler<GameMessage> {
 
     private static final Logger log = LoggerFactory.getLogger(RoomRouteHandler.class);
+
+    private final RoomRegistry roomRegistry;
+
+    public RoomRouteHandler(RoomRegistry roomRegistry) {
+        this.roomRegistry = roomRegistry;
+    }
 
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, GameMessage message) {
@@ -36,5 +48,11 @@ public final class RoomRouteHandler extends SimpleChannelInboundHandler<GameMess
                 ? message
                 : message.toBuilder().setRoomId(boundRoomId).build();
         ctx.fireChannelRead(corrected);
+    }
+
+    @Override
+    public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+        roomRegistry.remove(ctx.channel());
+        super.channelInactive(ctx);
     }
 }

@@ -4,6 +4,7 @@ import com.uni.realtime.gateway.auth.TicketAuthHandler;
 import com.uni.realtime.gateway.auth.TicketClaims;
 import com.uni.realtime.gateway.auth.TicketRejectedException;
 import com.uni.realtime.gateway.auth.TicketVerifier;
+import com.uni.realtime.gateway.fanout.RoomRegistry;
 import com.uni.realtime.protocol.GameMessage;
 import com.uni.realtime.protocol.JoinRoom;
 import com.uni.realtime.protocol.MessageType;
@@ -37,7 +38,7 @@ class GatewayPipelineTest {
     @Test
     void should_assembleHandlersInFixedOrderWithNoTlsHandler_when_pipelineBuilt() {
         EmbeddedChannel channel = new EmbeddedChannel();
-        GatewayPipeline.addTo(channel.pipeline(), fixedVerifier(ROOM_1_CLAIMS));
+        GatewayPipeline.addTo(channel.pipeline(), fixedVerifier(ROOM_1_CLAIMS), new RoomRegistry());
 
         List<String> handlerClassNames = new ArrayList<>();
         for (Map.Entry<String, ChannelHandler> entry : channel.pipeline()) {
@@ -127,12 +128,38 @@ class GatewayPipelineTest {
         assertThat(channel.isOpen()).isTrue();
     }
 
+    @Test
+    void should_registerChannelInRoomRegistry_when_firstFrameIsValidJoinRoom() {
+        RoomRegistry roomRegistry = new RoomRegistry();
+        EmbeddedChannel channel = applicationChannel(fixedVerifier(ROOM_1_CLAIMS), roomRegistry);
+
+        channel.writeInbound(frameOf(joinRoom("valid-ticket")));
+
+        assertThat(roomRegistry.channelsIn("room-1")).contains(channel);
+    }
+
+    @Test
+    void should_deregisterChannelFromRoomRegistry_when_channelGoesInactive() {
+        RoomRegistry roomRegistry = new RoomRegistry();
+        EmbeddedChannel channel = applicationChannel(fixedVerifier(ROOM_1_CLAIMS), roomRegistry);
+        channel.writeInbound(frameOf(joinRoom("valid-ticket")));
+        assertThat(roomRegistry.channelsIn("room-1")).contains(channel);
+
+        channel.close();
+
+        assertThat(roomRegistry.channelsIn("room-1")).doesNotContain(channel);
+    }
+
     private static EmbeddedChannel applicationChannel(TicketVerifier verifier) {
+        return applicationChannel(verifier, new RoomRegistry());
+    }
+
+    private static EmbeddedChannel applicationChannel(TicketVerifier verifier, RoomRegistry roomRegistry) {
         return new EmbeddedChannel(
-                new TicketAuthHandler(verifier),
+                new TicketAuthHandler(verifier, roomRegistry),
                 new RateLimitHandler(),
                 new GameMessageDecoder(),
-                new RoomRouteHandler());
+                new RoomRouteHandler(roomRegistry));
     }
 
     private static TicketVerifier fixedVerifier(TicketClaims claims) {

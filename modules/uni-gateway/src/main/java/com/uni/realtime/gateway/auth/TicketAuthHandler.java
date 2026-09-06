@@ -1,5 +1,6 @@
 package com.uni.realtime.gateway.auth;
 
+import com.uni.realtime.gateway.fanout.RoomRegistry;
 import com.uni.realtime.gateway.net.ChannelAttributes;
 import com.uni.realtime.protocol.GameMessage;
 import io.netty.buffer.ByteBufInputStream;
@@ -19,15 +20,22 @@ import org.slf4j.LoggerFactory;
  * {@link GameMessage} (not the raw frame) so it is not parsed twice: the codec handler later
  * in the pipeline is typed to {@link BinaryWebSocketFrame} and simply passes a
  * {@link GameMessage} object straight through.
+ *
+ * <p>This is also the only point in the pipeline where the room a channel belongs to becomes
+ * known, so it registers the channel into {@link RoomRegistry} here (Task 8) -- removal
+ * happens in {@code RoomRouteHandler}, which (unlike this handler) stays in the pipeline for
+ * the channel's whole life.
  */
 public final class TicketAuthHandler extends SimpleChannelInboundHandler<BinaryWebSocketFrame> {
 
     private static final Logger log = LoggerFactory.getLogger(TicketAuthHandler.class);
 
     private final TicketVerifier ticketVerifier;
+    private final RoomRegistry roomRegistry;
 
-    public TicketAuthHandler(TicketVerifier ticketVerifier) {
+    public TicketAuthHandler(TicketVerifier ticketVerifier, RoomRegistry roomRegistry) {
         this.ticketVerifier = ticketVerifier;
+        this.roomRegistry = roomRegistry;
     }
 
     @Override
@@ -51,6 +59,7 @@ public final class TicketAuthHandler extends SimpleChannelInboundHandler<BinaryW
         }
 
         ChannelAttributes.bind(ctx.channel(), claims);
+        roomRegistry.add(claims.roomId(), ctx.channel());
         ctx.pipeline().remove(this);
         ctx.fireChannelRead(message);
     }

@@ -1,6 +1,7 @@
 package com.uni.realtime.gateway.net;
 
 import com.uni.realtime.gateway.auth.TicketVerifier;
+import com.uni.realtime.gateway.fanout.RoomRegistry;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelInitializer;
@@ -22,13 +23,21 @@ public final class GatewayBootstrap {
 
     private final int port;
     private final TicketVerifier ticketVerifier;
+    private final RoomRegistry roomRegistry;
 
     private EventLoopGroup eventLoopGroup;
     private Channel serverChannel;
 
-    public GatewayBootstrap(int port, TicketVerifier ticketVerifier) {
+    /**
+     * {@code roomRegistry} is shared across every connection this bootstrap accepts (Task 8)
+     * -- unlike {@code TicketAuthHandler}/{@code RateLimitHandler}, which {@link GatewayPipeline}
+     * builds fresh per channel, the registry is exactly this pod's one {@code room_id ->
+     * Set<Channel>} map and must be the same instance a {@code Broadcaster} fans out through.
+     */
+    public GatewayBootstrap(int port, TicketVerifier ticketVerifier, RoomRegistry roomRegistry) {
         this.port = port;
         this.ticketVerifier = ticketVerifier;
+        this.roomRegistry = roomRegistry;
     }
 
     public void start() throws InterruptedException {
@@ -41,7 +50,7 @@ public final class GatewayBootstrap {
                 .childHandler(new ChannelInitializer<SocketChannel>() {
                     @Override
                     protected void initChannel(SocketChannel ch) {
-                        GatewayPipeline.addTo(ch.pipeline(), ticketVerifier);
+                        GatewayPipeline.addTo(ch.pipeline(), ticketVerifier, roomRegistry);
                     }
                 });
 

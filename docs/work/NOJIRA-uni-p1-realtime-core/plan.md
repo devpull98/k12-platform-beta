@@ -271,19 +271,35 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 
 ---
 
-### Task 8: Room registry cục bộ + fan-out zero-copy
+### Task 8: Room registry cục bộ + fan-out zero-copy — ✅ XONG (2026-09-06)
 
 - **Mode:** sequential after [T6] · parallel with [T7]
 - **Mô tả:** `Map<room_id, Set<Channel>>` trong từng pod, broadcast bằng `retainedDuplicate()`. **Đây là task dễ sai nhất trong GĐ1.**
+- **Kết quả:** `mvn -pl :uni-gateway test -Dtest=FanoutTest` 4/4 pass — **đã chủ động đổi tạm
+  sang `.retain()` để xác nhận test thật sự Red** (client thứ 2 nhận mảng byte rỗng), rồi
+  trả lại `.retainedDuplicate()` để Green — không chỉ tin code đúng vì test pass ngay lần đầu.
+  `RoomRegistryTest` 5/5 pass. Nối dây thật vào `TicketAuthHandler`/`RoomRouteHandler`/
+  `GatewayPipeline`/`GatewayBootstrap` — `GatewayPipelineTest` thêm 2 case xác nhận add-on-join
+  và remove-on-channelInactive qua đúng pipeline thật. Toàn module 35/35, toàn reactor xanh,
+  `-Dio.netty.leakDetection.level=paranoid` sạch (đã bật sẵn toàn cục qua Surefire).
 - **File dự kiến:** `modules/uni-gateway/src/main/java/.../fanout/RoomRegistry.java`, `.../fanout/Broadcaster.java`
 - **Dependency:** Task 6
 - **Acceptance criteria:**
-  - [ ] Dùng **`retainedDuplicate()`**, tuyệt đối không `retain()`
-  - [ ] `frame.release()` nằm trong khối `finally`
-  - [ ] Fan-out chỉ lặp trên `Set<Channel>` của đúng phòng, **không lọc động từ danh sách toàn cục**
-  - [ ] `channelInactive` gỡ Channel khỏi **mọi** set ngay lập tức
-  - [ ] Engine gửi **một gói cho mỗi GW pod**, Gateway mới nhân bản (quyết định B1)
+  - [x] Dùng **`retainedDuplicate()`**, tuyệt đối không `retain()`
+  - [x] `frame.release()` nằm trong khối `finally`
+  - [x] Fan-out chỉ lặp trên `Set<Channel>` của đúng phòng, **không lọc động từ danh sách toàn cục**
+  - [x] `channelInactive` gỡ Channel khỏi **mọi** set ngay lập tức
+  - [x] Engine gửi **một gói cho mỗi GW pod**, Gateway mới nhân bản (quyết định B1) — thoả mãn
+        theo đúng hình dạng `Broadcaster.broadcast(roomId, mộtFrame)`, không cần code thêm gì
 - **Verification:** `mvn -pl :uni-gateway test -Dtest=FanoutTest` với **12 `EmbeddedChannel`** — kiểm **từng client nhận đủ số byte**, không chỉ client đầu. Chạy kèm `-Dio.netty.leakDetection.level=paranoid`, log leak phải sạch.
+- **Ghi chú:** `TicketAuthHandler` (Task 6) đăng ký channel vào `RoomRegistry` ngay khi bind
+  `ChannelAttributes` (đây là chỗ duy nhất biết `room_id`), nhưng nó tự gỡ khỏi pipeline sau
+  đó — nên việc gỡ đăng ký (`channelInactive`) đặt ở `RoomRouteHandler` (handler duy nhất còn
+  sống suốt vòng đời connection). `RoomRegistry` phải là **một instance chia sẻ** cho cả pod
+  (khác với `TicketAuthHandler`/`RateLimitHandler` — mỗi channel một instance riêng) —
+  `GatewayBootstrap` nhận nó qua constructor và truyền xuống `GatewayPipeline.addTo` cho mọi
+  channel. Chưa nối `Broadcaster` với `FrameChannelClient.onResponse` (Task 5) — việc "gắn dây"
+  toàn luồng Engine→Gateway→client là Task 13.
 - **Rollback nếu fail:** revert.
 
 > [!CAUTION]

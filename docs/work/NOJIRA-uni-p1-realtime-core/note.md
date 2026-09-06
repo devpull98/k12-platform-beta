@@ -221,11 +221,52 @@
   - `modules/uni-gateway/src/test/java/com/uni/realtime/gateway/net/TokenBucketTest.java` (mới)
   - `modules/uni-gateway/src/test/java/com/uni/realtime/gateway/net/RateLimitHandlerTest.java` (mới)
 
+## Task 8 — Gateway: RoomRegistry + Broadcaster (fan-out zero-copy)
+
+- **Trạng thái:** done (2026-09-06)
+- **Verification:** `mvn -pl :uni-gateway test -Dtest=FanoutTest` → 4/4 pass, 12 `EmbeddedChannel`
+  đúng như plan.md bắt buộc. `RoomRegistryTest` → 5/5 pass. `GatewayPipelineTest` (thêm 2 case
+  mới) → xác nhận add-on-join/remove-on-channelInactive qua pipeline thật, không chỉ qua
+  `RoomRegistry` cô lập. Toàn module 35/35, toàn reactor xanh.
+  **Prove-it trên chính task này** (không phải bug fix, nhưng cùng tinh thần): đổi tạm
+  `Broadcaster` sang `.retain()`, chạy `FanoutTest` → fail đúng ngay ở client thứ 2 (mảng byte
+  rỗng) với thông điệp lỗi khớp chính xác lý do đã viết trong assertion message; trả lại
+  `.retainedDuplicate()` → xanh lại. Xác nhận test thật sự "sẽ đỏ nếu code sai", không phải
+  test vô nghĩa pass sẵn.
+- **Phạm vi đã làm:**
+  - `RoomRegistry`: `ConcurrentHashMap<String, Set<Channel>>` (set con cũng concurrent) — an
+    toàn khi `channelInactive` của channel A chạy trên event-loop thread của A cùng lúc một
+    broadcast khác đang duyệt cùng room trên thread khác. `remove()` quét **mọi** room (không
+    giả định 1 channel chỉ thuộc 1 room, đúng chữ "mọi set" của AC).
+  - `Broadcaster`: `retainedDuplicate()` + `BinaryWebSocketFrame` mới cho mỗi client,
+    `frame.release()` trong `finally` (chạy dù list rỗng hay write ném lỗi), bỏ qua channel đã
+    `!isActive()` (phòng race giữa lúc channel chết và lúc `channelInactive` kịp chạy).
+  - Nối dây thật: `TicketAuthHandler` gọi `roomRegistry.add(...)` ngay sau khi bind
+    `ChannelAttributes` (chỗ duy nhất biết `room_id`) — nhưng handler này tự gỡ khỏi pipeline
+    sau đó nên không thể lo phần gỡ đăng ký. `RoomRouteHandler` (sống suốt đời connection)
+    override `channelInactive` để gọi `roomRegistry.remove(...)`. `GatewayPipeline`/
+    `GatewayBootstrap` truyền `RoomRegistry` — **một instance dùng chung cho cả pod**, khác hẳn
+    `TicketAuthHandler`/`RateLimitHandler` (mỗi channel một instance riêng).
+- **Cố ý chưa làm (thuộc task khác):**
+  - Nối `Broadcaster.broadcast(...)` với phản hồi thật từ Engine (`FrameChannelClient.onResponse`,
+    Task 5) — dây nối end-to-end Engine→Gateway→client là Task 13.
+  - `!isWritable()`/backpressure khi buffer đầy — Task 9.
+- **File đụng tới:**
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/fanout/RoomRegistry.java` (mới)
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/fanout/Broadcaster.java` (mới)
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/auth/TicketAuthHandler.java` (sửa)
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/RoomRouteHandler.java` (sửa)
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/GatewayPipeline.java` (sửa)
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/GatewayBootstrap.java` (sửa)
+  - `modules/uni-gateway/src/test/java/com/uni/realtime/gateway/fanout/RoomRegistryTest.java` (mới)
+  - `modules/uni-gateway/src/test/java/com/uni/realtime/gateway/fanout/FanoutTest.java` (mới)
+  - `modules/uni-gateway/src/test/java/com/uni/realtime/gateway/net/GatewayPipelineTest.java` (sửa)
+
 ## Tóm tắt tiến độ
 
-- **6/12 task done đầy đủ (T1, T2, T4, T5, T10) + T6 và T7 một phần.**
-- **Đang làm tiếp:** SPIKE Pekko timer (bắt buộc trước Task 3), Task 8 (RoomRegistry + fan-out,
-  phụ thuộc T6), hoặc Task 11 (Game Definition tối giản, phụ thuộc T2).
+- **7/12 task done đầy đủ (T1, T2, T4, T5, T8, T10) + T6 và T7 một phần.**
+- **Đang làm tiếp:** SPIKE Pekko timer (bắt buộc trước Task 3), Task 9 (backpressure một tầng,
+  phụ thuộc T5 + T8, cả hai đã xong), hoặc Task 11 (Game Definition tối giản, phụ thuộc T2).
 - **Block:**
   - Task 3 (tick coalescing) vẫn chờ G2a/G2b (tech-design.md §9.1) — N lần flush và cách mã hoá delta chưa chốt.
   - Task 6 **không đóng hẳn được** — chờ G1a/G1c (thuật toán ký + dung sai đồng hồ) từ đội dịch vụ nền tảng.

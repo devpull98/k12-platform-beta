@@ -104,10 +104,15 @@ progress: "T1, T2, T4, T5, T10 xong. T6 MOT PHAN xong (GatewayPipeline + WS hand
   21/21 test o uni-engine, grep '% N|modulo' chi khop dung 1 file. T7 MOT PHAN xong: TokenBucket
   (fixed-window) + RateLimitHandler that (SUBMIT_ANSWER 3/1s, UPDATE_DRAFT 10/10s, HEARTBEAT
   2/30s, khoa theo student_id qua 1-instance-per-connection) - 24/24 test o uni-gateway; L1
-  IP admission control (300 handshake/phut) CHUA lam vi chua co diem gan trong repo. Toan
-  reactor xanh. ScoreCalculator dung PlaceholderScoreCalculator tam vi cong thuc diem Product
-  chua chot (§9.2 cau 1). Ke tiep: SPIKE Pekko timer (truoc T3), T8 (RoomRegistry + fan-out,
-  phu thuoc T6), hoac T11 (Game Definition toi gian, phu thuoc T2)"
+  IP admission control (300 handshake/phut) CHUA lam vi chua co diem gan trong repo. T8 xong:
+  RoomRegistry (Map room_id -> Set Channel, ConcurrentHashMap) + Broadcaster
+  (retainedDuplicate() - da prove-it bang cach doi tam sang retain() de xac nhan FanoutTest
+  thuc su Red truoc khi tin Green) - noi day that vao TicketAuthHandler (add khi join) +
+  RoomRouteHandler (remove khi channelInactive, vi TicketAuthHandler tu go khoi pipeline sau
+  join) - 35/35 test o uni-gateway, toan reactor xanh. ScoreCalculator dung
+  PlaceholderScoreCalculator tam vi cong thuc diem Product chua chot (§9.2 cau 1). Ke tiep:
+  SPIKE Pekko timer (truoc T3), T9 (backpressure mot tang, phu thuoc T5+T8 da xong), hoac T11
+  (Game Definition toi gian, phu thuoc T2)"
 dev_selftest: pending
 qc_status: pending
 trace: pending
