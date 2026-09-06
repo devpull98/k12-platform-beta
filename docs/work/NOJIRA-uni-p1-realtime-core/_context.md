@@ -62,6 +62,23 @@
 > `uni-engine`. Ngoài 3 module plan giả định, **`uni-observability`** là module thứ tư giữ phần
 > observability kế thừa — không nằm trong task nào của GĐ1.
 
+## Quyết định đã chốt (2026-09-06) — Product/Business trả lời 3/5 câu ở system-architecture.md §7.5
+
+| # | Câu hỏi | Quyết định | Hệ quả |
+|---|---|---|---|
+| 1 | Công thức điểm Quiz GĐ1 (Product) | Trắc nghiệm 1/4 đáp án, đúng = 100đ, sai = 0đ, không bonus tốc độ | Mở khoá `ScoreCalculator` thật (T2) và `scoring_formula` thật trong Game Definition (T11) — **implementation thật chưa viết**, vẫn đang dùng `PlaceholderScoreCalculator`. Chi tiết: [system-architecture.md §2.5](../../architect/system-architecture.md#25-game-definition--guardrails) |
+| 2 | Hệ thống chạy bao nhiêu giờ/ngày (Business) | Chạy **cả ngày**; ca điểm/thi đấu chỉ 18h50–21h30 | Rủi ro "chỉ chạy 4–6 tiếng/ngày" ở ADR-002 **không xảy ra** — giữ nguyên Pekko Cluster Sharding luôn-bật, không cần đảo ngược |
+| 3 | Quy mô trường lớn nhất sau 1 NAT IP (Business) | Ước lượng **4.000** (theo quy mô phiên/lớp lớn nhất thực tế đang chạy — không phải số đo IP trực tiếp) | Ngưỡng L1 rate-limit theo IP nâng từ 300 → **4.000 handshake/phút**. Cần PH-1 xác nhận lại bằng số đo thật |
+| — | (Ngoài 5 câu ở §7.5) Trần `HttpObjectAggregator` ở Gateway | Nâng **8KB → 50KB** — trần chung mọi gói WS, tách biệt với ràng buộc cứng `RoomStateSnapshot < 5KB` (giữ nguyên) | Pipeline Netty Gateway (Task 6) cần cập nhật hằng số này trong code — **chưa sửa code**, mới ghi vào tài liệu |
+
+**Còn treo:** câu 1 (`missed_step_policy` mặc định) và câu 3 (ngân sách hạ tầng hàng tháng) của
+system-architecture.md §7.5 — Product/Business chưa trả lời.
+
+> [!NOTE]
+> Các quyết định trên mới **ghi vào tài liệu** (`system-architecture.md`, tech-design.md).
+> Code chưa được cập nhật theo (hằng số 50KB, ngưỡng L1 4000, `ScoreCalculator` thật) — đây là
+> việc TDD kế tiếp khi quay lại các task liên quan.
+
 ## Phụ thuộc ngoài phạm vi — đã biết, chưa xử lý
 
 | ID | Nội dung | Hệ quả nếu không làm |
@@ -135,7 +152,15 @@ progress: "T1, T2, T4, T5, T10 xong. T6 MOT PHAN xong (GatewayPipeline + WS hand
   chua toi Engine that (cho Task 13 noi FrameChannelClient.send). 88/88 test (46 gateway + 42
   engine), toan reactor xanh. Ke tiep: T1/T2/T4/T5/T8/T10/T11/T12 xong + SPIKE dat - task sach
   duy nhat con lai la Task 13 nhung no phu thuoc Sync checkpoint (can T3/T7/T9 dong han) -
-  lua chon thuc te la quay lai chot G1a/G1c/G2a/G2b de mo khoa T3/T6"
+  lua chon thuc te la quay lai chot G1a/G1c/G2a/G2b de mo khoa T3/T6.
+  2026-09-06 (vong 2): Product/Business tra loi 3/5 cau o system-architecture.md §7.5 - cong
+  thuc diem quiz (1/4 dap an, dung=100/sai=0, khong bonus toc do), gio van hanh (chay ca ngay,
+  ca diem 18h50-21h30, ADR-002 giu nguyen khong dao nguoc), nguong L1 NAT IP (uoc luong 4000,
+  chua phai so do that, cho PH-1). Them 1 quyet dinh moi ngoai 5 cau: tran HttpObjectAggregator
+  Gateway 8KB->50KB (KHONG phai cau tra loi cho G2a - G2a van con treo). Da ghi vao
+  system-architecture.md + tech-design.md; CODE CHUA SUA (hang so 50KB/4000, ScoreCalculator
+  that) - viec TDD ke tiep. Con treo: missed_step_policy mac dinh (Product), ngan sach ha tang
+  (Business), G1a/G1c/G2a/G2b/G3 (ky thuat)"
 dev_selftest: pending
 qc_status: pending
 trace: pending

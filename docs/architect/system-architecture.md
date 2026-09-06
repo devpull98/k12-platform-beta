@@ -35,7 +35,7 @@ Giáo viên mở phiên; học sinh vào phòng 12 người chơi game giáo d�
 | **Cả trường ra Internet qua một IP NAT** | Rate limit **không được** khoá theo IP làm tầng chính (xem [§5.6](#56-rate-limiting-phân-tầng)) |
 | **Sự cố rơi vào giờ học đang diễn ra** | Ưu tiên **blast radius nhỏ** hơn hiệu suất đóng gói pod (xem [§6.2](#62-topology--54000-ccu)) |
 | **Điểm theo tốc độ trả lời** | Thời điểm trả lời **bắt buộc** do server đóng dấu (xem [§5.1](#51-server-authoritative-timestamp)) |
-| **Hệ thống chỉ chạy 4–6 tiếng/ngày** | Chi phí nhàn rỗi có thể chi phối kiến trúc ([ADR-002](#adr-002)) |
+| **Ca điểm/thi đấu chỉ 18h50–21h30/ngày, nhưng hệ thống chạy cả ngày** (đã chốt 2026-09-06, Business) | Rủi ro "chỉ chạy 4–6 tiếng/ngày" ở [ADR-002](#adr-002) **không xảy ra** — hệ thống không tắt ngoài khung giờ điểm, quorum Pekko luôn-bật vẫn hợp lý, **không cần đảo ngược ADR-002** |
 
 ### 1.2 Chỉ tiêu thiết kế
 
@@ -120,12 +120,18 @@ Hệ thống gồm 4 module Maven nhưng chỉ đóng gói thành **2 process**:
 
 Pipeline Netty (thứ tự cố định, không hoán đổi):
 ```text
-HttpServerCodec → HttpObjectAggregator(8KB) → WebSocketServerProtocolHandler
+HttpServerCodec → HttpObjectAggregator(50KB) → WebSocketServerProtocolHandler
   → TicketAuthHandler   ── xác thực MỘT lần, rồi TỰ GỠ khỏi pipeline
   → RateLimitHandler    ── token bucket theo student_id
   → ProtobufDecoder
   → RoomRouteHandler    ── tra RouteCache → Internal Frame Channel
 ```
+
+> [!NOTE]
+> **Trần `HttpObjectAggregator` — ĐÃ CHỐT (2026-09-06, Business): 50KB**, nâng từ 8KB. Đây là
+> trần chung cho MỌI gói WS qua Gateway, tách biệt với ràng buộc cứng riêng của
+> `RoomStateSnapshot` (< 5KB, [§2.4](#24-bên-trong-engine--mô-hình-roomactor)) — ràng buộc 5KB đó
+> **giữ nguyên không đổi**.
 
 Các cấu trúc RAM quan trọng tại Gateway:
 - `ChannelAttributes`: Gắn với Channel sau handshake (`student_id`, `room_id`, `session_id`, `roles`).
@@ -177,6 +183,14 @@ Luật chơi là dữ liệu upload bởi người vận hành, được bảo v
 2. **Không script engine**: Công thức điểm chỉ dùng tập toán tử toán học giới hạn, không chạy code động.
 3. **`MAX_TRANSITIONS`**: Giới hạn cứng số chuyển trạng thái tối đa mỗi phiên.
 4. **Watchdog**: Cảnh báo khi thời gian xử lý của actor > 10ms (không cố ngắt thread, dựa vào K8s liveness probe để xử lý treo).
+
+> [!NOTE]
+> **Công thức điểm Quiz GĐ1 — ĐÃ CHỐT (2026-09-06, Product):** trắc nghiệm 1-trong-4 đáp án,
+> nhị phân đúng/sai — đúng = **100 điểm**, sai = **0 điểm**, không có bonus theo tốc độ trả lời.
+> Biểu diễn đúng bằng tập toán tử giới hạn ở guardrail #2 phía trên (không cần mở rộng), mở
+> khoá `ScoreCalculator` thật (Task 2) và `scoring_formula` thật trong Game Definition
+> (Task 11) — cả hai hiện đang dùng giá trị tạm (flat, đánh dấu rõ TEMPORARY) chờ đúng quyết
+> định này. Đây từng là câu hỏi Product #2 ở [§7.5](#75-quyết-định-còn-treo).
 
 ### 2.6 Concurrency Model ở 3 tầng
 | Tầng | Mô hình Concurrency | Lưu ý |
@@ -390,8 +404,12 @@ Mailbox RoomActor đầy → Engine ngừng đọc TCP Frame Channel → TCP Win
   - Thông điệp **Critical**: Không được drop; nếu buffer nghẽn kéo dài thì chủ động ngắt kết nối channel.
 
 ### 5.6 Rate Limiting Phân Tầng (Thân thiện NAT)
-Hệ thống cấm dùng IP làm khoá rate limit chính vì 500 học sinh cùng trường thường đi qua **1 IP NAT duy nhất**:
-- **L1 (Chống DDoS thô)**: Khoá theo IP, ngưỡng **300 handshake/phút** (đặt theo trường lớn nhất).
+Hệ thống cấm dùng IP làm khoá rate limit chính vì hàng nghìn học sinh cùng trường thường đi qua **1 IP NAT duy nhất**:
+- **L1 (Chống DDoS thô)**: Khoá theo IP, ngưỡng **4.000 handshake/phút** (đã chốt 2026-09-06,
+  Business — ước lượng theo quy mô phiên/lớp lớn nhất thực tế đang vận hành, ~4.000 học sinh;
+  **không phải số đo trực tiếp theo IP**, vì vận hành hiện tại không tách được học sinh nào
+  đứng sau IP nào. Coi đây là trần an toàn giả định xấu nhất — 1 trường có thể chiếm trọn quy
+  mô phiên lớn nhất. PH-1 (load test) cần xác nhận lại bằng số đo thật).
 - **L2 (Chống lạm dụng)**: Khoá theo `student_id`, ngưỡng **10 handshake/phút**.
 - **L3 (Bảo vệ dung lượng pod)**: Admission control toàn cục (xem [§6.5](#65-connection-storm-đầu-giờ)).
 - **Rate limit thông điệp trong trận (theo `student_id`)**:
@@ -538,15 +556,15 @@ t ≈ 22s     Phòng trở lại PLAYING, broadcast state đầy đủ cho học
 - **PH-3 · Hợp đồng phía Client chưa hoàn thiện**: Client bắt buộc phải có RingBuffer 10 submission, `sequence` tăng dần, cơ chế gửi `RESYNC`, debounce 150ms khi gõ phím. Nếu client không hoàn thành, cam kết *"mất dữ liệu = 0"* không thể đạt được kể cả khi server hoạt động hoàn hảo 100%.
 
 ### 7.5 Quyết định còn treo
-Năm câu hỏi cần cấp thẩm quyền quyết định:
+Năm câu hỏi cần cấp thẩm quyền quyết định — **3/5 đã chốt (2026-09-06)**, 2 câu còn mở:
 
-| # | Câu hỏi | Người quyết định | Ảnh hưởng |
-|---|---|---|---|
-| 1 | Mặc định của `missed_step_policy` | **Product** | Quyết định kích thước snapshot < 5 KB ([§4.8](#48-vào-phòng-muộn-late-join-vs-kết-nối-lại)) |
-| 2 | Công thức tính điểm Quiz GĐ1 | **Product** | Hoàn thiện `ScoreCalculator` (Task 2) |
-| 3 | Ngân sách hạ tầng hàng tháng | **Business** | Số lượng pod Gateway & Engine tối ưu |
-| 4 | **Hệ thống chạy bao nhiêu giờ mỗi ngày?** | **Business** | Nếu chỉ chạy 4–6 tiếng/ngày có thể **buộc phải đảo ngược [ADR-002](#adr-002)** do chi phí duy trì quorum Pekko cluster luôn-bật |
-| 5 | Quy mô trường lớn nhất sau một NAT IP | **Business** | Xác định ngưỡng chặn L1 ở [§5.6](#56-rate-limiting-phân-tầng) |
+| # | Câu hỏi | Người quyết định | Ảnh hưởng | Trạng thái |
+|---|---|---|---|---|
+| 1 | Mặc định của `missed_step_policy` | **Product** | Quyết định kích thước snapshot < 5 KB ([§4.8](#48-vào-phòng-muộn-late-join-vs-kết-nối-lại)) | 🔴 Còn treo |
+| 2 | Công thức tính điểm Quiz GĐ1 | **Product** | Hoàn thiện `ScoreCalculator` (Task 2) | ✅ ĐÃ CHỐT — xem [§2.5](#25-game-definition--guardrails) |
+| 3 | Ngân sách hạ tầng hàng tháng | **Business** | Số lượng pod Gateway & Engine tối ưu | 🔴 Còn treo |
+| 4 | Hệ thống chạy bao nhiêu giờ mỗi ngày? | **Business** | Nếu chỉ chạy 4–6 tiếng/ngày có thể buộc phải đảo ngược [ADR-002](#adr-002) do chi phí duy trì quorum Pekko cluster luôn-bật | ✅ ĐÃ CHỐT — chạy cả ngày, ADR-002 **giữ nguyên**, xem [§1.1](#11-bài-toán--đặc-thù-edtech) |
+| 5 | Quy mô trường lớn nhất sau một NAT IP | **Business** | Xác định ngưỡng chặn L1 ở [§5.6](#56-rate-limiting-phân-tầng) | ✅ ƯỚC LƯỢNG — 4.000, xem [§5.6](#56-rate-limiting-phân-tầng) (chưa phải số đo IP thật, chờ PH-1) |
 
 ### 7.6 Lộ trình nâng cấp lên Giai đoạn 2 (GĐ2)
 Các bước nâng cấp tiếp theo:
@@ -626,9 +644,11 @@ node; cửa sổ `stable-after` 10s vẫn có hai actor cùng sống, và fencin
 đặt HPA theo CPU cho Engine pod** (scale dưới quorum kích hoạt `keep-majority` và down chính
 cluster đang khoẻ); chi phí nhàn rỗi thành khoản có thật, ở EdTech có thể **chi phối**.
 
-**Rủi ro — có thể bị lật:** Nếu hệ thống chỉ chạy **4–6 tiếng/ngày**
-([§7.5](#75-quyết-định-còn-treo) câu 4) thì phần lớn hoá đơn là tiền trả cho thời gian không ai
-dùng. **Đừng xây thêm thứ khó tháo lên trên giả định cluster luôn-bật.**
+**Rủi ro từng mở, đã chốt (2026-09-06, Business, [§7.5](#75-quyết-định-còn-treo) câu 4):** hệ
+thống chạy **cả ngày** (ca điểm/thi đấu chỉ 18h50–21h30, nhưng hạ tầng không tắt ngoài khung
+giờ đó) — rủi ro "chỉ chạy 4–6 tiếng/ngày khiến hoá đơn phần lớn là tiền trả cho lúc không ai
+dùng" **không xảy ra**. ADR này giữ nguyên, không cần đảo ngược. Vẫn giữ nguyên tắc: **đừng xây
+thêm thứ khó tháo lên trên giả định cluster luôn-bật** — chỉ là lý do đảo ngược không còn nữa.
 
 **Hệ quả:** `terminationGracePeriodSeconds: 45` bắt buộc (thiếu graceful leave thì mỗi rolling
 update là một lần nghi ngờ split-brain) · `requests = limits` · theo dõi
