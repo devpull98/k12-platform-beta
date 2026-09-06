@@ -38,8 +38,12 @@ for context.
   `/actuator/prometheus`, send OTLP traces to `localhost:4318`, and write JSON logs to
   `logs/<spring.application.name>.log` for Promtail. See `observability/README.md`.
 
-Phase 1 has **no datastore on the hot path** — no MySQL, no Redis, no Kafka. If a task
-starts reaching for one, it has left Phase 1 scope; stop and check `_context.md`.
+Phase 1 has **no datastore on the hot path** — no MySQL. Redis Cluster (one-time ticket
+guard via `SET ticket:{jti} 1 EX 30 NX`, Hot Snapshot < 5 KB) and Kafka Cluster
+(`game.events.v1` event streaming after scoring) **are** in scope per the 2026-09-05 decision
+in `_context.md` — both live in the async backplane, never inside a Netty EventLoop or on
+the synchronous `RoomActor` message path. If a task reaches for a *synchronous* DB/Redis/Kafka
+call on the hot path, it has left Phase 1 scope; stop and check `_context.md`.
 
 ## Commands
 
@@ -126,16 +130,36 @@ code that passes a naive test and breaks in production.
 
 - No Cluster Sharding: losing an engine pod kills its rooms until the pod returns. Accepted
   at 2–3k CCU, **must go before Phase 2**, and the UI has to show it.
-- No Redis snapshot, no `RESYNCING` state, no Kafka, no dashboard fan-in, no LZ4.
+- No `RESYNCING` state, no dashboard fan-in, no LZ4. Redis Cluster (ticket dedup + Hot
+  Snapshot) and Kafka Cluster (event streaming) **are** in Phase 1 scope, off the hot path —
+  see the note above; this used to say "no Redis, no Kafka" before the 2026-09-05 decision.
 - PH-3: the client-side contract (ring buffer, `sequence`, RESYNC) does not exist yet, so
   the "zero data loss" SLA has no basis regardless of server correctness. Do not publish it.
 
 ## Governance
 
-The framework kit referenced by the session hook (`scripts/governance-check.sh`,
-`validate-sdd-gate.sh`, `validate-trace.sh`, `rules/{stack}/`, `project-context.yaml`) is
-**not installed in this repo**. Those gates cannot run. `plan.md` substitutes real build
-and test commands. Do not report a gate as passing when its script does not exist; run the
-`onboarding` skill first if real gates are wanted.
+The framework kit is installed (by the `onboarding` skill, 2026-09-06):
+`project-context.yaml`, `rules/spring/`, `scripts/governance-check.sh` and the five
+`validate-*.sh` gates. Run `bash scripts/governance-check.sh` before merge — all five
+currently pass.
+
+Two things about that install are worth knowing before you trust a green run:
+
+- **`rules/spring/` is not the kit's stock Spring rules.** The kit ships Java 11 / Boot 2.x /
+  JPA / `@WebMvcTest` / `@EmbeddedKafka` conventions, none of which exist here. Those were
+  discarded and the files rewritten from this document's rules and the v3.0 design sections
+  they cite. `stack: spring` only means "boots with Spring Boot".
+- **Two gates are green because they have nothing to check yet**, not because the work is
+  covered: `validate-trace.sh` skips entirely (`docs/specs/bdd/` does not exist — no
+  `.feature` files, so no `@trace` tags are demanded of the code), and the ship gate only
+  observes `phase=dev` in `_context.md`. Neither is evidence of test coverage.
+  `validate-skill-graph.sh` was patched to skip here — it checks kit-repo integrity
+  (`router.yaml`, `skills/`), which a target project does not have.
+
+`.git/hooks/` holds **copies**, not symlinks (`ln -s` degrades to copy on Windows) — re-run
+`bash scripts/hooks/install-hooks.sh` after the kit updates. `pre-commit` blocks commits to
+`main`/`master`/`test` and now actually runs `validate-stack.sh`.
+
+`plan.md` still carries the real build and test commands; the gates do not replace them.
 
 Never commit directly to `main`. Work on a feature branch and open a PR.
