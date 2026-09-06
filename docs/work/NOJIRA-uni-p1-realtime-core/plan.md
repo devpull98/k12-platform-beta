@@ -175,20 +175,29 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 
 ---
 
-### Task 5: Frame Channel phía Gateway + lazy-learned route cache
+### Task 5: Frame Channel phía Gateway + lazy-learned route cache — ✅ XONG (2026-09-06)
 
 - **Mode:** sequential after [T1, T4]
 - **Mô tả:** **PH-2** — Gateway học vị trí phòng từ `owner_pod_id` do Engine đóng dấu, không tự tính hash. Đây là lý do Giai đoạn 2 sẽ không phải sửa Gateway.
+- **Kết quả:** `mvn -pl :uni-gateway test -Dtest=RouteCacheTest` 5/5 pass (plain JUnit, logic thuần).
+  `mvn -pl :uni-gateway test -Dtest=FrameChannelClientTest` 3/3 pass (socket thật, 2 fake Engine
+  pod trên loopback — ngoài yêu cầu Verification, chứng minh round-robin/learn/evict thật hoạt
+  động cùng nhau, không chỉ đúng ở mức map). Toàn module 15/15, toàn reactor xanh. Chi tiết: `note.md`.
 - **File dự kiến:** `modules/uni-gateway/src/main/java/.../routing/FrameChannelClient.java`, `.../routing/RouteCache.java`
 - **Dependency:** Task 1, Task 4
 - **Acceptance criteria:**
-  - [ ] Gateway giữ connection tới **tất cả** Engine pod
-  - [ ] Chưa biết phòng → gửi **round-robin**; response mang `owner_pod_id` → cache `room_id → pod`
-  - [ ] Lần gửi sau đi **thẳng** tới đúng pod, không qua hop nội bộ
-  - [ ] Connection tới một Engine pod đứt → **xoá mọi entry cache trỏ tới pod đó**
-  - [ ] Cache **không có TTL** — entry sai tự sửa ở lần dùng kế tiếp (§8.2)
-  - [ ] `RouteCache` **không biết gì về `room_id % N`** — quy tắc sở hữu nằm hoàn toàn bên Engine
+  - [x] Gateway giữ connection tới **tất cả** Engine pod
+  - [x] Chưa biết phòng → gửi **round-robin**; response mang `owner_pod_id` → cache `room_id → pod`
+  - [x] Lần gửi sau đi **thẳng** tới đúng pod, không qua hop nội bộ
+  - [x] Connection tới một Engine pod đứt → **xoá mọi entry cache trỏ tới pod đó**
+  - [x] Cache **không có TTL** — entry sai tự sửa ở lần dùng kế tiếp (§8.2)
+  - [x] `RouteCache` **không biết gì về `room_id % N`** — quy tắc sở hữu nằm hoàn toàn bên Engine
 - **Verification:** `mvn -pl :uni-gateway test -Dtest=RouteCacheTest`. Case bắt buộc: sau khi pod A đứt, không entry nào còn trỏ tới A; gói kế tiếp quay lại round-robin.
+- **Ghi chú:** Cần một `InternalFrameCodec` riêng ở `uni-gateway` (không tái dùng `FrameCodec`
+  package-private của `uni-engine` — hai service triển khai độc lập, chỉ dùng chung schema
+  `uni-protocol`, không dùng chung code Netty). `FrameChannelClient` nhận `EventLoopGroup` từ
+  bên ngoài (dùng chung với `GatewayBootstrap`), không tự tạo group riêng — giữ đúng bất biến
+  "EventLoop cố định = cores × 2" của Task 6 cho toàn bộ pod, không nhân đôi số thread.
 - **Rollback nếu fail:** revert. Không có fallback tạm — thiếu task này thì Gateway không gửi được gì tới Engine.
 
 ---

@@ -105,12 +105,48 @@
   - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/GatewayBootstrap.java` (mới)
   - `modules/uni-gateway/src/test/java/com/uni/realtime/gateway/net/GatewayPipelineTest.java` (mới)
 
+## Task 5 — Gateway: FrameChannelClient + RouteCache (lazy-learned routing)
+
+- **Trạng thái:** done (2026-09-06)
+- **Verification:** `mvn -pl :uni-gateway test -Dtest=RouteCacheTest` → 5/5 pass (plain JUnit,
+  không Netty). `mvn -pl :uni-gateway test -Dtest=FrameChannelClientTest` → 3/3 pass (thêm
+  ngoài yêu cầu plan.md — 2 "fake Engine pod" thật trên socket loopback, chứng minh
+  round-robin → learn → gửi thẳng → evict-khi-đứt-kết-nối hoạt động đúng cùng nhau).
+  Toàn module 15/15, toàn reactor `mvn test` xanh, không leak, không deprecation warning.
+- **Phạm vi đã làm:**
+  - `RouteCache`: `room_id → engine_pod_id` trong `ConcurrentHashMap` (truy cập từ nhiều Netty
+    event-loop thread khác nhau — mỗi pod connection có thể chạy trên thread riêng trong group
+    dùng chung). Không TTL: `learn()` ghi đè tự do, `evictPod()` xoá đúng và chỉ những entry
+    trỏ tới pod đó (test xác nhận entry của pod khác không bị đụng).
+  - `InternalFrameCodec`: bản sao nhỏ của `FrameCodec` (Task 4) riêng cho phía Gateway — cùng
+    format wire (length-prefixed + protobuf) nhưng không share code Netty giữa 2 service, chỉ
+    share `uni-protocol`.
+  - `FrameChannelClient`: giữ 1 connection/pod (`connect(podId, host, port)`), `send()` tra
+    `RouteCache` trước — biết thì gửi thẳng, không biết thì round-robin (`AtomicInteger` cursor,
+    chỉ tăng khi thật sự round-robin, không tăng khi gửi thẳng theo cache — test
+    `should_learnRouteFromResponse_and_sendDirectlyWithoutAdvancingRoundRobin` xác nhận đúng
+    hành vi này). Nhận response → đọc `InternalHeader.owner_pod_id` → `routeCache.learn(...)`.
+    `channelInactive` → gỡ pod khỏi danh sách connection + round-robin + `routeCache.evictPod(...)`.
+  - Dùng chung `EventLoopGroup` truyền từ ngoài vào (không tự tạo) — giữ đúng bất biến GĐ1
+    "EventLoop cố định = cores × 2" cho toàn bộ pod Gateway (Task 6), không tạo thêm thread pool
+    riêng cho phần kết nối ra Engine.
+- **Cố ý chưa làm (thuộc task khác):**
+  - Backpressure một tầng xuyên suốt mailbox↔socket — Task 9.
+  - RoomRegistry/fan-out nhiều client cùng phòng ở Gateway — Task 8.
+  - Route cache chưa được nối vào `RoomRouteHandler` (Task 6) hay Gateway pipeline thật — việc
+    "gắn dây" toàn bộ luồng end-to-end là Task 13 (walking skeleton).
+- **File đụng tới:**
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/routing/RouteCache.java` (mới)
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/routing/InternalFrameCodec.java` (mới)
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/routing/FrameChannelClient.java` (mới)
+  - `modules/uni-gateway/src/test/java/com/uni/realtime/gateway/routing/RouteCacheTest.java` (mới)
+  - `modules/uni-gateway/src/test/java/com/uni/realtime/gateway/routing/FrameChannelClientTest.java` (mới)
+
 ## Tóm tắt tiến độ
 
-- **1/12 task done trước đó (Task 1 — protocol), nay 3/12 done đầy đủ (+ Task 2, + Task 4)
-  và Task 6 một phần** (pipeline + trust boundary xong; ký ticket thật + ingress manifest còn treo).
-- **Đang làm tiếp:** SPIKE Pekko timer (bắt buộc trước Task 3), hoặc Task 5 (frame channel phía
-  Gateway, phụ thuộc Task 4 đã xong), hoặc Task 7 (rate limit thật, phụ thuộc Task 6 vừa xong).
+- **4/12 task done đầy đủ (T1, T2, T4, T5) + T6 một phần.**
+- **Đang làm tiếp:** SPIKE Pekko timer (bắt buộc trước Task 3), hoặc Task 7 (rate limit thật,
+  phụ thuộc T6), hoặc Task 10 (RoomOwnership + owner_pod_id ở Engine, phụ thuộc T4).
 - **Block:**
   - Task 3 (tick coalescing) vẫn chờ G2a/G2b (tech-design.md §9.1) — N lần flush và cách mã hoá delta chưa chốt.
   - Task 6 **không đóng hẳn được** — chờ G1a/G1c (thuật toán ký + dung sai đồng hồ) từ đội dịch vụ nền tảng.

@@ -94,13 +94,14 @@ phase: dev
 track: standard
 last_skill: tdd
 next_skill: tdd
-progress: "T1 xong (protocol). T2 xong (RoomActor - 9/9 test). T4 xong (FrameCodec +
-  FrameChannelServer, Engine side - 14/14 test). T6 MOT PHAN xong (GatewayPipeline + WS
-  handshake + ChannelAttributes + room_id trust boundary - 7/7 test); TicketVerifier van la
-  interface KHONG CO implementation that vi G1a/G1c chua chot - khong duoc tu bien verifier
-  gia dua len staging/production. ScoreCalculator dung PlaceholderScoreCalculator tam vi cong
-  thuc diem Product chua chot (§9.2 cau 1). Ke tiep: SPIKE Pekko timer (truoc T3), T5 (frame
-  channel phia Gateway, phu thuoc T4), hoac T7 (rate limit that, phu thuoc T6)"
+progress: "T1, T2, T4, T5 xong. T6 MOT PHAN xong (GatewayPipeline + WS handshake +
+  ChannelAttributes + room_id trust boundary - 7/7 test); TicketVerifier van la interface
+  KHONG CO implementation that vi G1a/G1c chua chot - khong duoc tu bien verifier gia dua len
+  staging/production. T5 = RouteCache (lazy-learned, khong TTL) + FrameChannelClient (round-robin
+  -> hoc tu owner_pod_id -> gui thang, evict khi pod dut ket noi) - 15/15 test o uni-gateway,
+  toan reactor xanh. ScoreCalculator dung PlaceholderScoreCalculator tam vi cong thuc diem
+  Product chua chot (§9.2 cau 1). Ke tiep: SPIKE Pekko timer (truoc T3), T7 (rate limit that,
+  phu thuoc T6), hoac T10 (RoomOwnership + owner_pod_id o Engine, phu thuoc T4)"
 dev_selftest: pending
 qc_status: pending
 trace: pending
