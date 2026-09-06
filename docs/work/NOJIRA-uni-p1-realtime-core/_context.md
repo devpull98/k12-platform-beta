@@ -109,10 +109,16 @@ progress: "T1, T2, T4, T5, T10 xong. T6 MOT PHAN xong (GatewayPipeline + WS hand
   (retainedDuplicate() - da prove-it bang cach doi tam sang retain() de xac nhan FanoutTest
   thuc su Red truoc khi tin Green) - noi day that vao TicketAuthHandler (add khi join) +
   RoomRouteHandler (remove khi channelInactive, vi TicketAuthHandler tu go khoi pipeline sau
-  join) - 35/35 test o uni-gateway, toan reactor xanh. ScoreCalculator dung
-  PlaceholderScoreCalculator tam vi cong thuc diem Product chua chot (§9.2 cau 1). Ke tiep:
-  SPIKE Pekko timer (truoc T3), T9 (backpressure mot tang, phu thuoc T5+T8 da xong), hoac T11
-  (Game Definition toi gian, phu thuoc T2)"
+  join). T9 MOT PHAN xong: BackpressureHandler (channelWritabilityChanged -> toggle autoRead +
+  Counter channel_not_writable_total) ap dung dong nhat o ca 3 hop (WS client, GW->Engine,
+  Engine accepted channel), WRITE_BUFFER_WATER_MARK 32/64KB; Broadcaster mo rong DeliveryClass
+  (!isWritable + BEST_EFFORT -> drop, CRITICAL -> close, da prove-it bang cach dao logic) -
+  40/40 test o uni-gateway, 23/23 o uni-engine, toan reactor xanh. CHUA noi duoc chuoi cu the
+  "mailbox RoomActor day -> Engine tu dung doc dung ket noi" vi 1 connection multiplex nhieu
+  phong (ADR-001) nen khong map 1-1 duoc - gioi han kien truc that, khong phai thieu sot.
+  ScoreCalculator dung PlaceholderScoreCalculator tam vi cong thuc diem Product chua chot
+  (§9.2 cau 1). Ke tiep: SPIKE Pekko timer (truoc T3), T11 (Game Definition toi gian, phu
+  thuoc T2), hoac quay lai chot G1a/G1c/G2a/G2b de dong han T3/T6"
 dev_selftest: pending
 qc_status: pending
 trace: pending

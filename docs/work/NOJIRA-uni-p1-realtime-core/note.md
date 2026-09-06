@@ -262,13 +262,69 @@
   - `modules/uni-gateway/src/test/java/com/uni/realtime/gateway/fanout/FanoutTest.java` (mới)
   - `modules/uni-gateway/src/test/java/com/uni/realtime/gateway/net/GatewayPipelineTest.java` (sửa)
 
+## Task 9 — Backpressure một tầng (một phần)
+
+- **Trạng thái:** một phần xong (2026-09-06) — xem "Cố ý chưa làm" bên dưới.
+- **Verification:** `mvn -pl :uni-gateway,:uni-engine test -Dtest=BackpressureTest` → gateway
+  5/5 pass, engine 2/2 pass. Case bắt buộc "client chậm không kéo tụt client khác cùng phòng"
+  pass. **Prove-it**: đảo ngược tạm điều kiện Critical/Best-effort trong `Broadcaster`, chạy lại
+  → 3/5 test fail đúng như dự đoán (drop-thay-vì-close và ngược lại, cộng test "không ảnh hưởng
+  client khác"), rồi trả lại đúng logic → xanh lại. Toàn `uni-gateway` 40/40, toàn `uni-engine`
+  23/23, toàn reactor xanh, không leak, không deprecation warning.
+- **Phạm vi đã làm:**
+  - `BackpressureHandler` (gateway, mới): MỘT class dùng lại ở mọi hop — override
+    `channelWritabilityChanged`, toggle `autoRead(writable)` của chính channel đó, tăng Counter
+    `channel_not_writable_total` khi chuyển sang không writable. Áp dụng ở: WS client channel
+    (`GatewayBootstrap` — thêm đầu tiên trong `GatewayPipeline`, trước cả `HttpServerCodec`, vì
+    writability là chuyện tầng transport không liên quan trạng thái auth), GW→Engine
+    (`FrameChannelClient.connect()`), và Engine's accepted channel (`FrameChannelServer` — bản
+    nested `private static final class` riêng vì plan.md không liệt kê file mới bên engine,
+    chỉ "sửa FrameChannelServer.java"; expose qua `static newBackpressureHandler(...)`
+    package-private để test được qua `EmbeddedChannel`).
+  - `WRITE_BUFFER_WATER_MARK(32KB, 64KB)` set qua `childOption`/`option` ở cả 3 bootstrap trên.
+  - `Broadcaster` (Task 8) mở rộng: thêm tham số `DeliveryClass`. `!isWritable()` +
+    `BEST_EFFORT` → bỏ qua channel đó (không queue lại, không retry); `!isWritable()` +
+    `CRITICAL` → đóng channel đó. Cả hai đường đều KHÔNG ảnh hưởng các channel khác trong cùng
+    vòng lặp fan-out — đây chính là cơ sở của case bắt buộc "client chậm không kéo tụt client
+    khác cùng phòng".
+  - Kỹ thuật test đáng chú ý: `EmbeddedChannel.writeAndFlush()` hoàn tất đồng bộ (không có
+    socket thật để nghẽn) nên KHÔNG BAO GIỜ tự nhiên trip watermark — phải dùng `write()`
+    **không flush** để giữ byte "pending" thật sự trong `ChannelOutboundBuffer`, mới ép được
+    `isWritable()` về `false` đúng cách (đã tự viết chương trình nhỏ xác nhận hành vi này trước
+    khi viết test, tránh đoán mò).
+- **Cố ý CHƯA làm — giới hạn kiến trúc thật, không phải thiếu sót:**
+  - **Chuỗi cụ thể "mailbox RoomActor đầy → Engine tự dừng đọc kết nối đó" chưa nối được.**
+    Pekko typed không có API đọc độ sâu mailbox đồng bộ tiện dùng, và quan trọng hơn: một
+    internal connection mang traffic của NHIỀU phòng multiplex chung (ADR-001) nên "mailbox 1
+    phòng đầy" không map 1-1 vào "channel nào cần autoRead(false)". `BackpressureHandler` hiện
+    tại phản ứng theo writability CỦA CHÍNH channel đó (Engine ghi phản hồi ra không kịp) — đây
+    là backpressure Netty chuẩn và đúng ở TỪNG hop, nhưng không phải cùng một cơ chế
+    "mailbox-depth-driven" y hệt như câu chữ AC mô tả. Bịa thêm hạ tầng đo mailbox depth ở đây
+    sẽ là suy đoán ngoài phạm vi mọi task đã giao.
+  - Việc nối toàn chuỗi thật (nếu cần đúng nghĩa đen của AC) là quyết định kiến trúc riêng hoặc
+    thuộc Task 13.
+- **File đụng tới:**
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/BackpressureHandler.java` (mới)
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/fanout/Broadcaster.java` (sửa)
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/GatewayPipeline.java` (sửa)
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/GatewayBootstrap.java` (sửa)
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/routing/FrameChannelClient.java` (sửa)
+  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/net/FrameChannelServer.java` (sửa)
+  - `modules/uni-gateway/src/test/java/com/uni/realtime/gateway/net/BackpressureTest.java` (mới)
+  - `modules/uni-engine/src/test/java/com/uni/realtime/engine/net/BackpressureTest.java` (mới)
+  - `modules/uni-gateway/src/test/java/com/uni/realtime/gateway/fanout/FanoutTest.java` (sửa — thêm `DeliveryClass`)
+  - `modules/uni-gateway/src/test/java/com/uni/realtime/gateway/net/GatewayPipelineTest.java` (sửa)
+  - `modules/uni-gateway/src/test/java/com/uni/realtime/gateway/routing/FrameChannelClientTest.java` (sửa)
+  - `modules/uni-engine/src/test/java/com/uni/realtime/engine/net/FrameChannelServerTest.java` (sửa)
+
 ## Tóm tắt tiến độ
 
-- **7/12 task done đầy đủ (T1, T2, T4, T5, T8, T10) + T6 và T7 một phần.**
-- **Đang làm tiếp:** SPIKE Pekko timer (bắt buộc trước Task 3), Task 9 (backpressure một tầng,
-  phụ thuộc T5 + T8, cả hai đã xong), hoặc Task 11 (Game Definition tối giản, phụ thuộc T2).
+- **7/12 task done đầy đủ (T1, T2, T4, T5, T8, T10) + T6, T7, T9 một phần.**
+- **Đang làm tiếp:** SPIKE Pekko timer (bắt buộc trước Task 3), Task 11 (Game Definition tối
+  giản, phụ thuộc T2), hoặc quay lại chốt G1a/G1c/G2a/G2b để đóng hẳn T3/T6.
 - **Block:**
   - Task 3 (tick coalescing) vẫn chờ G2a/G2b (tech-design.md §9.1) — N lần flush và cách mã hoá delta chưa chốt.
   - Task 6 **không đóng hẳn được** — chờ G1a/G1c (thuật toán ký + dung sai đồng hồ) từ đội dịch vụ nền tảng.
   - Task 7 thiếu L1 IP admission control (optional theo AC, nhưng chưa có điểm gắn trong repo).
+  - Task 9 thiếu chuỗi mailbox-depth-driven cụ thể (giới hạn kiến trúc 1-connection-nhiều-phòng, không phải bug).
   - `ScoreCalculator` thật vẫn chờ Product (câu 1, §9.2 / system-architecture.md §7.5).

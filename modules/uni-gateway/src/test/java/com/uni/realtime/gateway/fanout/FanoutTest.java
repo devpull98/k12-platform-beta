@@ -1,5 +1,6 @@
 package com.uni.realtime.gateway.fanout;
 
+import com.uni.realtime.protocol.DeliveryClass;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.embedded.EmbeddedChannel;
@@ -44,7 +45,7 @@ class FanoutTest {
         byte[] payload = "room-1 snapshot delta payload".getBytes(StandardCharsets.UTF_8);
         ByteBuf frame = Unpooled.wrappedBuffer(payload);
 
-        broadcaster.broadcast("room-1", frame);
+        broadcaster.broadcast("room-1", frame, DeliveryClass.BEST_EFFORT);
 
         for (int i = 0; i < clients.size(); i++) {
             BinaryWebSocketFrame received = clients.get(i).readOutbound();
@@ -71,7 +72,7 @@ class FanoutTest {
         clients.add(inRoom1);
         clients.add(inRoom2);
 
-        broadcaster.broadcast("room-1", Unpooled.wrappedBuffer(new byte[] {1, 2, 3}));
+        broadcaster.broadcast("room-1", Unpooled.wrappedBuffer(new byte[] {1, 2, 3}), DeliveryClass.BEST_EFFORT);
 
         assertThat((BinaryWebSocketFrame) inRoom1.readOutbound()).isNotNull();
         assertThat((BinaryWebSocketFrame) inRoom2.readOutbound()).isNull();
@@ -81,7 +82,7 @@ class FanoutTest {
     void should_releaseOriginalFrameExactlyOnce_when_broadcastingToNoClients() {
         ByteBuf frame = Unpooled.wrappedBuffer(new byte[] {9});
 
-        broadcaster.broadcast("empty-room", frame);
+        broadcaster.broadcast("empty-room", frame, DeliveryClass.BEST_EFFORT);
 
         assertThat(frame.refCnt()).isZero();
     }
@@ -94,7 +95,7 @@ class FanoutTest {
         clients.add(dead);
 
         // Must not throw, and must not attempt to write to the dead channel.
-        broadcaster.broadcast("room-1", Unpooled.wrappedBuffer(new byte[] {1}));
+        broadcaster.broadcast("room-1", Unpooled.wrappedBuffer(new byte[] {1}), DeliveryClass.BEST_EFFORT);
 
         assertThat((BinaryWebSocketFrame) dead.readOutbound()).isNull();
     }

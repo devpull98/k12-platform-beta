@@ -1,10 +1,13 @@
 package com.uni.realtime.gateway.routing;
 
+import com.uni.realtime.gateway.net.BackpressureHandler;
 import com.uni.realtime.protocol.GameMessage;
+import io.micrometer.core.instrument.MeterRegistry;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInitializer;
+import io.netty.channel.ChannelOption;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.channel.socket.SocketChannel;
@@ -33,15 +36,18 @@ public final class FrameChannelClient {
     private final RouteCache routeCache;
     private final Consumer<GameMessage> onResponse;
     private final EventLoopGroup eventLoopGroup;
+    private final MeterRegistry meterRegistry;
 
     private final Map<String, Channel> podChannels = new ConcurrentHashMap<>();
     private final List<String> knownPods = new CopyOnWriteArrayList<>();
     private final AtomicInteger roundRobinCursor = new AtomicInteger();
 
-    public FrameChannelClient(RouteCache routeCache, Consumer<GameMessage> onResponse, EventLoopGroup eventLoopGroup) {
+    public FrameChannelClient(RouteCache routeCache, Consumer<GameMessage> onResponse, EventLoopGroup eventLoopGroup,
+            MeterRegistry meterRegistry) {
         this.routeCache = routeCache;
         this.onResponse = onResponse;
         this.eventLoopGroup = eventLoopGroup;
+        this.meterRegistry = meterRegistry;
     }
 
     /** Opens (and keeps open) the one connection this pair of pods will ever need. */
@@ -49,9 +55,14 @@ public final class FrameChannelClient {
         Bootstrap bootstrap = new Bootstrap()
                 .group(eventLoopGroup)
                 .channel(NioSocketChannel.class)
+                .option(ChannelOption.WRITE_BUFFER_WATER_MARK, BackpressureHandler.WATER_MARK)
                 .handler(new ChannelInitializer<SocketChannel>() {
                     @Override
                     protected void initChannel(SocketChannel ch) {
+                        // §10.2 / plan.md Task 9: the same backpressure primitive on this hop
+                        // too -- if Engine can't keep up reading responses off this connection,
+                        // this channel backs up and stops accepting more requests to forward.
+                        ch.pipeline().addLast(new BackpressureHandler(meterRegistry));
                         for (var handler : InternalFrameCodec.newHandlers()) {
                             ch.pipeline().addLast(handler);
                         }

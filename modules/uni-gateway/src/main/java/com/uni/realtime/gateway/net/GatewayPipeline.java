@@ -3,6 +3,7 @@ package com.uni.realtime.gateway.net;
 import com.uni.realtime.gateway.auth.TicketAuthHandler;
 import com.uni.realtime.gateway.auth.TicketVerifier;
 import com.uni.realtime.gateway.fanout.RoomRegistry;
+import io.micrometer.core.instrument.MeterRegistry;
 import io.netty.channel.ChannelPipeline;
 import io.netty.handler.codec.http.HttpObjectAggregator;
 import io.netty.handler.codec.http.HttpServerCodec;
@@ -10,9 +11,10 @@ import io.netty.handler.codec.http.websocketx.WebSocketServerProtocolHandler;
 
 /**
  * Fixed handler order for the WebSocket edge (plan.md Task 6 AC) -- do not reorder.
- * {@code TicketAuthHandler} must run before anything that trusts {@link ChannelAttributes},
- * and {@code RoomRouteHandler} must run last so everything downstream already agrees on
- * identity and room ownership.
+ * {@code BackpressureHandler} (Task 9) goes first since writability is a transport concern
+ * unrelated to auth state. {@code TicketAuthHandler} must run before anything that trusts
+ * {@link ChannelAttributes}, and {@code RoomRouteHandler} must run last so everything
+ * downstream already agrees on identity and room ownership.
  *
  * <p>No {@code SslHandler} here, on purpose (ADR-008): TLS terminates at the LB/ingress and
  * this pod only ever sees plaintext WS. A config flag to enable TLS at the pod is not added
@@ -25,7 +27,11 @@ public final class GatewayPipeline {
 
     private GatewayPipeline() {}
 
-    public static void addTo(ChannelPipeline pipeline, TicketVerifier ticketVerifier, RoomRegistry roomRegistry) {
+    public static void addTo(ChannelPipeline pipeline, TicketVerifier ticketVerifier, RoomRegistry roomRegistry,
+            MeterRegistry meterRegistry) {
+        // First, ahead of everything else: writability is a transport-level concern
+        // orthogonal to auth/decoding, and must govern reads regardless of pipeline state.
+        pipeline.addLast(new BackpressureHandler(meterRegistry));
         pipeline.addLast(new HttpServerCodec());
         pipeline.addLast(new HttpObjectAggregator(MAX_HTTP_AGGREGATED_CONTENT_BYTES));
         pipeline.addLast(new WebSocketServerProtocolHandler(WEBSOCKET_PATH));

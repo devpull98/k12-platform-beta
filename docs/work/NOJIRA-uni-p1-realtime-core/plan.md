@@ -308,19 +308,40 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 
 ---
 
-### Task 9: Nối chuỗi backpressure một tầng
+### Task 9: Nối chuỗi backpressure một tầng — ⚠️ MỘT PHẦN XONG (2026-09-06)
 
 - **Mode:** sequential after [T5, T8]
 - **Mô tả:** Một cơ chế backpressure duy nhất chạy suốt từ mailbox actor về tới socket client (§10.2). Đây là lợi ích chính của ADR-1 — làm hỏng nó là mất lý do bỏ gRPC.
+- **Kết quả:** `mvn -pl :uni-gateway,:uni-engine test -Dtest=BackpressureTest` — gateway 5/5 pass,
+  engine 2/2 pass. Case bắt buộc "client chậm không kéo tụt client khác cùng phòng" pass
+  (`should_notAffectOtherClientsInTheSameRoom_when_oneClientIsSlow`) — **đã chủ động đảo ngược
+  logic Critical/Best-effort để xác nhận 3 test liên quan thật sự Red trước khi tin Green**,
+  đúng tinh thần prove-it đã dùng ở Task 8. Toàn `uni-gateway` 40/40, toàn `uni-engine` 23/23,
+  toàn reactor xanh, không leak, không deprecation warning.
 - **File dự kiến:** `modules/uni-gateway/src/main/java/.../net/BackpressureHandler.java`, `modules/uni-engine/src/main/java/.../net/FrameChannelServer.java` (sửa)
 - **Dependency:** Task 5, Task 8
 - **Acceptance criteria:**
-  - [ ] Chuỗi đúng: mailbox đầy → Engine ngừng đọc Frame Channel → TCP window đóng → GW thấy `!isWritable()` → `autoRead(false)` trên WS client
-  - [ ] `WRITE_BUFFER_WATER_MARK` = (32 KB low, 64 KB high) mỗi channel
-  - [ ] `!isWritable()`: **Best-effort → drop** · **Critical → không drop**, đóng channel (§5.4)
-  - [ ] **Không có queue hay buffer tầng app nào** giữa mailbox và socket
-  - [ ] Metric `channel_not_writable_total` được phát ra
+  - [ ] Chuỗi đúng: mailbox đầy → Engine ngừng đọc Frame Channel → TCP window đóng → GW thấy `!isWritable()` → `autoRead(false)` trên WS client — **chỉ hiện thực từng khúc, chưa nối trọn chuỗi**, xem ghi chú
+  - [x] `WRITE_BUFFER_WATER_MARK` = (32 KB low, 64 KB high) mỗi channel — áp dụng cho WS client
+        (`GatewayBootstrap`), GW→Engine (`FrameChannelClient`), và Engine's accepted channel
+        (`FrameChannelServer`)
+  - [x] `!isWritable()`: **Best-effort → drop** · **Critical → không drop**, đóng channel (§5.4) — trong `Broadcaster`
+  - [x] **Không có queue hay buffer tầng app nào** giữa mailbox và socket — `Broadcaster` chỉ
+        ghi-ngay-hoặc-bỏ trong đúng 1 vòng lặp, không có cấu trúc tích luỹ nào để "sửa sau rất đắt"
+  - [x] Metric `channel_not_writable_total` được phát ra — trong `BackpressureHandler` (gateway)
+        và `FrameChannelServer.BackpressureHandler` (engine, nested)
 - **Verification:** `mvn -pl :uni-gateway,:uni-engine test -Dtest=BackpressureTest` — client chậm không kéo tụt client khác cùng phòng.
+- **Ghi chú quan trọng — vì sao "một phần xong":** đã hiện thực **`BackpressureHandler`** làm
+  MỘT cơ chế duy nhất (writability của chính channel đó → toggle `autoRead` của chính nó),
+  áp dụng nhất quán ở **cả 3 hop**: WS client (Gateway), GW→Engine (`FrameChannelClient`), và
+  Engine's accepted channel (`FrameChannelServer`). Đây là cơ chế Netty chuẩn, đúng, test được.
+  Nhưng **chưa nối được** đoạn cụ thể "mailbox RoomActor đầy → Engine tự toggle `autoRead` của
+  kết nối đó": không có API nào có sẵn trong Pekko typed để đọc độ sâu mailbox đồng bộ, và một
+  connection nội bộ mang traffic của NHIỀU phòng (multiplex theo `room_id`, ADR-001) nên
+  "mailbox của 1 phòng đầy" không map 1-1 vào "channel nào cần dừng đọc" — đây là giới hạn thật
+  của kiến trúc chia sẻ 1 connection/pod-pair, không phải thiếu sót code. Bịa ra một cơ chế đo
+  mailbox depth ở đây sẽ là hạ tầng suy đoán ngoài phạm vi bất kỳ task nào đã giao. Việc nối dây
+  đầy đủ (nếu cần) thuộc Task 13 hoặc một quyết định kiến trúc riêng.
 - **Rollback nếu fail:** revert. **Không** merge nếu tiêu chí "không có queue tầng app" bị vi phạm — sửa sau rất đắt.
 
 ---

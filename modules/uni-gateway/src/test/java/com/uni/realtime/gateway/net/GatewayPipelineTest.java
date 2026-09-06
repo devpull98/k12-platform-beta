@@ -6,6 +6,7 @@ import com.uni.realtime.gateway.auth.TicketRejectedException;
 import com.uni.realtime.gateway.auth.TicketVerifier;
 import com.uni.realtime.gateway.fanout.RoomRegistry;
 import com.uni.realtime.protocol.GameMessage;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import com.uni.realtime.protocol.JoinRoom;
 import com.uni.realtime.protocol.MessageType;
 import com.uni.realtime.protocol.SubmitAnswer;
@@ -38,7 +39,7 @@ class GatewayPipelineTest {
     @Test
     void should_assembleHandlersInFixedOrderWithNoTlsHandler_when_pipelineBuilt() {
         EmbeddedChannel channel = new EmbeddedChannel();
-        GatewayPipeline.addTo(channel.pipeline(), fixedVerifier(ROOM_1_CLAIMS), new RoomRegistry());
+        GatewayPipeline.addTo(channel.pipeline(), fixedVerifier(ROOM_1_CLAIMS), new RoomRegistry(), new SimpleMeterRegistry());
 
         List<String> handlerClassNames = new ArrayList<>();
         for (Map.Entry<String, ChannelHandler> entry : channel.pipeline()) {
@@ -49,6 +50,7 @@ class GatewayPipelineTest {
         // its own internal helper handlers (handshake/UTF-8 validation) as an implementation
         // detail -- the AC is about the relative order of OUR stages, not Netty's internals.
         assertThat(handlerClassNames).containsSubsequence(
+                "BackpressureHandler",
                 "HttpServerCodec",
                 "HttpObjectAggregator",
                 "WebSocketServerProtocolHandler",

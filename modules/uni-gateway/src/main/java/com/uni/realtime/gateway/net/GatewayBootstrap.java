@@ -2,9 +2,11 @@ package com.uni.realtime.gateway.net;
 
 import com.uni.realtime.gateway.auth.TicketVerifier;
 import com.uni.realtime.gateway.fanout.RoomRegistry;
+import io.micrometer.core.instrument.MeterRegistry;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelInitializer;
+import io.netty.channel.ChannelOption;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.MultiThreadIoEventLoopGroup;
 import io.netty.channel.nio.NioIoHandler;
@@ -24,6 +26,7 @@ public final class GatewayBootstrap {
     private final int port;
     private final TicketVerifier ticketVerifier;
     private final RoomRegistry roomRegistry;
+    private final MeterRegistry meterRegistry;
 
     private EventLoopGroup eventLoopGroup;
     private Channel serverChannel;
@@ -34,10 +37,11 @@ public final class GatewayBootstrap {
      * builds fresh per channel, the registry is exactly this pod's one {@code room_id ->
      * Set<Channel>} map and must be the same instance a {@code Broadcaster} fans out through.
      */
-    public GatewayBootstrap(int port, TicketVerifier ticketVerifier, RoomRegistry roomRegistry) {
+    public GatewayBootstrap(int port, TicketVerifier ticketVerifier, RoomRegistry roomRegistry, MeterRegistry meterRegistry) {
         this.port = port;
         this.ticketVerifier = ticketVerifier;
         this.roomRegistry = roomRegistry;
+        this.meterRegistry = meterRegistry;
     }
 
     public void start() throws InterruptedException {
@@ -47,10 +51,11 @@ public final class GatewayBootstrap {
         ServerBootstrap bootstrap = new ServerBootstrap()
                 .group(eventLoopGroup)
                 .channel(NioServerSocketChannel.class)
+                .childOption(ChannelOption.WRITE_BUFFER_WATER_MARK, BackpressureHandler.WATER_MARK)
                 .childHandler(new ChannelInitializer<SocketChannel>() {
                     @Override
                     protected void initChannel(SocketChannel ch) {
-                        GatewayPipeline.addTo(ch.pipeline(), ticketVerifier, roomRegistry);
+                        GatewayPipeline.addTo(ch.pipeline(), ticketVerifier, roomRegistry, meterRegistry);
                     }
                 });
 
