@@ -1,0 +1,10 @@
+package com.uni.realtime.gateway.auth;
+
+import java.util.List;
+
+/**
+ * The minimal claim set tech-design.md §G1 R3 settles on. This is what gets bound into
+ * {@link com.uni.realtime.gateway.net.ChannelAttributes} -- never the client-supplied
+ * {@code GameMessage} fields, which are untrusted until a ticket has verified them.
+ */
+public record TicketClaims(String studentId, String roomId, String sessionId, List<String> roles) {}

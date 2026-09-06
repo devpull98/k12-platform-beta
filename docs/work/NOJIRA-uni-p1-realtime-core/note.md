@@ -58,12 +58,60 @@
   - `modules/uni-engine/src/test/java/com/uni/realtime/engine/net/FrameCodecTest.java` (mới)
   - `modules/uni-engine/src/test/java/com/uni/realtime/engine/net/FrameChannelServerTest.java` (mới)
 
+## Task 6 — Gateway: Netty pipeline + WS handshake + ticket auth (một phần)
+
+- **Trạng thái:** một phần xong (2026-09-06) — xem "Cố ý chưa làm" bên dưới, đây không phải task đóng hoàn toàn.
+- **Verification:** `mvn -pl :uni-gateway test -Dtest=GatewayPipelineTest` → 6/6 pass
+  (`EmbeddedChannel`, không socket thật — HTTP/WS handshake machinery của Netty không cần
+  test lại, chỉ test các handler ứng dụng sau khi handshake xong). Toàn module: 7/7 pass,
+  không leak, không deprecation warning.
+- **Phạm vi đã làm:**
+  - `GatewayPipeline.addTo(...)`: thứ tự cố định đúng như AC —
+    `HttpServerCodec → HttpObjectAggregator(8KB) → WebSocketServerProtocolHandler →
+    TicketAuthHandler → RateLimitHandler → GameMessageDecoder → RoomRouteHandler`. Không có
+    `SslHandler` (test xác nhận `pipeline.get(SslHandler.class)` null).
+  - `TicketAuthHandler`: đọc frame WS đầu tiên, bắt buộc phải là `JOIN_ROOM` (sai loại → đóng
+    channel), gọi `TicketVerifier.verify(ticket)`, ticket bị từ chối → đóng channel + log; ticket
+    hợp lệ → bind `ChannelAttributes{student_id, room_id, session_id, roles}` rồi **tự gỡ khỏi
+    pipeline** và forward message JOIN_ROOM đã decode sẵn (không parse lại 2 lần).
+  - `RoomRouteHandler`: `room_id` trong payload rỗng → chấp nhận và ghi đè bằng giá trị đã bind;
+    khác giá trị đã bind (không rỗng) → đóng channel + `log.warn` (test bắt buộc theo plan.md
+    đã pass: `should_closeChannel_when_payloadRoomIdDisagreesWithBoundRoomId`).
+  - `RateLimitHandler`: placeholder pass-through, đúng vị trí trong pipeline — logic thật là Task 7.
+  - `GatewayBootstrap`: bootstrap Netty thật, `MultiThreadIoEventLoopGroup` cỡ `cores * 2` (một
+    group duy nhất, đúng AC "Netty EventLoop cố định = cores × 2"), dùng `NioIoHandler` (API
+    mới của Netty 4.2, không dùng `NioEventLoopGroup` đã deprecated).
+- **Cố ý CHƯA làm — không phải thiếu sót:**
+  - **Thuật toán ký ticket thật (G1a) và dung sai lệch đồng hồ (G1c) — KHÔNG hiện thực.**
+    `TicketVerifier` chỉ là interface (`modules/uni-gateway/.../auth/TicketVerifier.java`),
+    **không có implementation nào trong main code**. Test dùng lambda fake verifier. Đây là
+    ranh giới cố ý — tech-design.md nói rõ "không tự thiết kế, đi hỏi đội dịch vụ nền tảng".
+    Bất kỳ ai định "tạm" viết một verifier giả trong main code để demo/staging đều đang vi phạm
+    ranh giới này.
+  - Ràng buộc ingress (passthrough WS upgrade, idle-timeout > 30s) chưa ghi vào
+    `docker-compose.dev.yml` vì file đó chưa tồn tại — thuộc Task 13.
+  - Rate limiting thật (Task 7), fan-out/RoomRegistry (Task 8), route cache tới Engine (Task 5),
+    backpressure (Task 9) — đều chưa đụng tới, đúng ranh giới Task 6.
+- **File đụng tới:**
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/auth/TicketVerifier.java` (mới)
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/auth/TicketClaims.java` (mới)
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/auth/TicketRejectedException.java` (mới)
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/auth/TicketAuthHandler.java` (mới)
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/ChannelAttributes.java` (mới)
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/GameMessageDecoder.java` (mới)
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/RateLimitHandler.java` (mới)
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/RoomRouteHandler.java` (mới)
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/GatewayPipeline.java` (mới)
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/GatewayBootstrap.java` (mới)
+  - `modules/uni-gateway/src/test/java/com/uni/realtime/gateway/net/GatewayPipelineTest.java` (mới)
+
 ## Tóm tắt tiến độ
 
-- **1/12 task done trước đó (Task 1 — protocol), nay 3/12 (+ Task 2 — RoomActor, + Task 4 — Frame Channel).**
-- **Đang làm tiếp:** SPIKE Pekko timer (bắt buộc trước Task 3), hoặc Task 6 (Gateway pipeline —
-  phần không đụng ký ticket), hoặc Task 5 (frame channel phía Gateway, phụ thuộc Task 4 vừa xong).
+- **1/12 task done trước đó (Task 1 — protocol), nay 3/12 done đầy đủ (+ Task 2, + Task 4)
+  và Task 6 một phần** (pipeline + trust boundary xong; ký ticket thật + ingress manifest còn treo).
+- **Đang làm tiếp:** SPIKE Pekko timer (bắt buộc trước Task 3), hoặc Task 5 (frame channel phía
+  Gateway, phụ thuộc Task 4 đã xong), hoặc Task 7 (rate limit thật, phụ thuộc Task 6 vừa xong).
 - **Block:**
   - Task 3 (tick coalescing) vẫn chờ G2a/G2b (tech-design.md §9.1) — N lần flush và cách mã hoá delta chưa chốt.
-  - Task 6 phần ký ticket vẫn chờ G1a/G1c (thuật toán ký + dung sai đồng hồ) — phần pipeline còn lại (không đụng `TicketAuthHandler` xác thực chữ ký) làm được.
+  - Task 6 **không đóng hẳn được** — chờ G1a/G1c (thuật toán ký + dung sai đồng hồ) từ đội dịch vụ nền tảng.
   - `ScoreCalculator` thật vẫn chờ Product (câu 1, §9.2 / system-architecture.md §7.5).

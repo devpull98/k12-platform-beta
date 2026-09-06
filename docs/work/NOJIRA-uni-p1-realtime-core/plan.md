@@ -193,25 +193,35 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 
 ---
 
-### Task 6: Netty pipeline Gateway + WS handshake + ticket auth
+### Task 6: Netty pipeline Gateway + WS handshake + ticket auth — ⚠️ MỘT PHẦN XONG (2026-09-06)
 
 - **Mode:** sequential after [T1] · parallel with [T2, T4]
 - **Mô tả:** Biên WebSocket. Spring Boot chỉ lo bootstrap/actuator, đường đi gói tin là Netty thuần (quyết định A1).
+- **Kết quả:** `mvn -pl :uni-gateway test -Dtest=GatewayPipelineTest` 6/6 pass (`EmbeddedChannel`),
+  toàn module 7/7, không leak, không deprecation warning. Chi tiết: `note.md`.
 - **File dự kiến:** `modules/uni-gateway/src/main/java/.../net/GatewayBootstrap.java`, `.../auth/TicketAuthHandler.java`, `.../net/RoomRouteHandler.java`
 - **Dependency:** Task 1
 - **Acceptance criteria:**
-  - [ ] Pipeline đúng thứ tự: `HttpServerCodec → HttpObjectAggregator(8KB) → WebSocketServerProtocolHandler → TicketAuthHandler → RateLimitHandler → ProtobufDecoder → RoomRouteHandler`
-  - [ ] `TicketAuthHandler` **tự gỡ khỏi pipeline** sau handshake — mỗi gói sau đó không verify lại chữ ký
-  - [ ] Ticket hợp lệ → ghi `ChannelAttributes{student_id, room_id, session_id}`
-  - [ ] **`room_id` luôn đọc từ `ChannelAttributes`, không bao giờ từ payload** (§10.6)
-  - [ ] Payload mang `room_id` khác attribute → **đóng channel + log cảnh báo bảo mật**
-  - [ ] Netty EventLoop cố định = cores × 2; **không** DB/Redis/HTTP call nào trong EventLoop (§13.2)
-  - [ ] **Không có `SslHandler` trong pipeline** — TLS terminate ở LB/ingress (quyết định #3),
+  - [x] Pipeline đúng thứ tự: `HttpServerCodec → HttpObjectAggregator(8KB) → WebSocketServerProtocolHandler → TicketAuthHandler → RateLimitHandler → ProtobufDecoder → RoomRouteHandler`
+  - [x] `TicketAuthHandler` **tự gỡ khỏi pipeline** sau handshake — mỗi gói sau đó không verify lại chữ ký
+  - [x] Ticket hợp lệ → ghi `ChannelAttributes{student_id, room_id, session_id}`
+  - [x] **`room_id` luôn đọc từ `ChannelAttributes`, không bao giờ từ payload** (§10.6)
+  - [x] Payload mang `room_id` khác attribute → **đóng channel + log cảnh báo bảo mật**
+  - [x] Netty EventLoop cố định = cores × 2; **không** DB/Redis/HTTP call nào trong EventLoop (§13.2)
+  - [x] **Không có `SslHandler` trong pipeline** — TLS terminate ở LB/ingress (quyết định #3),
         pod nhận WS plaintext. Không thêm cờ config bật TLS tại pod ở GĐ1
   - [ ] Ràng buộc lên ingress phải ghi thành văn bản trong `docker-compose.dev.yml` / manifest:
         **passthrough WebSocket upgrade** và **idle-timeout > chu kỳ heartbeat** (30s),
-        nếu không connection sẽ bị LB cắt giữa chừng
+        nếu không connection sẽ bị LB cắt giữa chừng — **chưa làm**, `docker-compose.dev.yml`
+        chưa tồn tại trong repo (thuộc phạm vi Task 13 walking skeleton)
 - **Verification:** `mvn -pl :uni-gateway test -Dtest=GatewayPipelineTest`. Case bắt buộc: gói có `room_id` giả mạo → channel bị đóng.
+- **Ghi chú quan trọng — thuật toán ký ticket KHÔNG được hiện thực ở đây:** tech-design.md
+  G1a/G1c (thuật toán ký, phân phối khoá, dung sai lệch đồng hồ) **vẫn chưa chốt** — phải hỏi
+  đội dịch vụ nền tảng, không tự bịa. `TicketAuthHandler` vì vậy nhận một `TicketVerifier`
+  (interface only, **không có implementation thật trong main code**) qua constructor;
+  test dùng fake verifier. Khi G1a/G1c chốt, chỉ cần viết một implementation thật của
+  `TicketVerifier` và wire vào `GatewayBootstrap` — không phải sửa `TicketAuthHandler`.
+  **Không dùng verifier tạm này ở staging/production.**
 - **Rollback nếu fail:** revert; nhánh T2/T4 không bị ảnh hưởng.
 
 ---
