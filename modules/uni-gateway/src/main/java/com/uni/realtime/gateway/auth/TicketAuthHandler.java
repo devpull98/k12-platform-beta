@@ -1,6 +1,7 @@
 package com.uni.realtime.gateway.auth;
 
 import com.uni.realtime.gateway.fanout.RoomRegistry;
+import com.uni.realtime.gateway.metrics.GatewayMetrics;
 import com.uni.realtime.gateway.net.ChannelAttributes;
 import com.uni.realtime.protocol.GameMessage;
 import io.netty.buffer.ByteBufInputStream;
@@ -9,6 +10,8 @@ import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.handler.codec.http.websocketx.BinaryWebSocketFrame;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.util.UUID;
 
 /**
  * The first WebSocket data frame on a connection must be a {@code JOIN_ROOM} carrying the
@@ -25,6 +28,11 @@ import org.slf4j.LoggerFactory;
  * known, so it registers the channel into {@link RoomRegistry} here (Task 8) -- removal
  * happens in {@code RoomRouteHandler}, which (unlike this handler) stays in the pipeline for
  * the channel's whole life.
+ *
+ * <p>Task 12 / §15.3: a fresh {@code trace_id} is generated here (not carried by the ticket)
+ * and bound alongside identity, so {@code RoomRouteHandler} can stamp it into
+ * {@code InternalHeader} for every message this connection ever sends onward. Every successful
+ * verification also counts toward {@code handshake_rate}.
  */
 public final class TicketAuthHandler extends SimpleChannelInboundHandler<BinaryWebSocketFrame> {
 
@@ -32,10 +40,12 @@ public final class TicketAuthHandler extends SimpleChannelInboundHandler<BinaryW
 
     private final TicketVerifier ticketVerifier;
     private final RoomRegistry roomRegistry;
+    private final GatewayMetrics gatewayMetrics;
 
-    public TicketAuthHandler(TicketVerifier ticketVerifier, RoomRegistry roomRegistry) {
+    public TicketAuthHandler(TicketVerifier ticketVerifier, RoomRegistry roomRegistry, GatewayMetrics gatewayMetrics) {
         this.ticketVerifier = ticketVerifier;
         this.roomRegistry = roomRegistry;
+        this.gatewayMetrics = gatewayMetrics;
     }
 
     @Override
@@ -58,8 +68,9 @@ public final class TicketAuthHandler extends SimpleChannelInboundHandler<BinaryW
             return;
         }
 
-        ChannelAttributes.bind(ctx.channel(), claims);
+        ChannelAttributes.bind(ctx.channel(), claims, UUID.randomUUID().toString());
         roomRegistry.add(claims.roomId(), ctx.channel());
+        gatewayMetrics.recordHandshake();
         ctx.pipeline().remove(this);
         ctx.fireChannelRead(message);
     }

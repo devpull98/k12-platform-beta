@@ -1,9 +1,12 @@
 package com.uni.realtime.gateway.fanout;
 
+import com.uni.realtime.gateway.metrics.GatewayMetrics;
 import com.uni.realtime.protocol.DeliveryClass;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.Channel;
 import io.netty.handler.codec.http.websocketx.BinaryWebSocketFrame;
+
+import java.util.concurrent.TimeUnit;
 
 /**
  * Zero-copy fan-out (§5.4, ADR-006, decision B1): Engine sends exactly one frame per Gateway
@@ -20,9 +23,11 @@ import io.netty.handler.codec.http.websocketx.BinaryWebSocketFrame;
 public final class Broadcaster {
 
     private final RoomRegistry roomRegistry;
+    private final GatewayMetrics gatewayMetrics;
 
-    public Broadcaster(RoomRegistry roomRegistry) {
+    public Broadcaster(RoomRegistry roomRegistry, GatewayMetrics gatewayMetrics) {
         this.roomRegistry = roomRegistry;
+        this.gatewayMetrics = gatewayMetrics;
     }
 
     /**
@@ -31,6 +36,7 @@ public final class Broadcaster {
      *              whether writing to any of them throws.
      */
     public void broadcast(String roomId, ByteBuf frame, DeliveryClass deliveryClass) {
+        long startNanos = System.nanoTime();
         try {
             for (Channel channel : roomRegistry.channelsIn(roomId)) {
                 if (!channel.isActive()) {
@@ -53,6 +59,7 @@ public final class Broadcaster {
             }
         } finally {
             frame.release();
+            gatewayMetrics.fanoutLatencyTimer().record(System.nanoTime() - startNanos, TimeUnit.NANOSECONDS);
         }
     }
 }

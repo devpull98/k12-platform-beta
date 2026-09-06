@@ -1,5 +1,6 @@
 package com.uni.realtime.engine.room;
 
+import com.uni.realtime.engine.metrics.EngineMetrics;
 import com.uni.realtime.engine.scoring.PlaceholderScoreCalculator;
 import com.uni.realtime.engine.scoring.ScoreCalculator;
 import com.uni.realtime.protocol.GameMessage;
@@ -43,7 +44,7 @@ class RoomActorTest {
     void setUp() {
         clock = new MutableClock(Instant.parse("2026-09-06T09:00:00Z"));
         testKit = BehaviorTestKit.create(
-                RoomActor.create("room-101", clock, new PlaceholderScoreCalculator(), new SimpleMeterRegistry()));
+                RoomActor.create("room-101", clock, new PlaceholderScoreCalculator(), new EngineMetrics(new SimpleMeterRegistry())));
     }
 
     @Test
@@ -167,7 +168,7 @@ class RoomActorTest {
             return 100;
         };
         BehaviorTestKit<RoomActor.Command> slowTestKit = BehaviorTestKit.create(
-                RoomActor.create("room-slow", clock, slowCalculator, new SimpleMeterRegistry()));
+                RoomActor.create("room-slow", clock, slowCalculator, new EngineMetrics(new SimpleMeterRegistry())));
         slowTestKit.run(new RoomActor.StartGame());
         slowTestKit.run(new RoomActor.StartQuestion("q-1", DURATION_MS));
         TestInbox<GameMessage> inbox = TestInbox.create();

@@ -415,18 +415,55 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 
 ---
 
-### Task 12: Nền quan sát
+### Task 12: Nền quan sát — ✅ XONG (2026-09-06)
 
 - **Mode:** parallel — gộp bất cứ lúc nào sau T1
 - **Mô tả:** Các metric của §15.1 áp dụng được ở GĐ1. Không chờ tới cuối mới gắn.
+- **Kết quả:** Đã CHẠY THẬT cả hai app (`mvn -pl :uni-gateway spring-boot:run` /
+  `mvn -pl :uni-engine spring-boot:run`) và `curl` `/actuator/prometheus` thật — không chỉ tin
+  unit test. Cả 5 metric xuất hiện đúng ngay từ lúc khởi động, giá trị 0 (chưa có traffic thật):
+  `actor_processing_latency_seconds{...}`, `actor_mailbox_depth 0.0`,
+  `channel_not_writable_total 0.0` (engine), `fanout_latency_seconds{...}`,
+  `handshake_rate_total 0.0`, `channel_not_writable_total 0.0` (gateway). Đã tắt cả hai process
+  sau khi xác nhận. 88/88 test (46 gateway + 42 engine) pass, toàn reactor xanh.
 - **File dự kiến:** `modules/uni-engine/src/main/java/.../metrics/EngineMetrics.java`, `modules/uni-gateway/src/main/java/.../metrics/GatewayMetrics.java`
 - **Dependency:** Task 1
 - **Acceptance criteria:**
-  - [ ] Engine: `actor_processing_latency` (p99), `actor_mailbox_depth` (p99)
-  - [ ] Gateway: `fanout_latency` (p99), `handshake_rate`, `channel_not_writable_total`
-  - [ ] `/actuator/prometheus` trả đủ các metric trên ở cả hai service
-  - [ ] Trace ID sinh tại Gateway lúc handshake, truyền qua `InternalHeader` xuống actor (§15.3)
+  - [x] Engine: `actor_processing_latency` (p99), `actor_mailbox_depth` (p99)
+  - [x] Gateway: `fanout_latency` (p99), `handshake_rate`, `channel_not_writable_total`
+  - [x] `/actuator/prometheus` trả đủ các metric trên ở cả hai service
+  - [x] Trace ID sinh tại Gateway lúc handshake, truyền qua `InternalHeader` — **tới biên
+        Gateway→Engine đã xong và test được**; "xuống actor" thật thì chờ Task 13 nối
+        `RoomRouteHandler` với `FrameChannelClient.send(...)` (xem ghi chú)
 - **Verification:** `curl -s localhost:8080/actuator/prometheus | grep -E "actor_mailbox_depth|channel_not_writable"` trả về kết quả khác rỗng.
+- **Ghi chú quan trọng:**
+  - **Phát hiện giữa chừng: metric đăng ký kiểu lazy (Task 9) sẽ không hiện trong scrape cho
+    tới khi có connection/traffic đầu tiên** — vi phạm chính lời hứa "không chờ tới cuối mới
+    gắn" của Task 12. Đã refactor `BackpressureHandler` (cả 2 phía) để nhận `GatewayMetrics`/
+    `EngineMetrics` (đăng ký eager trong constructor) thay vì tự gọi `MeterRegistry.register()`
+    mỗi lần một channel mới được tạo.
+  - **Phát hiện thứ hai, nghiêm trọng hơn: `GatewayMetrics`/`EngineMetrics` chưa hề được Spring
+    quản lý** — không có `@Bean` nào, nên nếu chạy app thật, metric sẽ KHÔNG xuất hiện dù code
+    "đúng" theo unit test. Thêm `MetricsConfiguration` (`@Configuration` + `@Bean`) ở cả hai
+    module để đăng ký chúng vào Spring context, dùng `MeterRegistry` do Actuator tự cấu hình.
+    Đây là lý do bắt buộc phải chạy app thật để verify — unit test một mình sẽ không lộ ra lỗ
+    hổng này.
+  - `actor_mailbox_depth` là gauge **dùng chung cho cả pod** (không gắn tag `room_id`) — nếu
+    gắn theo room thì gauge không thể tồn tại trước khi phòng đầu tiên được tạo, phá vỡ đúng
+    yêu cầu "hiện diện từ lúc khởi động". `RoomActor` (Task 2) đổi sang dùng
+    `EngineMetrics.processingLatencyTimer()` thay vì tự tạo Timer riêng (đổi tên metric từ
+    `engine.room.actor.processing.time` sang đúng `actor_processing_latency` theo AC).
+  - `EngineMetrics.recordMessageEnqueued()/recordMessageDequeued()` (nuôi `actor_mailbox_depth`)
+    tồn tại và có unit test, nhưng **chưa được gọi ở bất kỳ đâu trong code chính** — không có
+    nơi nào thật sự gửi message vào một `RoomActor` từ bên ngoài (đó là việc của Task 13). Cố
+    tình không wire nửa vời (chỉ decrement mà không increment) vì sẽ làm gauge chạy âm ngay khi
+    `RoomActorTest` tự gửi message — một giá trị sai còn tệ hơn một giá trị 0 trung thực.
+  - `RoomRouteHandler` giờ luôn đóng dấu `InternalHeader.trace_id` (đọc từ
+    `ChannelAttributes.TRACE_ID`, sinh bằng `UUID.randomUUID()` tại `TicketAuthHandler` lúc
+    handshake) vào MỌI message trước khi forward — kể cả khi chưa có
+    `FrameChannelClient.send(...)` nào tiêu thụ nó thật sự. Đây là điểm đúng về mặt kiến trúc để
+    dừng lại (đã CHỐT xong phần Gateway); Task 13 chỉ cần gọi `send(...)` với message đã chuẩn
+    bị sẵn, không cần biết gì về tracing.
 - **Rollback nếu fail:** revert; không chặn task nào khác.
 
 ---

@@ -2,6 +2,7 @@ package com.uni.realtime.gateway.net;
 
 import com.uni.realtime.gateway.fanout.Broadcaster;
 import com.uni.realtime.gateway.fanout.RoomRegistry;
+import com.uni.realtime.gateway.metrics.GatewayMetrics;
 import com.uni.realtime.protocol.DeliveryClass;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.netty.buffer.ByteBuf;
@@ -28,7 +29,7 @@ class BackpressureTest {
 
     @Test
     void should_toggleAutoReadOffAndOn_when_writabilityChanges() {
-        EmbeddedChannel channel = new EmbeddedChannel(new BackpressureHandler(new SimpleMeterRegistry()));
+        EmbeddedChannel channel = new EmbeddedChannel(new BackpressureHandler(new GatewayMetrics(new SimpleMeterRegistry())));
         channel.config().setOption(ChannelOption.WRITE_BUFFER_WATER_MARK, new WriteBufferWaterMark(1, 2));
         assertThat(channel.config().isAutoRead()).isTrue();
 
@@ -46,7 +47,7 @@ class BackpressureTest {
     @Test
     void should_incrementNotWritableCounter_when_channelBecomesUnwritable() {
         SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-        EmbeddedChannel channel = new EmbeddedChannel(new BackpressureHandler(meterRegistry));
+        EmbeddedChannel channel = new EmbeddedChannel(new BackpressureHandler(new GatewayMetrics(meterRegistry)));
         channel.config().setOption(ChannelOption.WRITE_BUFFER_WATER_MARK, new WriteBufferWaterMark(1, 2));
 
         channel.write(Unpooled.wrappedBuffer(new byte[1000]));
@@ -57,7 +58,7 @@ class BackpressureTest {
     @Test
     void should_dropBestEffortFrame_when_channelIsNotWritable() {
         RoomRegistry registry = new RoomRegistry();
-        Broadcaster broadcaster = new Broadcaster(registry);
+        Broadcaster broadcaster = new Broadcaster(registry, new GatewayMetrics(new SimpleMeterRegistry()));
         EmbeddedChannel slowClient = unwritableChannel();
         registry.add("room-1", slowClient);
 
@@ -70,7 +71,7 @@ class BackpressureTest {
     @Test
     void should_closeChannel_when_criticalFrameCannotBeWritten() {
         RoomRegistry registry = new RoomRegistry();
-        Broadcaster broadcaster = new Broadcaster(registry);
+        Broadcaster broadcaster = new Broadcaster(registry, new GatewayMetrics(new SimpleMeterRegistry()));
         EmbeddedChannel slowClient = unwritableChannel();
         registry.add("room-1", slowClient);
 
@@ -85,7 +86,7 @@ class BackpressureTest {
         // other clients in the same room. Broadcaster's loop writes to each channel
         // independently, so the slow one being skipped/closed must have zero effect on the rest.
         RoomRegistry registry = new RoomRegistry();
-        Broadcaster broadcaster = new Broadcaster(registry);
+        Broadcaster broadcaster = new Broadcaster(registry, new GatewayMetrics(new SimpleMeterRegistry()));
         EmbeddedChannel slowClient = unwritableChannel();
         EmbeddedChannel healthyClient = new EmbeddedChannel();
         registry.add("room-1", slowClient);

@@ -3,7 +3,7 @@ package com.uni.realtime.gateway.net;
 import com.uni.realtime.gateway.auth.TicketAuthHandler;
 import com.uni.realtime.gateway.auth.TicketVerifier;
 import com.uni.realtime.gateway.fanout.RoomRegistry;
-import io.micrometer.core.instrument.MeterRegistry;
+import com.uni.realtime.gateway.metrics.GatewayMetrics;
 import io.netty.channel.ChannelPipeline;
 import io.netty.handler.codec.http.HttpObjectAggregator;
 import io.netty.handler.codec.http.HttpServerCodec;
@@ -28,14 +28,14 @@ public final class GatewayPipeline {
     private GatewayPipeline() {}
 
     public static void addTo(ChannelPipeline pipeline, TicketVerifier ticketVerifier, RoomRegistry roomRegistry,
-            MeterRegistry meterRegistry) {
+            GatewayMetrics gatewayMetrics) {
         // First, ahead of everything else: writability is a transport-level concern
         // orthogonal to auth/decoding, and must govern reads regardless of pipeline state.
-        pipeline.addLast(new BackpressureHandler(meterRegistry));
+        pipeline.addLast(new BackpressureHandler(gatewayMetrics));
         pipeline.addLast(new HttpServerCodec());
         pipeline.addLast(new HttpObjectAggregator(MAX_HTTP_AGGREGATED_CONTENT_BYTES));
         pipeline.addLast(new WebSocketServerProtocolHandler(WEBSOCKET_PATH));
-        pipeline.addLast(new TicketAuthHandler(ticketVerifier, roomRegistry));
+        pipeline.addLast(new TicketAuthHandler(ticketVerifier, roomRegistry, gatewayMetrics));
         pipeline.addLast(new RateLimitHandler());
         pipeline.addLast(new GameMessageDecoder());
         pipeline.addLast(new RoomRouteHandler(roomRegistry));

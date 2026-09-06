@@ -1,6 +1,8 @@
 package com.uni.realtime.gateway.fanout;
 
+import com.uni.realtime.gateway.metrics.GatewayMetrics;
 import com.uni.realtime.protocol.DeliveryClass;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.embedded.EmbeddedChannel;
@@ -27,7 +29,7 @@ class FanoutTest {
     private static final int CLIENT_COUNT = 12;
 
     private final RoomRegistry registry = new RoomRegistry();
-    private final Broadcaster broadcaster = new Broadcaster(registry);
+    private final Broadcaster broadcaster = new Broadcaster(registry, new GatewayMetrics(new SimpleMeterRegistry()));
     private final List<EmbeddedChannel> clients = new ArrayList<>();
 
     @AfterEach

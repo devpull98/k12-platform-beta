@@ -378,13 +378,78 @@
     nhận 37/37 test `uni-engine` không đổi thời gian chạy sau khi thêm file này)
   - `docs/work/NOJIRA-uni-p1-realtime-core/spike-pekko-timer.md` (mới)
 
+## Task 12 — Nền quan sát: EngineMetrics + GatewayMetrics
+
+- **Trạng thái:** done (2026-09-06) — verify **bằng app chạy thật**, không chỉ unit test.
+- **Verification:** `mvn -pl :uni-gateway spring-boot:run` + `curl localhost:8080/actuator/prometheus`
+  → thấy `channel_not_writable_total`, `fanout_latency_seconds{...}`, `handshake_rate_total`.
+  `mvn -pl :uni-engine spring-boot:run` + `curl localhost:8090/actuator/prometheus` → thấy
+  `actor_mailbox_depth`, `actor_processing_latency_seconds{...}`, `channel_not_writable_total`.
+  Cả hai process đã tắt sạch sau khi xác nhận (kiểm tra lại bằng curl health → connection
+  refused). `EngineMetricsTest` 5/5, `GatewayMetricsTest` 4/4. Toàn `uni-gateway` 46/46, toàn
+  `uni-engine` 42/42, toàn reactor xanh.
+- **Hai lỗ hổng phát hiện giữa chừng (chỉ lộ ra khi chạy app thật, không unit test nào bắt được):**
+  1. **Đăng ký metric kiểu lazy (di sản Task 9)**: `BackpressureHandler` cũ tự gọi
+     `MeterRegistry.register()` mỗi lần constructor chạy — tức mỗi khi có connection mới. Pod
+     mới khởi động, chưa có connection nào → metric không tồn tại trong scrape → vi phạm đúng
+     lời hứa "không chờ tới cuối mới gắn" của chính Task 12. Sửa: `BackpressureHandler` (cả 2
+     phía) giờ nhận `GatewayMetrics`/`EngineMetrics` đã đăng ký sẵn, không tự đăng ký nữa.
+  2. **`GatewayMetrics`/`EngineMetrics` chưa hề là Spring bean** — dù class đúng, không có gì
+     trong `GatewayApplication`/`EngineApplication` từng khởi tạo chúng, nên một app chạy thật
+     sẽ KHÔNG hiện các metric này dù toàn bộ unit test xanh. Đây chính xác là lý do phải chạy
+     `spring-boot:run` + `curl` thật để verify — nếu chỉ tin `mvn test` thì lỗ hổng này không
+     bao giờ lộ ra. Sửa: thêm `MetricsConfiguration` (`@Configuration`/`@Bean`) ở cả hai module.
+- **Phạm vi đã làm:**
+  - `EngineMetrics`/`GatewayMetrics`: đăng ký TẤT CẢ metric ngay trong constructor (eager),
+    pod-wide (không gắn tag `room_id`/per-connection) — vì tag động sẽ khiến metric không thể
+    tồn tại trước khi đối tượng đầu tiên (phòng/connection) xuất hiện, phá vỡ đúng yêu cầu
+    "hiện diện từ lúc khởi động".
+  - `RoomActor` (Task 2) đổi từ tự tạo Timer riêng (`engine.room.actor.processing.time`,
+    tag theo room_id) sang dùng `EngineMetrics.processingLatencyTimer()` — đúng tên
+    `actor_processing_latency` theo AC, pod-wide.
+  - `Broadcaster` (Task 8/9) đo `fanout_latency` quanh toàn bộ vòng lặp fan-out.
+  - `TicketAuthHandler`: sinh `trace_id` (`UUID.randomUUID()`) lúc handshake thành công, lưu
+    vào `ChannelAttributes.TRACE_ID` (key mới), gọi `GatewayMetrics.recordHandshake()`.
+  - `RoomRouteHandler`: luôn đóng dấu `InternalHeader.trace_id` từ `ChannelAttributes` vào
+    MỌI message trước khi forward (gộp luôn phần sửa `room_id` cũ vào cùng 1 `toBuilder()`).
+- **Cố ý chưa làm (thuộc phạm vi khác):**
+  - `EngineMetrics.recordMessageEnqueued/Dequeued` (nuôi `actor_mailbox_depth`) có unit test
+    nhưng **không gọi ở đâu trong code chính** — chưa có nơi nào gửi message vào `RoomActor` từ
+    bên ngoài (Task 13). Không wire nửa vời để tránh gauge chạy âm khi `RoomActorTest` tự gửi
+    message trong test của chính nó.
+  - `trace_id` mới tới biên Gateway (đóng dấu vào `InternalHeader` trước khi forward) — chưa
+    có gì gọi `FrameChannelClient.send(...)` với message đã chuẩn bị sẵn đó (Task 13), nên
+    "truyền xuống actor" theo đúng nghĩa đen của AC chưa hoàn thành, chỉ mới nửa đường (đã ghi
+    rõ, không tự nhận full).
+- **File đụng tới:**
+  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/metrics/EngineMetrics.java` (mới)
+  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/metrics/MetricsConfiguration.java` (mới)
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/metrics/GatewayMetrics.java` (mới)
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/metrics/MetricsConfiguration.java` (mới)
+  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/room/RoomActor.java` (sửa)
+  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/net/FrameChannelServer.java` (sửa)
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/BackpressureHandler.java` (sửa)
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/GatewayPipeline.java` (sửa)
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/GatewayBootstrap.java` (sửa)
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/ChannelAttributes.java` (sửa)
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/RoomRouteHandler.java` (sửa)
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/auth/TicketAuthHandler.java` (sửa)
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/routing/FrameChannelClient.java` (sửa)
+  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/fanout/Broadcaster.java` (sửa)
+  - Cùng các file test tương ứng (thêm mới `EngineMetricsTest`/`GatewayMetricsTest`, sửa
+    `RoomActorTest`/`FrameChannelServerTest`/`BackpressureTest` (2 module)/`GatewayPipelineTest`/
+    `FanoutTest`/`FrameChannelClientTest` theo chữ ký constructor mới).
+
 ## Tóm tắt tiến độ
 
-- **8/12 task done đầy đủ (T1, T2, T4, T5, T8, T10, T11) + T6, T7, T9 một phần. SPIKE đạt.**
-- **Đang làm tiếp:** Task 3 (tick coalescing) giờ đã hết block về mặt kỹ thuật scheduler, nhưng
-  **vẫn còn chờ G2a/G2b** (N lần flush, cách mã hoá delta) — chưa thể bắt đầu TDD thật cho T3.
-  Lựa chọn sạch nhất hiện tại: Task 12 (nền quan sát, song song toàn tuyến, không phụ thuộc gì
-  đang treo), hoặc quay lại chốt G1a/G1c/G2a/G2b để mở khoá T3/T6.
+- **9/12 task done đầy đủ (T1, T2, T4, T5, T8, T10, T11, T12) + T6, T7, T9 một phần. SPIKE đạt.**
+- **Đang làm tiếp:** Task 3 (tick coalescing) đã hết block về mặt kỹ thuật scheduler (SPIKE đạt),
+  nhưng **vẫn còn chờ G2a/G2b** (N lần flush, cách mã hoá delta) — chưa thể bắt đầu TDD thật cho
+  T3. Với T1/T2/T4/T5/T8/T10/T11/T12 đã xong và SPIKE đạt, **task "sạch" duy nhất còn lại không
+  bị chặn bởi câu hỏi kỹ thuật/Product treo là Task 13 (walking skeleton)** — nhưng Task 13 tự
+  nó phụ thuộc Sync checkpoint (chờ T3/T7 đầy đủ/T9 đầy đủ/T11 — T11 xong nhưng T3/T7/T9 chưa
+  đóng hẳn). Lựa chọn thực tế: quay lại chốt G1a/G1c/G2a/G2b để mở khoá T3/T6, hoặc dừng ở đây
+  chờ quyết định bên ngoài.
 - **Block:**
   - Task 3 (tick coalescing): SPIKE đã đạt, nhưng vẫn chờ G2a/G2b (tech-design.md §9.1) — N lần
     flush và cách mã hoá delta chưa chốt.

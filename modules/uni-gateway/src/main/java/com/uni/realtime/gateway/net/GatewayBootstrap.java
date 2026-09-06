@@ -2,7 +2,7 @@ package com.uni.realtime.gateway.net;
 
 import com.uni.realtime.gateway.auth.TicketVerifier;
 import com.uni.realtime.gateway.fanout.RoomRegistry;
-import io.micrometer.core.instrument.MeterRegistry;
+import com.uni.realtime.gateway.metrics.GatewayMetrics;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelInitializer;
@@ -26,7 +26,7 @@ public final class GatewayBootstrap {
     private final int port;
     private final TicketVerifier ticketVerifier;
     private final RoomRegistry roomRegistry;
-    private final MeterRegistry meterRegistry;
+    private final GatewayMetrics gatewayMetrics;
 
     private EventLoopGroup eventLoopGroup;
     private Channel serverChannel;
@@ -36,12 +36,14 @@ public final class GatewayBootstrap {
      * -- unlike {@code TicketAuthHandler}/{@code RateLimitHandler}, which {@link GatewayPipeline}
      * builds fresh per channel, the registry is exactly this pod's one {@code room_id ->
      * Set<Channel>} map and must be the same instance a {@code Broadcaster} fans out through.
+     * {@code gatewayMetrics} is likewise one shared instance (Task 12) so its metrics are
+     * registered once, eagerly, rather than re-registered per connection.
      */
-    public GatewayBootstrap(int port, TicketVerifier ticketVerifier, RoomRegistry roomRegistry, MeterRegistry meterRegistry) {
+    public GatewayBootstrap(int port, TicketVerifier ticketVerifier, RoomRegistry roomRegistry, GatewayMetrics gatewayMetrics) {
         this.port = port;
         this.ticketVerifier = ticketVerifier;
         this.roomRegistry = roomRegistry;
-        this.meterRegistry = meterRegistry;
+        this.gatewayMetrics = gatewayMetrics;
     }
 
     public void start() throws InterruptedException {
@@ -55,7 +57,7 @@ public final class GatewayBootstrap {
                 .childHandler(new ChannelInitializer<SocketChannel>() {
                     @Override
                     protected void initChannel(SocketChannel ch) {
-                        GatewayPipeline.addTo(ch.pipeline(), ticketVerifier, roomRegistry, meterRegistry);
+                        GatewayPipeline.addTo(ch.pipeline(), ticketVerifier, roomRegistry, gatewayMetrics);
                     }
                 });
 

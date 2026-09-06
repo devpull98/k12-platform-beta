@@ -5,11 +5,12 @@ import com.uni.realtime.gateway.auth.TicketClaims;
 import com.uni.realtime.gateway.auth.TicketRejectedException;
 import com.uni.realtime.gateway.auth.TicketVerifier;
 import com.uni.realtime.gateway.fanout.RoomRegistry;
+import com.uni.realtime.gateway.metrics.GatewayMetrics;
 import com.uni.realtime.protocol.GameMessage;
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import com.uni.realtime.protocol.JoinRoom;
 import com.uni.realtime.protocol.MessageType;
 import com.uni.realtime.protocol.SubmitAnswer;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandler;
 import io.netty.channel.embedded.EmbeddedChannel;
@@ -39,7 +40,8 @@ class GatewayPipelineTest {
     @Test
     void should_assembleHandlersInFixedOrderWithNoTlsHandler_when_pipelineBuilt() {
         EmbeddedChannel channel = new EmbeddedChannel();
-        GatewayPipeline.addTo(channel.pipeline(), fixedVerifier(ROOM_1_CLAIMS), new RoomRegistry(), new SimpleMeterRegistry());
+        GatewayPipeline.addTo(channel.pipeline(), fixedVerifier(ROOM_1_CLAIMS), new RoomRegistry(),
+                new GatewayMetrics(new SimpleMeterRegistry()));
 
         List<String> handlerClassNames = new ArrayList<>();
         for (Map.Entry<String, ChannelHandler> entry : channel.pipeline()) {
@@ -152,13 +154,52 @@ class GatewayPipelineTest {
         assertThat(roomRegistry.channelsIn("room-1")).doesNotContain(channel);
     }
 
+    @Test
+    void should_stampInternalHeaderTraceId_when_messageForwarded() {
+        EmbeddedChannel channel = applicationChannel(fixedVerifier(ROOM_1_CLAIMS));
+        channel.writeInbound(frameOf(joinRoom("valid-ticket")));
+        GameMessage joinForwarded = channel.readInbound();
+        String traceId = joinForwarded.getInternal().getTraceId();
+        assertThat(traceId).isNotBlank();
+
+        GameMessage submit = GameMessage.newBuilder()
+                .setType(MessageType.SUBMIT_ANSWER)
+                .setSubmitAnswer(SubmitAnswer.newBuilder().setQuestionId("q-1"))
+                .build();
+        channel.writeInbound(frameOf(submit));
+
+        GameMessage forwarded = channel.readInbound();
+        assertThat(forwarded.getInternal().getTraceId())
+                .as("same connection must carry the same trace_id on every message, not a fresh one each time")
+                .isEqualTo(traceId);
+    }
+
+    @Test
+    void should_recordHandshake_when_joinSucceeds() {
+        SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+        GatewayMetrics gatewayMetrics = new GatewayMetrics(meterRegistry);
+        RoomRegistry roomRegistry = new RoomRegistry();
+        EmbeddedChannel first = applicationChannel(fixedVerifier(ROOM_1_CLAIMS), roomRegistry, gatewayMetrics);
+        EmbeddedChannel second = applicationChannel(fixedVerifier(ROOM_1_CLAIMS), roomRegistry, gatewayMetrics);
+
+        first.writeInbound(frameOf(joinRoom("valid-ticket-1")));
+        second.writeInbound(frameOf(joinRoom("valid-ticket-2")));
+
+        assertThat(meterRegistry.get("handshake_rate").counter().count()).isEqualTo(2.0);
+    }
+
     private static EmbeddedChannel applicationChannel(TicketVerifier verifier) {
-        return applicationChannel(verifier, new RoomRegistry());
+        return applicationChannel(verifier, new RoomRegistry(), new GatewayMetrics(new SimpleMeterRegistry()));
     }
 
     private static EmbeddedChannel applicationChannel(TicketVerifier verifier, RoomRegistry roomRegistry) {
+        return applicationChannel(verifier, roomRegistry, new GatewayMetrics(new SimpleMeterRegistry()));
+    }
+
+    private static EmbeddedChannel applicationChannel(
+            TicketVerifier verifier, RoomRegistry roomRegistry, GatewayMetrics gatewayMetrics) {
         return new EmbeddedChannel(
-                new TicketAuthHandler(verifier, roomRegistry),
+                new TicketAuthHandler(verifier, roomRegistry, gatewayMetrics),
                 new RateLimitHandler(),
                 new GameMessageDecoder(),
                 new RoomRouteHandler(roomRegistry));

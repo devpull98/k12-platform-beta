@@ -1,5 +1,6 @@
 package com.uni.realtime.engine.net;
 
+import com.uni.realtime.engine.metrics.EngineMetrics;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandler;
@@ -23,7 +24,7 @@ class BackpressureTest {
 
     @Test
     void should_toggleAutoReadOffAndOn_when_writabilityChanges() {
-        ChannelHandler handler = FrameChannelServer.newBackpressureHandler(new SimpleMeterRegistry());
+        ChannelHandler handler = FrameChannelServer.newBackpressureHandler(new EngineMetrics(new SimpleMeterRegistry()));
         EmbeddedChannel channel = new EmbeddedChannel(handler);
         channel.config().setOption(ChannelOption.WRITE_BUFFER_WATER_MARK, new WriteBufferWaterMark(1, 2));
         assertThat(channel.config().isAutoRead()).isTrue();
@@ -42,7 +43,8 @@ class BackpressureTest {
     @Test
     void should_incrementNotWritableCounter_when_channelBecomesUnwritable() {
         SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-        EmbeddedChannel channel = new EmbeddedChannel(FrameChannelServer.newBackpressureHandler(meterRegistry));
+        EmbeddedChannel channel = new EmbeddedChannel(
+                FrameChannelServer.newBackpressureHandler(new EngineMetrics(meterRegistry)));
         channel.config().setOption(ChannelOption.WRITE_BUFFER_WATER_MARK, new WriteBufferWaterMark(1, 2));
 
         channel.write(Unpooled.wrappedBuffer(new byte[1000]));

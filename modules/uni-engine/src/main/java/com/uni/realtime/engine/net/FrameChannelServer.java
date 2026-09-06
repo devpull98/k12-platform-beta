@@ -1,9 +1,8 @@
 package com.uni.realtime.engine.net;
 
+import com.uni.realtime.engine.metrics.EngineMetrics;
 import com.uni.realtime.engine.room.RoomOwnership;
 import com.uni.realtime.protocol.GameMessage;
-import io.micrometer.core.instrument.Counter;
-import io.micrometer.core.instrument.MeterRegistry;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandler;
@@ -35,18 +34,18 @@ public final class FrameChannelServer {
     private final int port;
     private final RoomOwnership roomOwnership;
     private final Consumer<GameMessage> onOwnedMessage;
-    private final MeterRegistry meterRegistry;
+    private final EngineMetrics engineMetrics;
 
     private EventLoopGroup bossGroup;
     private EventLoopGroup workerGroup;
     private Channel serverChannel;
 
     public FrameChannelServer(int port, RoomOwnership roomOwnership, Consumer<GameMessage> onOwnedMessage,
-            MeterRegistry meterRegistry) {
+            EngineMetrics engineMetrics) {
         this.port = port;
         this.roomOwnership = roomOwnership;
         this.onOwnedMessage = onOwnedMessage;
-        this.meterRegistry = meterRegistry;
+        this.engineMetrics = engineMetrics;
     }
 
     public void start() throws InterruptedException {
@@ -64,7 +63,7 @@ public final class FrameChannelServer {
                         // (or NOT_OWNER replies) fast enough, this connection backs up and
                         // stops reading more requests off it -- the same mechanism as every
                         // other hop, applied here instead of a bespoke mailbox-depth signal.
-                        ch.pipeline().addLast(newBackpressureHandler(meterRegistry));
+                        ch.pipeline().addLast(newBackpressureHandler(engineMetrics));
                         for (ChannelHandler handler : FrameCodec.newHandlers()) {
                             ch.pipeline().addLast(handler);
                         }
@@ -93,15 +92,15 @@ public final class FrameChannelServer {
     }
 
     /** Package-private so {@code BackpressureTest} can build an EmbeddedChannel around it directly. */
-    static ChannelHandler newBackpressureHandler(MeterRegistry meterRegistry) {
-        return new BackpressureHandler(Counter.builder("channel_not_writable_total").register(meterRegistry));
+    static ChannelHandler newBackpressureHandler(EngineMetrics engineMetrics) {
+        return new BackpressureHandler(engineMetrics);
     }
 
     private static final class BackpressureHandler extends ChannelInboundHandlerAdapter {
-        private final Counter notWritableCounter;
+        private final EngineMetrics engineMetrics;
 
-        BackpressureHandler(Counter notWritableCounter) {
-            this.notWritableCounter = notWritableCounter;
+        BackpressureHandler(EngineMetrics engineMetrics) {
+            this.engineMetrics = engineMetrics;
         }
 
         @Override
@@ -109,7 +108,7 @@ public final class FrameChannelServer {
             boolean writable = ctx.channel().isWritable();
             ctx.channel().config().setAutoRead(writable);
             if (!writable) {
-                notWritableCounter.increment();
+                engineMetrics.recordChannelNotWritable();
             }
             ctx.fireChannelWritabilityChanged();
         }

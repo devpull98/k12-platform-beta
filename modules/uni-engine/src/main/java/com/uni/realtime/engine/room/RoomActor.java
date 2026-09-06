@@ -1,8 +1,8 @@
 package com.uni.realtime.engine.room;
 
+import com.uni.realtime.engine.metrics.EngineMetrics;
 import com.uni.realtime.engine.scoring.ScoreCalculator;
 import com.uni.realtime.protocol.GameMessage;
-import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import org.apache.pekko.actor.typed.ActorRef;
 import org.apache.pekko.actor.typed.Behavior;
@@ -48,8 +48,8 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
     public record EndGame() implements Command {}
 
     public static Behavior<Command> create(
-            String roomId, Clock clock, ScoreCalculator scoreCalculator, MeterRegistry meterRegistry) {
-        return Behaviors.setup(context -> new RoomActor(context, roomId, clock, scoreCalculator, meterRegistry));
+            String roomId, Clock clock, ScoreCalculator scoreCalculator, EngineMetrics engineMetrics) {
+        return Behaviors.setup(context -> new RoomActor(context, roomId, clock, scoreCalculator, engineMetrics));
     }
 
     private final String roomId;
@@ -57,13 +57,11 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
     private final Timer processingTimer;
 
     private RoomActor(ActorContext<Command> context, String roomId, Clock clock,
-            ScoreCalculator scoreCalculator, MeterRegistry meterRegistry) {
+            ScoreCalculator scoreCalculator, EngineMetrics engineMetrics) {
         super(context);
         this.roomId = roomId;
         this.state = new RoomState(roomId, clock, scoreCalculator);
-        this.processingTimer = Timer.builder("engine.room.actor.processing.time")
-                .tag("room_id", roomId)
-                .register(meterRegistry);
+        this.processingTimer = engineMetrics.processingLatencyTimer();
     }
 
     @Override

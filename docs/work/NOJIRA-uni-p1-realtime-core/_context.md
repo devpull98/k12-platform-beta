@@ -123,10 +123,19 @@ progress: "T1, T2, T4, T5, T10 xong. T6 MOT PHAN xong (GatewayPipeline + WS hand
   DFS 3 mau) - 37/37 test o uni-engine, da prove-it bang cach vo hieu hoa rejectCycles.
   SPIKE Pekko scheduler DAT: 1000 actor, single-shot timer tu hen lai moi chu ky 200ms,
   -XX:ActiveProcessorCount=2, 2 lan chay doc lap deu p99 lech 36-37ms (<50ms) va CPU dinh
-  5-6% (<30%) - quyet dinh GO, giu nguyen thiet ke ADR-4, khong can flush wheel. Bao cao day
-  du: spike-pekko-timer.md. Toan reactor xanh. Ke tiep: Task 3 van con bi chan boi G2a/G2b
-  (chua phai scheduler nua) - lua chon sach nhat la Task 12 (observability, song song toan
-  tuyen) hoac quay lai chot G1a/G1c/G2a/G2b"
+  5-6% (<30%) - quyet dinh GO, giu nguyen thiet ke ADR-4. Bao cao: spike-pekko-timer.md.
+  T12 xong: EngineMetrics/GatewayMetrics dang ky eager (actor_processing_latency,
+  actor_mailbox_depth, fanout_latency, handshake_rate, channel_not_writable_total) - VERIFY
+  BANG APP CHAY THAT (mvn spring-boot:run + curl /actuator/prometheus tren ca 2 service, khong
+  chi tin unit test), phat hien va sua 2 lo hong: (1) BackpressureHandler dang ky metric lazy
+  moi khi co connection moi -> khong hien dien luc pod moi start; (2) EngineMetrics/
+  GatewayMetrics chua he la Spring bean -> khong ai khoi tao trong app that. Them
+  MetricsConfiguration (@Bean) ca 2 module. trace_id sinh tai TicketAuthHandler luc handshake,
+  RoomRouteHandler dong dau vao InternalHeader cho MOI message forward - toi bien Gateway,
+  chua toi Engine that (cho Task 13 noi FrameChannelClient.send). 88/88 test (46 gateway + 42
+  engine), toan reactor xanh. Ke tiep: T1/T2/T4/T5/T8/T10/T11/T12 xong + SPIKE dat - task sach
+  duy nhat con lai la Task 13 nhung no phu thuoc Sync checkpoint (can T3/T7/T9 dong han) -
+  lua chon thuc te la quay lai chot G1a/G1c/G2a/G2b de mo khoa T3/T6"
 dev_selftest: pending
 qc_status: pending
 trace: pending

@@ -3,6 +3,7 @@ package com.uni.realtime.gateway.routing;
 import com.uni.realtime.protocol.GameMessage;
 import com.uni.realtime.protocol.InternalHeader;
 import com.uni.realtime.protocol.MessageType;
+import com.uni.realtime.gateway.metrics.GatewayMetrics;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
@@ -37,7 +38,7 @@ class FrameChannelClientTest {
         FakeEnginePod podB = new FakeEnginePod("engine-b").start();
         EventLoopGroup clientGroup = new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
         try {
-            FrameChannelClient client = new FrameChannelClient(new RouteCache(), ignored -> {}, clientGroup, new SimpleMeterRegistry());
+            FrameChannelClient client = new FrameChannelClient(new RouteCache(), ignored -> {}, clientGroup, new GatewayMetrics(new SimpleMeterRegistry()));
             client.connect(podA.podId, "localhost", podA.port());
             client.connect(podB.podId, "localhost", podB.port());
 
@@ -61,7 +62,7 @@ class FrameChannelClientTest {
         try {
             RouteCache routeCache = new RouteCache();
             BlockingQueue<GameMessage> responses = new LinkedBlockingQueue<>();
-            FrameChannelClient client = new FrameChannelClient(routeCache, responses::add, clientGroup, new SimpleMeterRegistry());
+            FrameChannelClient client = new FrameChannelClient(routeCache, responses::add, clientGroup, new GatewayMetrics(new SimpleMeterRegistry()));
             client.connect(podA.podId, "localhost", podA.port());
             client.connect(podB.podId, "localhost", podB.port());
 
@@ -89,7 +90,7 @@ class FrameChannelClientTest {
         EventLoopGroup clientGroup = new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
         try {
             RouteCache routeCache = new RouteCache();
-            FrameChannelClient client = new FrameChannelClient(routeCache, ignored -> {}, clientGroup, new SimpleMeterRegistry());
+            FrameChannelClient client = new FrameChannelClient(routeCache, ignored -> {}, clientGroup, new GatewayMetrics(new SimpleMeterRegistry()));
             client.connect(podA.podId, "localhost", podA.port());
             client.connect(podB.podId, "localhost", podB.port());
 

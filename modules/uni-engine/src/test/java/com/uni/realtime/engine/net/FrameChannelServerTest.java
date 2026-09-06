@@ -2,6 +2,7 @@ package com.uni.realtime.engine.net;
 
 import com.uni.realtime.engine.room.ModuloRoomOwnership;
 import com.uni.realtime.protocol.GameMessage;
+import com.uni.realtime.engine.metrics.EngineMetrics;
 import com.uni.realtime.protocol.MessageType;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.netty.bootstrap.Bootstrap;
@@ -34,7 +35,8 @@ class FrameChannelServerTest {
     void should_deliverDecodedMessage_when_clientSendsFramedGameMessageOverRealSocket() throws Exception {
         BlockingQueue<GameMessage> received = new LinkedBlockingQueue<>();
         ModuloRoomOwnership ownsEverything = new ModuloRoomOwnership("engine-1", List.of("engine-1"));
-        FrameChannelServer server = new FrameChannelServer(0, ownsEverything, received::add, new SimpleMeterRegistry());
+        FrameChannelServer server = new FrameChannelServer(
+                0, ownsEverything, received::add, new EngineMetrics(new SimpleMeterRegistry()));
         server.start();
 
         EventLoopGroup clientGroup = new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());

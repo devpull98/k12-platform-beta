@@ -1,7 +1,6 @@
 package com.uni.realtime.gateway.net;
 
-import io.micrometer.core.instrument.Counter;
-import io.micrometer.core.instrument.MeterRegistry;
+import com.uni.realtime.gateway.metrics.GatewayMetrics;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.WriteBufferWaterMark;
@@ -18,10 +17,10 @@ public final class BackpressureHandler extends ChannelInboundHandlerAdapter {
     /** plan.md Task 9 AC: 32 KB low / 64 KB high, per channel. */
     public static final WriteBufferWaterMark WATER_MARK = new WriteBufferWaterMark(32 * 1024, 64 * 1024);
 
-    private final Counter notWritableCounter;
+    private final GatewayMetrics gatewayMetrics;
 
-    public BackpressureHandler(MeterRegistry meterRegistry) {
-        this.notWritableCounter = Counter.builder("channel_not_writable_total").register(meterRegistry);
+    public BackpressureHandler(GatewayMetrics gatewayMetrics) {
+        this.gatewayMetrics = gatewayMetrics;
     }
 
     @Override
@@ -29,7 +28,7 @@ public final class BackpressureHandler extends ChannelInboundHandlerAdapter {
         boolean writable = ctx.channel().isWritable();
         ctx.channel().config().setAutoRead(writable);
         if (!writable) {
-            notWritableCounter.increment();
+            gatewayMetrics.recordChannelNotWritable();
         }
         ctx.fireChannelWritabilityChanged();
     }

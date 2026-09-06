@@ -19,12 +19,19 @@ public final class ChannelAttributes {
     public static final AttributeKey<String> SESSION_ID = AttributeKey.valueOf("session_id");
     public static final AttributeKey<List<String>> ROLES = AttributeKey.valueOf("roles");
 
+    /**
+     * §15.3: generated fresh per connection at handshake (not carried by the ticket), so an
+     * Engine-side log line can be joined back to the Gateway span that produced it.
+     */
+    public static final AttributeKey<String> TRACE_ID = AttributeKey.valueOf("trace_id");
+
     private ChannelAttributes() {}
 
-    public static void bind(Channel channel, TicketClaims claims) {
+    public static void bind(Channel channel, TicketClaims claims, String traceId) {
         channel.attr(STUDENT_ID).set(claims.studentId());
         channel.attr(ROOM_ID).set(claims.roomId());
         channel.attr(SESSION_ID).set(claims.sessionId());
         channel.attr(ROLES).set(claims.roles());
+        channel.attr(TRACE_ID).set(traceId);
     }
 }

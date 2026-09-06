@@ -2,6 +2,7 @@ package com.uni.realtime.gateway.net;
 
 import com.uni.realtime.gateway.fanout.RoomRegistry;
 import com.uni.realtime.protocol.GameMessage;
+import com.uni.realtime.protocol.InternalHeader;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 import org.slf4j.Logger;
@@ -13,9 +14,10 @@ import org.slf4j.LoggerFactory;
  * it in) and gets overwritten; a payload that disagrees with the bound value is not a routing
  * hint, it is a security event -- the channel closes.
  *
- * <p>Actually dispatching a validated message to the room's owning Engine pod is Task 5's
- * {@code RouteCache} / Task 9's backpressure chain, not this handler's job -- this only
- * establishes the trust boundary and forwards.
+ * <p>This is the last Gateway-side stop before a message would go to Engine, so it is also
+ * where {@code InternalHeader.trace_id} gets stamped from {@link ChannelAttributes#TRACE_ID}
+ * (§15.3, Task 12) -- whichever handler eventually calls {@code FrameChannelClient.send(...)}
+ * (Task 13) does not need to know about tracing at all.
  *
  * <p>This is also where a dying channel is deregistered from {@link RoomRegistry} (Task 8):
  * {@code TicketAuthHandler} removes itself from the pipeline right after the join, so it
@@ -44,10 +46,12 @@ public final class RoomRouteHandler extends SimpleChannelInboundHandler<GameMess
             return;
         }
 
-        GameMessage corrected = payloadRoomId.equals(boundRoomId)
-                ? message
-                : message.toBuilder().setRoomId(boundRoomId).build();
-        ctx.fireChannelRead(corrected);
+        String traceId = ctx.channel().attr(ChannelAttributes.TRACE_ID).get();
+        GameMessage prepared = message.toBuilder()
+                .setRoomId(boundRoomId)
+                .setInternal(InternalHeader.newBuilder().setTraceId(traceId))
+                .build();
+        ctx.fireChannelRead(prepared);
     }
 
     @Override
