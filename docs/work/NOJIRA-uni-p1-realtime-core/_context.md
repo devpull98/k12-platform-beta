@@ -94,14 +94,17 @@ phase: dev
 track: standard
 last_skill: tdd
 next_skill: tdd
-progress: "T1, T2, T4, T5 xong. T6 MOT PHAN xong (GatewayPipeline + WS handshake +
+progress: "T1, T2, T4, T5, T10 xong. T6 MOT PHAN xong (GatewayPipeline + WS handshake +
   ChannelAttributes + room_id trust boundary - 7/7 test); TicketVerifier van la interface
   KHONG CO implementation that vi G1a/G1c chua chot - khong duoc tu bien verifier gia dua len
   staging/production. T5 = RouteCache (lazy-learned, khong TTL) + FrameChannelClient (round-robin
-  -> hoc tu owner_pod_id -> gui thang, evict khi pod dut ket noi) - 15/15 test o uni-gateway,
-  toan reactor xanh. ScoreCalculator dung PlaceholderScoreCalculator tam vi cong thuc diem
-  Product chua chot (§9.2 cau 1). Ke tiep: SPIKE Pekko timer (truoc T3), T7 (rate limit that,
-  phu thuoc T6), hoac T10 (RoomOwnership + owner_pod_id o Engine, phu thuoc T4)"
+  -> hoc tu owner_pod_id -> gui thang, evict khi pod dut ket noi) - 15/15 test o uni-gateway.
+  T10 = RoomOwnership/ModuloRoomOwnership (Math.floorMod, khong dung % truc tiep) + 
+  RoomOwnershipHandler (tra NOT_OWNER dung dinh dang de FrameChannelClient cua T5 hoc duoc) -
+  21/21 test o uni-engine, grep '% N|modulo' chi khop dung 1 file. Toan reactor xanh.
+  ScoreCalculator dung PlaceholderScoreCalculator tam vi cong thuc diem Product chua chot
+  (§9.2 cau 1). Ke tiep: SPIKE Pekko timer (truoc T3), T7 (rate limit that, phu thuoc T6),
+  hoac T11 (Game Definition toi gian, phu thuoc T2)"
 dev_selftest: pending
 qc_status: pending
 trace: pending

@@ -289,18 +289,28 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 
 ---
 
-### Task 10: Quyền sở hữu phòng ở Engine + đóng dấu `owner_pod_id`
+### Task 10: Quyền sở hữu phòng ở Engine + đóng dấu `owner_pod_id` — ✅ XONG (2026-09-06)
 
 - **Mode:** sequential after [T4]
 - **Mô tả:** `room_id % N` **bên trong Engine**, cô lập trong đúng một class để Giai đoạn 2 chỉ thay class này bằng ShardRegion (quyết định B2).
+- **Kết quả:** `mvn -pl :uni-engine test -Dtest=RoomOwnershipTest` 5/5 pass (plain JUnit, logic
+  thuần) + `RoomOwnershipHandlerTest` 2/2 pass (`EmbeddedChannel`, thêm ngoài yêu cầu — chứng
+  minh handler thật sự forward/đóng dấu NOT_OWNER đúng, không chỉ đúng thuật toán). Grep bắt
+  buộc đã chạy, chỉ khớp `ModuloRoomOwnership`. Toàn module 21/21, toàn reactor xanh.
 - **File dự kiến:** `modules/uni-engine/src/main/java/.../room/RoomOwnership.java`, `.../net/FrameChannelServer.java` (sửa)
 - **Dependency:** Task 4
 - **Acceptance criteria:**
-  - [ ] Quy tắc sở hữu nằm sau **một interface duy nhất** (`RoomOwnership`), có đúng một implementation `ModuloRoomOwnership`
-  - [ ] Mọi response đóng dấu `InternalHeader.owner_pod_id`
-  - [ ] Nhận gói của phòng không thuộc pod này → forward hoặc trả `NOT_OWNER` kèm owner hiện tại
-  - [ ] **Không class nào ngoài `RoomOwnership` biết tới phép `% N`** (grep được)
+  - [x] Quy tắc sở hữu nằm sau **một interface duy nhất** (`RoomOwnership`), có đúng một implementation `ModuloRoomOwnership`
+  - [x] Mọi response đóng dấu `InternalHeader.owner_pod_id`
+  - [x] Nhận gói của phòng không thuộc pod này → forward hoặc trả `NOT_OWNER` kèm owner hiện tại
+        (chọn trả `NOT_OWNER` — đúng cơ chế §4.5 đã tài liệu hoá; không hiện thực forward
+        Engine-to-Engine vì không nằm trong bất kỳ task nào)
+  - [x] **Không class nào ngoài `RoomOwnership` biết tới phép `% N`** (grep được)
 - **Verification:** `mvn -pl :uni-engine test -Dtest=RoomOwnershipTest` + `grep -rn "% N\|modulo" modules/uni-engine/src/main --include=*.java` chỉ trả về `ModuloRoomOwnership`.
+- **Ghi chú:** `FrameChannelServer` đổi constructor để nhận thêm `RoomOwnership` (đã sửa
+  `FrameChannelServerTest` theo — dùng `ModuloRoomOwnership` 1-pod cho kịch bản "sở hữu mọi
+  phòng" của test cũ). Logic ownership + NOT_OWNER tách thành `RoomOwnershipHandler` riêng
+  (`engine.net`) để test được qua `EmbeddedChannel` mà không cần bind socket thật.
 - **Rollback nếu fail:** revert.
 
 ---

@@ -1,5 +1,6 @@
 package com.uni.realtime.engine.net;
 
+import com.uni.realtime.engine.room.ModuloRoomOwnership;
 import com.uni.realtime.protocol.GameMessage;
 import com.uni.realtime.protocol.MessageType;
 import io.netty.bootstrap.Bootstrap;
@@ -13,6 +14,7 @@ import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioSocketChannel;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
@@ -30,7 +32,8 @@ class FrameChannelServerTest {
     @Test
     void should_deliverDecodedMessage_when_clientSendsFramedGameMessageOverRealSocket() throws Exception {
         BlockingQueue<GameMessage> received = new LinkedBlockingQueue<>();
-        FrameChannelServer server = new FrameChannelServer(0, received::add);
+        ModuloRoomOwnership ownsEverything = new ModuloRoomOwnership("engine-1", List.of("engine-1"));
+        FrameChannelServer server = new FrameChannelServer(0, ownsEverything, received::add);
         server.start();
 
         EventLoopGroup clientGroup = new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());

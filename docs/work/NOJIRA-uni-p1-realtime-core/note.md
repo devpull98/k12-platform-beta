@@ -142,11 +142,49 @@
   - `modules/uni-gateway/src/test/java/com/uni/realtime/gateway/routing/RouteCacheTest.java` (mới)
   - `modules/uni-gateway/src/test/java/com/uni/realtime/gateway/routing/FrameChannelClientTest.java` (mới)
 
+## Task 10 — Engine: RoomOwnership + đóng dấu owner_pod_id
+
+- **Trạng thái:** done (2026-09-06)
+- **Verification:** `mvn -pl :uni-engine test -Dtest=RoomOwnershipTest` → 5/5 pass (plain
+  JUnit — thuật toán thuần). `mvn -pl :uni-engine test -Dtest=RoomOwnershipHandlerTest` → 2/2
+  pass (thêm ngoài yêu cầu, `EmbeddedChannel` — chứng minh handler thật forward đúng khi sở
+  hữu và trả `NOT_OWNER` đúng khi không sở hữu, không chỉ đúng thuật toán độc lập).
+  `grep -rn "% N\|modulo" modules/uni-engine/src/main --include=*.java` chỉ khớp
+  `ModuloRoomOwnership.java` — đúng yêu cầu plan.md ("không class nào khác biết tới phép % N").
+  Toàn module 21/21, toàn reactor `mvn test` xanh.
+- **Phạm vi đã làm:**
+  - `RoomOwnership` (interface) + `ModuloRoomOwnership`: danh sách pod được sort ổn định,
+    `Math.floorMod(roomId.hashCode(), N)` (không dùng `%` trực tiếp — `hashCode()` có thể âm,
+    `%` sẽ ra index âm và lỗi). `isOwner`/`ownerPodId` đồng nhất giữa các pod khác nhau cho
+    cùng room_id (test xác nhận). Constructor fail-fast nếu `selfPodId` không nằm trong danh
+    sách pod.
+  - `RoomOwnershipHandler` (`engine.net`, mới): phòng thuộc pod này → forward qua callback;
+    không thuộc → trả `GameMessage` với `InternalHeader{owner_pod_id, routing_status=NOT_OWNER}`
+    đúng `room_id`/`student_id`/`sequence` gốc, không forward Engine-to-Engine (đúng cơ chế
+    §4.5 đã tài liệu — Gateway tự sửa `RouteCache` từ response này, khớp với cách
+    `FrameChannelClient.handleResponse` (Task 5) đã đọc `owner_pod_id` sẵn).
+  - `FrameChannelServer` (sửa): constructor nhận thêm `RoomOwnership`, dùng
+    `RoomOwnershipHandler` thay cho handler ẩn danh cũ. `FrameChannelServerTest` (Task 4) cập
+    nhật theo, dùng `ModuloRoomOwnership` 1-pod (sở hữu mọi phòng) để giữ nguyên ý nghĩa test cũ.
+- **Cố ý chưa làm (thuộc task khác):**
+  - Kết nối `RoomOwnershipHandler` → mailbox `RoomActor` thật (spawn/lookup theo `room_id`) —
+    chưa có registry actor nào trong `FrameChannelServer`; đây là phần "gắn dây" của Task 13.
+  - Forward Engine-to-Engine khi không sở hữu — không cần vì §4.5 chỉ cần `NOT_OWNER` + Gateway
+    tự định tuyến lại.
+- **File đụng tới:**
+  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/room/RoomOwnership.java` (mới)
+  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/room/ModuloRoomOwnership.java` (mới)
+  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/net/RoomOwnershipHandler.java` (mới)
+  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/net/FrameChannelServer.java` (sửa)
+  - `modules/uni-engine/src/test/java/com/uni/realtime/engine/room/RoomOwnershipTest.java` (mới)
+  - `modules/uni-engine/src/test/java/com/uni/realtime/engine/net/RoomOwnershipHandlerTest.java` (mới)
+  - `modules/uni-engine/src/test/java/com/uni/realtime/engine/net/FrameChannelServerTest.java` (sửa)
+
 ## Tóm tắt tiến độ
 
-- **4/12 task done đầy đủ (T1, T2, T4, T5) + T6 một phần.**
+- **6/12 task done đầy đủ (T1, T2, T4, T5, T10) + T6 một phần.**
 - **Đang làm tiếp:** SPIKE Pekko timer (bắt buộc trước Task 3), hoặc Task 7 (rate limit thật,
-  phụ thuộc T6), hoặc Task 10 (RoomOwnership + owner_pod_id ở Engine, phụ thuộc T4).
+  phụ thuộc T6), hoặc Task 11 (Game Definition tối giản, phụ thuộc T2).
 - **Block:**
   - Task 3 (tick coalescing) vẫn chờ G2a/G2b (tech-design.md §9.1) — N lần flush và cách mã hoá delta chưa chốt.
   - Task 6 **không đóng hẳn được** — chờ G1a/G1c (thuật toán ký + dung sai đồng hồ) từ đội dịch vụ nền tảng.

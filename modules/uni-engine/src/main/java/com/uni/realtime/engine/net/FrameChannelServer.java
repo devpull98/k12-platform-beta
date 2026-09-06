@@ -1,14 +1,13 @@
 package com.uni.realtime.engine.net;
 
+import com.uni.realtime.engine.room.RoomOwnership;
 import com.uni.realtime.protocol.GameMessage;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandler;
-import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.MultiThreadIoEventLoopGroup;
-import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
@@ -18,22 +17,24 @@ import java.util.function.Consumer;
 /**
  * Engine-side listener for the internal frame channel (ADR-001): Gateway pods dial in and
  * keep one long-lived TCP connection open, carrying every room they have a client for. This
- * class only bootstraps Netty and applies {@link FrameCodec}; where a decoded
- * {@link GameMessage} goes next (which {@code RoomActor} owns it) is {@code RoomOwnership}'s
- * job (Task 10), not this one's.
+ * class bootstraps Netty, applies {@link FrameCodec}, then hands every decoded
+ * {@link GameMessage} to {@link RoomOwnershipHandler} (Task 10) to decide whether it belongs
+ * to this pod.
  */
 public final class FrameChannelServer {
 
     private final int port;
-    private final Consumer<GameMessage> onMessage;
+    private final RoomOwnership roomOwnership;
+    private final Consumer<GameMessage> onOwnedMessage;
 
     private EventLoopGroup bossGroup;
     private EventLoopGroup workerGroup;
     private Channel serverChannel;
 
-    public FrameChannelServer(int port, Consumer<GameMessage> onMessage) {
+    public FrameChannelServer(int port, RoomOwnership roomOwnership, Consumer<GameMessage> onOwnedMessage) {
         this.port = port;
-        this.onMessage = onMessage;
+        this.roomOwnership = roomOwnership;
+        this.onOwnedMessage = onOwnedMessage;
     }
 
     public void start() throws InterruptedException {
@@ -49,12 +50,7 @@ public final class FrameChannelServer {
                         for (ChannelHandler handler : FrameCodec.newHandlers()) {
                             ch.pipeline().addLast(handler);
                         }
-                        ch.pipeline().addLast(new SimpleChannelInboundHandler<GameMessage>() {
-                            @Override
-                            protected void channelRead0(ChannelHandlerContext ctx, GameMessage msg) {
-                                onMessage.accept(msg);
-                            }
-                        });
+                        ch.pipeline().addLast(new RoomOwnershipHandler(roomOwnership, onOwnedMessage));
                     }
                 });
 
