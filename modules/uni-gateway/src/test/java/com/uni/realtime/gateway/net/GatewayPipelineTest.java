@@ -46,7 +46,8 @@ class GatewayPipelineTest {
     void should_assembleHandlersInFixedOrderWithNoTlsHandler_when_pipelineBuilt() {
         EmbeddedChannel channel = new EmbeddedChannel();
         GatewayPipeline.addTo(channel.pipeline(), fixedVerifier(ROOM_1_CLAIMS), new RoomRegistry(),
-                new GatewayMetrics(new SimpleMeterRegistry()), new IpAdmissionController(), new CapturingEngineSender());
+                new GatewayMetrics(new SimpleMeterRegistry()), new IpAdmissionController(),
+                new StudentHandshakeAdmissionController(), new CapturingEngineSender());
 
         List<String> handlerClassNames = new ArrayList<>();
         for (Map.Entry<String, ChannelHandler> entry : channel.pipeline()) {
@@ -203,6 +204,23 @@ class GatewayPipelineTest {
     }
 
     @Test
+    void should_closeChannel_when_studentExceedsL2HandshakeAdmissionControl() {
+        StudentHandshakeAdmissionController admission = new StudentHandshakeAdmissionController();
+        for (int i = 0; i < 10; i++) {
+            EmbeddedChannel channel = applicationChannel(fixedVerifier(ROOM_1_CLAIMS), new RoomRegistry(),
+                    new GatewayMetrics(new SimpleMeterRegistry()), admission, new CapturingEngineSender());
+            channel.writeInbound(frameOf(joinRoom("ticket-" + i)));
+            assertThat(channel.isOpen()).as("attempt %d must still be admitted", i).isTrue();
+        }
+
+        EmbeddedChannel eleventh = applicationChannel(fixedVerifier(ROOM_1_CLAIMS), new RoomRegistry(),
+                new GatewayMetrics(new SimpleMeterRegistry()), admission, new CapturingEngineSender());
+        eleventh.writeInbound(frameOf(joinRoom("ticket-11")));
+
+        assertThat(eleventh.isOpen()).as("11th handshake from the same student within the window must be rejected").isFalse();
+    }
+
+    @Test
     void should_recordHandshake_when_joinSucceeds() {
         SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
         GatewayMetrics gatewayMetrics = new GatewayMetrics(meterRegistry);
@@ -227,8 +245,14 @@ class GatewayPipelineTest {
 
     private static EmbeddedChannel applicationChannel(
             TicketVerifier verifier, RoomRegistry roomRegistry, GatewayMetrics gatewayMetrics, EngineSender engineSender) {
+        return applicationChannel(verifier, roomRegistry, gatewayMetrics, new StudentHandshakeAdmissionController(), engineSender);
+    }
+
+    private static EmbeddedChannel applicationChannel(TicketVerifier verifier, RoomRegistry roomRegistry,
+            GatewayMetrics gatewayMetrics, StudentHandshakeAdmissionController studentHandshakeAdmission,
+            EngineSender engineSender) {
         return new EmbeddedChannel(
-                new TicketAuthHandler(verifier, roomRegistry, gatewayMetrics),
+                new TicketAuthHandler(verifier, roomRegistry, gatewayMetrics, studentHandshakeAdmission),
                 new RateLimitHandler(),
                 new GameMessageDecoder(),
                 new RoomRouteHandler(roomRegistry, engineSender));

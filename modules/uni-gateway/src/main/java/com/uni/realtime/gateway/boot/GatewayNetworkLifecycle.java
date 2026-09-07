@@ -7,6 +7,7 @@ import com.uni.realtime.gateway.metrics.GatewayMetrics;
 import com.uni.realtime.gateway.net.EngineResponseRouter;
 import com.uni.realtime.gateway.net.GatewayBootstrap;
 import com.uni.realtime.gateway.net.IpAdmissionController;
+import com.uni.realtime.gateway.net.StudentHandshakeAdmissionController;
 import com.uni.realtime.gateway.routing.FrameChannelClient;
 import com.uni.realtime.gateway.routing.RouteCache;
 import io.netty.channel.EventLoopGroup;
@@ -76,7 +77,7 @@ public final class GatewayNetworkLifecycle implements ApplicationRunner, Disposa
         }
 
         gatewayBootstrap = new GatewayBootstrap(wsPort, ticketVerifier, roomRegistry, gatewayMetrics,
-                new IpAdmissionController(), frameChannelClient);
+                new IpAdmissionController(), new StudentHandshakeAdmissionController(), frameChannelClient);
         gatewayBootstrap.start();
     }
 

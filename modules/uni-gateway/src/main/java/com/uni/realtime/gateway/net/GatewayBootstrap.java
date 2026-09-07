@@ -29,6 +29,7 @@ public final class GatewayBootstrap {
     private final RoomRegistry roomRegistry;
     private final GatewayMetrics gatewayMetrics;
     private final IpAdmissionController ipAdmissionController;
+    private final StudentHandshakeAdmissionController studentHandshakeAdmission;
     private final EngineSender engineSender;
 
     private EventLoopGroup eventLoopGroup;
@@ -42,17 +43,21 @@ public final class GatewayBootstrap {
      * {@code gatewayMetrics} is likewise one shared instance (Task 12) so its metrics are
      * registered once, eagerly, rather than re-registered per connection. {@code
      * ipAdmissionController} (Task 7, §5.6 L1) is shared for the same reason: it counts
-     * handshake attempts per IP across every connection, not just one. {@code engineSender}
+     * handshake attempts per IP across every connection, not just one -- {@code
+     * studentHandshakeAdmission} (§5.6 L2) is the same shape, keyed by {@code student_id}
+     * instead. {@code engineSender}
      * (Task 13) is the pod's one {@code FrameChannelClient} -- every connection's {@code
      * RoomRouteHandler} forwards through the same set of Engine-pod connections, never one each.
      */
     public GatewayBootstrap(int port, TicketVerifier ticketVerifier, RoomRegistry roomRegistry,
-            GatewayMetrics gatewayMetrics, IpAdmissionController ipAdmissionController, EngineSender engineSender) {
+            GatewayMetrics gatewayMetrics, IpAdmissionController ipAdmissionController,
+            StudentHandshakeAdmissionController studentHandshakeAdmission, EngineSender engineSender) {
         this.port = port;
         this.ticketVerifier = ticketVerifier;
         this.roomRegistry = roomRegistry;
         this.gatewayMetrics = gatewayMetrics;
         this.ipAdmissionController = ipAdmissionController;
+        this.studentHandshakeAdmission = studentHandshakeAdmission;
         this.engineSender = engineSender;
     }
 
@@ -67,7 +72,8 @@ public final class GatewayBootstrap {
                 .childHandler(new ChannelInitializer<SocketChannel>() {
                     @Override
                     protected void initChannel(SocketChannel ch) {
-                        GatewayPipeline.addTo(ch.pipeline(), ticketVerifier, roomRegistry, gatewayMetrics, ipAdmissionController, engineSender);
+                        GatewayPipeline.addTo(ch.pipeline(), ticketVerifier, roomRegistry, gatewayMetrics,
+                                ipAdmissionController, studentHandshakeAdmission, engineSender);
                     }
                 });
 

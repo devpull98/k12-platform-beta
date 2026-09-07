@@ -33,7 +33,8 @@ public final class GatewayPipeline {
     private GatewayPipeline() {}
 
     public static void addTo(ChannelPipeline pipeline, TicketVerifier ticketVerifier, RoomRegistry roomRegistry,
-            GatewayMetrics gatewayMetrics, IpAdmissionController ipAdmissionController, EngineSender engineSender) {
+            GatewayMetrics gatewayMetrics, IpAdmissionController ipAdmissionController,
+            StudentHandshakeAdmissionController studentHandshakeAdmission, EngineSender engineSender) {
         // Outermost gate: reject an over-budget IP before it costs this pod anything else.
         pipeline.addLast(new IpAdmissionHandler(ipAdmissionController));
         // Writability is a transport-level concern orthogonal to auth/decoding, and must
@@ -42,7 +43,7 @@ public final class GatewayPipeline {
         pipeline.addLast(new HttpServerCodec());
         pipeline.addLast(new HttpObjectAggregator(MAX_HTTP_AGGREGATED_CONTENT_BYTES));
         pipeline.addLast(new WebSocketServerProtocolHandler(WEBSOCKET_PATH));
-        pipeline.addLast(new TicketAuthHandler(ticketVerifier, roomRegistry, gatewayMetrics));
+        pipeline.addLast(new TicketAuthHandler(ticketVerifier, roomRegistry, gatewayMetrics, studentHandshakeAdmission));
         pipeline.addLast(new RateLimitHandler());
         pipeline.addLast(new GameMessageDecoder());
         pipeline.addLast(new RoomRouteHandler(roomRegistry, engineSender));

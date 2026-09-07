@@ -3,6 +3,7 @@ package com.uni.realtime.gateway.auth;
 import com.uni.realtime.gateway.fanout.RoomRegistry;
 import com.uni.realtime.gateway.metrics.GatewayMetrics;
 import com.uni.realtime.gateway.net.ChannelAttributes;
+import com.uni.realtime.gateway.net.StudentHandshakeAdmissionController;
 import com.uni.realtime.protocol.GameMessage;
 import io.netty.buffer.ByteBufInputStream;
 import io.netty.channel.ChannelHandlerContext;
@@ -33,6 +34,12 @@ import java.util.UUID;
  * and bound alongside identity, so {@code RoomRouteHandler} can stamp it into
  * {@code InternalHeader} for every message this connection ever sends onward. Every successful
  * verification also counts toward {@code handshake_rate}.
+ *
+ * <p>§5.6 L2: once a ticket verifies who is connecting, {@link StudentHandshakeAdmissionController}
+ * caps how often that SAME {@code student_id} may complete a handshake (10/phút) -- distinct
+ * from L1's IP-keyed budget ({@code IpAdmissionHandler}, deliberately generous because a whole
+ * school shares one NAT IP) and from {@code RateLimitHandler}'s in-game message limits (governs
+ * an already-open connection, not how often a new one may be opened).
  */
 public final class TicketAuthHandler extends SimpleChannelInboundHandler<BinaryWebSocketFrame> {
 
@@ -41,11 +48,14 @@ public final class TicketAuthHandler extends SimpleChannelInboundHandler<BinaryW
     private final TicketVerifier ticketVerifier;
     private final RoomRegistry roomRegistry;
     private final GatewayMetrics gatewayMetrics;
+    private final StudentHandshakeAdmissionController studentHandshakeAdmission;
 
-    public TicketAuthHandler(TicketVerifier ticketVerifier, RoomRegistry roomRegistry, GatewayMetrics gatewayMetrics) {
+    public TicketAuthHandler(TicketVerifier ticketVerifier, RoomRegistry roomRegistry, GatewayMetrics gatewayMetrics,
+            StudentHandshakeAdmissionController studentHandshakeAdmission) {
         this.ticketVerifier = ticketVerifier;
         this.roomRegistry = roomRegistry;
         this.gatewayMetrics = gatewayMetrics;
+        this.studentHandshakeAdmission = studentHandshakeAdmission;
     }
 
     @Override
@@ -64,6 +74,13 @@ public final class TicketAuthHandler extends SimpleChannelInboundHandler<BinaryW
             claims = ticketVerifier.verify(message.getJoinRoom().getTicket());
         } catch (TicketRejectedException e) {
             log.warn("closing channel {}: ticket rejected ({})", ctx.channel(), e.getMessage());
+            ctx.close();
+            return;
+        }
+
+        if (!studentHandshakeAdmission.tryAdmit(claims.studentId())) {
+            log.warn("closing channel {}: student {} exceeded L2 handshake admission control (§5.6)",
+                    ctx.channel(), claims.studentId());
             ctx.close();
             return;
         }

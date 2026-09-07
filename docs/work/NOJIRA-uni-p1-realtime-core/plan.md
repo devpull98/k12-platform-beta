@@ -335,10 +335,20 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
     thật trên dây** — schema không có payload ack nào cho hai loại này (`UPDATE_DRAFT` còn thiếu
     hẳn payload trong oneof, tech-design.md §G3). Chỉ `SUBMIT_ANSWER` có `AnswerAck.reject_reason`
     để mang tín hiệu này thật sự. Không tự thêm field/message mới vào `.proto` ở task này.
-  - **Không hiện thực L2 (khoá theo `student_id`, 10 handshake/phút) hay L3 (admission control
-    toàn pod, §6.5)** dù cả hai đều xuất hiện ở system-architecture.md §5.6 cạnh L1 — plan.md
-    Task 7's AC chỉ nhắc L1 ("L1 theo IP (nếu bật)"), L2/L3 không nằm trong bất kỳ task nào của
-    `plan.md` tính đến giờ. Mở rộng sang đó ở đây sẽ là tự thêm phạm vi ngoài AC đã giao.
+  - **Cập nhật 2026-09-07 — L2 (khoá theo `student_id`, 10 handshake/phút) nay đã hiện thực:**
+    `StudentHandshakeAdmissionController` (cùng khuôn `IpAdmissionController` — một
+    `TokenBucket`/`student_id`, chia sẻ qua `ConcurrentHashMap` toàn pod, capacity=10,
+    refill=1 phút), chạy trong `TicketAuthHandler` **ngay sau** `ticketVerifier.verify(...)`
+    thành công (lúc `student_id` vừa xác định được) và **trước** khi bind `ChannelAttributes` —
+    vượt ngưỡng thì đóng channel, cùng kiểu xử lý với ticket bị từ chối. Phát hiện khi người dùng
+    hỏi lại "NAT hoạt động thế nào" và soát lại thấy AC này có trong tài liệu nhưng chưa từng có
+    code — không phải việc quên từ trước, mà là khoảng trống thật sự tồn tại từ Task 7 gốc tới
+    giờ. Test mới: `StudentHandshakeAdmissionControllerTest` (3 case, cùng khuôn
+    `IpAdmissionControllerTest`) + `GatewayPipelineTest.should_closeChannel_when_studentExceedsL2HandshakeAdmissionControl`
+    (10 handshake đầu tiên của 1 student đều được admit, cái thứ 11 bị đóng channel). `mvn clean
+    install` toàn reactor: BUILD SUCCESS, **184 test**, không leak.
+  - **Vẫn không hiện thực L3 (admission control toàn pod, §6.5)** — L3 chưa nằm trong bất kỳ task
+    nào của `plan.md` tính đến giờ, mở rộng sang đó ở đây sẽ là tự thêm phạm vi ngoài AC đã giao.
 - **Rollback nếu fail:** revert; tạm chạy không rate limit ở môi trường dev, **không** đưa lên staging.
 
 ---

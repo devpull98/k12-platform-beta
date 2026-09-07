@@ -17,6 +17,7 @@ import com.uni.realtime.gateway.metrics.GatewayMetrics;
 import com.uni.realtime.gateway.net.EngineResponseRouter;
 import com.uni.realtime.gateway.net.GatewayBootstrap;
 import com.uni.realtime.gateway.net.IpAdmissionController;
+import com.uni.realtime.gateway.net.StudentHandshakeAdmissionController;
 import com.uni.realtime.gateway.routing.FrameChannelClient;
 import com.uni.realtime.gateway.routing.RouteCache;
 import com.uni.realtime.protocol.GameMessage;
@@ -162,7 +163,7 @@ class RoomActorResyncTest {
         frameChannelClient.connect("engine-0", "localhost", enginePort);
 
         gatewayBootstrap = new GatewayBootstrap(0, new FakeTicketVerifier(), roomRegistry, gatewayMetrics,
-                new IpAdmissionController(), frameChannelClient);
+                new IpAdmissionController(), new StudentHandshakeAdmissionController(), frameChannelClient);
         gatewayBootstrap.start();
         return gatewayBootstrap.boundPort();
     }
