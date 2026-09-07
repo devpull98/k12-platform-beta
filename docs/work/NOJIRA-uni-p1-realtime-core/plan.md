@@ -822,6 +822,49 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 
 ---
 
+### Task 18: Kafka Event Streaming cách ly khỏi `RoomActor` — đóng §9.3 Rủi ro 6 — ⏳ CHƯA BẮT ĐẦU (thêm 2026-09-07)
+
+- **Mode:** sequential after [T13] · song song được với Task 14–17
+- **Mô tả:** `system-architecture.md` §9.3 "Rủi ro 6" đã mô tả đúng cơ chế nghẽn nếu làm sai:
+  `RoomActor` gọi `KafkaProducer.send()` trực tiếp để đẩy `GameEvent` (§4.3 bước 5) → nếu Kafka
+  cluster lag, buffer producer đầy → cấu hình mặc định sẽ **block** `send()` → actor dispatcher
+  thread bị chặn → **mailbox đóng băng → cả phòng đứng hình**. Đây chính là lý do đưa Kafka vào
+  đường xử lý đồng bộ của `RoomActor`/Netty EventLoop là anti-pattern (đã giải thích chi tiết
+  trong hội thoại review kiến trúc 2026-09-07). Task này hiện thực đúng 3 lớp cách ly mà §9.3 đã
+  yêu cầu, trước khi `RoomActor` lần đầu chạm Kafka thật.
+- **File dự kiến:** `modules/uni-engine/pom.xml` (thêm dependency `kafka-clients` — chưa có),
+  `modules/uni-engine/src/main/java/.../events/GameEventPublisher.java` (mới, hàng đợi bounded +
+  thread tiêu thụ riêng), `.../room/RoomActor.java` (sửa: gọi `enqueue(...)` non-blocking thay vì
+  gọi Kafka API trực tiếp)
+- **Dependency:** Task 13 (cần `RoomActor`/`RoomSupervisor` đã nối dây thật để có sự kiện thật mà
+  đẩy)
+- **Acceptance criteria:**
+  - [ ] `KafkaProducer` cấu hình **`max.block.ms = 0`, `acks = 1`** (đúng bảng rủi ro §9.3 dòng 3)
+        — không dùng mặc định blocking
+  - [ ] `RoomActor` **không bao giờ gọi Kafka API trực tiếp** — chỉ gọi một thao tác non-blocking
+        (thêm vào `LinkedBlockingQueue`/Disruptor bounded) trên chính actor dispatcher thread; một
+        **thread riêng** tiêu thụ hàng đợi đó và mới thật sự gọi `producer.send()`
+  - [ ] Hàng đợi đầy → **chủ động drop event phân tích**, log + tăng metric riêng (kiểu
+        `kafka_event_dropped_total`) — **tuyệt đối không throw ngược lên `RoomActor`, không block**
+  - [ ] `partition key = session_id` (đã chốt ở §4.3/§7.6, không tự đổi)
+  - [ ] Test mô phỏng Kafka broker chậm/down (fake producer block hoặc trả lỗi liên tục) → đo
+        `actor_processing_latency` (metric đã có từ Task 12) của `RoomActor` **không đổi** so với
+        baseline không có Kafka — chứng minh cách ly thật, không chỉ đúng cấu hình trên giấy
+  - [ ] Test riêng: hàng đợi đầy → sự kiện bị drop có log + metric tăng, `RoomActor` xử lý message
+        kế tiếp bình thường trong cùng tick
+- **Verification:** `mvn -pl :uni-engine test -Dtest=GameEventPublisherTest` (logic hàng đợi
+  thuần, không cần Kafka thật) + test tích hợp dùng fake/mock producer chặn `send()` để chứng
+  minh `RoomActor` không bị kéo theo — đúng tinh thần prove-it đã dùng ở Task 8/9 (chủ động gây
+  lỗi trước khi tin code đúng).
+- **Ghi chú:** Đây là lần đầu Kafka chạm code thật ở GĐ1 — đúng phạm vi đã chốt ở `_context.md`
+  ("Kafka Cluster (Event Streaming)" nằm trong scope GĐ1, `game.events.v1`). Không mở rộng sang
+  viết PostgreSQL batch writer hay Teacher Dashboard consumer đọc từ Kafka — cả hai nằm trong lộ
+  trình GĐ2 (`system-architecture.md` §18, mục 2–3), không phải task này.
+- **Rollback nếu fail:** revert; `RoomActor` tiếp tục không đẩy `GameEvent` nào ra Kafka (đúng
+  hành vi hiện tại) — không regress vì tính năng chưa từng tồn tại trước task này.
+
+---
+
 ## Pre-merge Checklist
 
 - [x] Tất cả task pass verification (T6 chờ G1a/G1c ngoài tầm kiểm soát nội bộ; T9 có giới hạn
