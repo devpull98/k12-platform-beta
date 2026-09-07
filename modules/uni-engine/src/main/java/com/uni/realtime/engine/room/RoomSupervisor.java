@@ -73,7 +73,7 @@ public final class RoomSupervisor extends AbstractBehavior<RoomSupervisor.Comman
 
     /**
      * Task 14: {@code snapshotStore.load(roomId)} piped back to self (never awaited inline --
-     * this actor's own thread must never block on Redis any more than {@code RoomActor}'s may,
+     * this actor's own thread must never block on the room store any more than {@code RoomActor}'s may,
      * §13.2). {@code snapshotBytes} is {@code null} both for "nothing stored" and for "the load
      * failed" -- {@link RoomState#restore} is only ever worth calling with real bytes, and a
      * failed load is exactly as safe to treat as a brand-new room as a genuinely empty one.

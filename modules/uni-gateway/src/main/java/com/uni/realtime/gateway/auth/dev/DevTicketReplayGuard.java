@@ -7,13 +7,14 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * In-memory, single-pod, local-Docker-only approximation of the real one-time ticket-replay
- * guard (system-architecture.md: {@code SET ticket:{jti} 1 EX 30 NX} against Redis Cluster).
+ * guard (system-architecture.md: {@code SET ticket:{jti} 1 EX 30 NX} against the room-store
+ * cluster -- Valkey in production today, see CLAUDE.md).
  *
  * <p><b>This is NOT that guard.</b> It gives zero protection across multiple gateway pods or a
- * process restart, and it deliberately stays synchronous/in-memory rather than calling Redis:
- * {@link com.uni.realtime.gateway.auth.TicketVerifier#verify} runs on a Netty EventLoop thread
- * ({@code TicketAuthHandler.channelRead0}), and CLAUDE.md's hard rule ("No DB/Redis/HTTP call
- * inside a Netty EventLoop") forbids a real Redis round trip there without first turning
+ * process restart, and it deliberately stays synchronous/in-memory rather than calling that
+ * store: {@link com.uni.realtime.gateway.auth.TicketVerifier#verify} runs on a Netty EventLoop
+ * thread ({@code TicketAuthHandler.channelRead0}), and CLAUDE.md's hard rule ("No DB/store/HTTP
+ * call inside a Netty EventLoop") forbids a real round trip to it there without first turning
  * {@code TicketVerifier} into an asynchronous interface everywhere it's called -- a real
  * interface change out of scope for local test infrastructure. This class exists only so a
  * "replay a used ticket, expect rejection" scenario is exercisable locally; never read it as

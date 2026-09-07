@@ -26,7 +26,7 @@ Giai đoạn 1 nhắm 2–3k học sinh đồng thời; thiết kế viết cho 
 | Logging | Logback JSON + Promtail → Loki |
 | Alerting | Alertmanager → Telegram / Google Chat |
 
-Giai đoạn 1 **không có datastore trên hot path** — không MySQL, không Redis, không Kafka.
+Giai đoạn 1 **không có datastore trên hot path** — không MySQL, không Valkey, không Kafka.
 
 ## Prerequisites
 
@@ -128,8 +128,11 @@ Thử tay: `GET /internal/test-alert/oom`, `/internal/test-alert/down`,
 
 > Dashboard và alert rule của MySQL / Redis / Kafka / MongoDB vẫn còn trong
 > `observability/` nhưng **đang nằm im**: Giai đoạn 1 không chạy exporter nào cho chúng, mà
-> một series vắng mặt thì không bao giờ khớp `== 0`. Chúng sống lại nguyên vẹn khi Giai
-> đoạn 2 thêm Redis/Kafka — nên giữ chứ không xoá.
+> một series vắng mặt thì không bao giờ khớp `== 0`. Tên "Redis" ở các dashboard/alert này
+> khớp với `redis_exporter` thật (metric `redis_up`...) — không đổi thành "Valkey" ở đây vì
+> chưa có `valkey_exporter` nào được nối; xem `docs/architecture` cho hạ tầng Valkey thật của
+> Giai đoạn 1. Chúng sống lại (dưới tên exporter thật được nối lúc đó) khi Giai đoạn 2 thêm
+> datastore/Kafka — nên giữ chứ không xoá.
 
 ## Scripts
 

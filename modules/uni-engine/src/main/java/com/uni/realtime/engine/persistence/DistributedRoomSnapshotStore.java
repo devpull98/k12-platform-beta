@@ -13,25 +13,27 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * Task 14: the real, Redis-backed {@link RoomSnapshotStore}.
+ * Task 14: the real {@link RoomSnapshotStore}, backed by the same external store as
+ * {@link DistributedRoomLeaseStore} (see that class's javadoc for why neither names the
+ * product).
  *
- * <p><b>NOT verified against a real Redis instance</b> -- same caveat as
- * {@link RedisRoomLeaseStore}: no Redis server and no working Docker daemon in this development
- * environment. Follows Lettuce's documented API but has not run end-to-end. Do not point this
- * at staging/production before it has.
+ * <p><b>NOT verified against a real store instance</b> -- same caveat as
+ * {@link DistributedRoomLeaseStore}: no such server and no working Docker daemon in this
+ * development environment. Follows Lettuce's documented API but has not run end-to-end. Do not
+ * point this at staging/production before it has.
  *
  * <p>Needs a connection keyed and valued as raw bytes ({@link #CODEC}) rather than the
- * {@code String} codec {@link RedisRoomLeaseStore} uses -- a snapshot envelope is opaque binary
- * (hand-rolled per {@code SnapshotEnvelope}), not UTF-8 text, and forcing it through a String
- * codec would corrupt bytes that happen not to be valid UTF-8.
+ * {@code String} codec {@link DistributedRoomLeaseStore} uses -- a snapshot envelope is opaque
+ * binary (hand-rolled per {@code SnapshotEnvelope}), not UTF-8 text, and forcing it through a
+ * String codec would corrupt bytes that happen not to be valid UTF-8.
  *
  * <p>{@link #save} fences against {@code room:epoch:{roomId}} -- the SAME counter
- * {@link RedisRoomLeaseStore} increments on every new lease acquisition, deliberately shared
- * rather than duplicated, so there is exactly one source of truth for "which epoch owns this
- * room now" across both the lease and the snapshot subsystems. A write whose {@code epoch} is
- * older than that counter is rejected -- the zombie-actor protection §5.8 asks for.
+ * {@link DistributedRoomLeaseStore} increments on every new lease acquisition, deliberately
+ * shared rather than duplicated, so there is exactly one source of truth for "which epoch owns
+ * this room now" across both the lease and the snapshot subsystems. A write whose {@code epoch}
+ * is older than that counter is rejected -- the zombie-actor protection §5.8 asks for.
  */
-public final class RedisSnapshotStore implements RoomSnapshotStore {
+public final class DistributedRoomSnapshotStore implements RoomSnapshotStore {
 
     /** Convenience for callers wiring a connection: the exact codec this store requires. */
     public static final RedisCodec<String, byte[]> CODEC = RedisCodec.of(StringCodec.UTF8, ByteArrayCodec.INSTANCE);
@@ -40,7 +42,8 @@ public final class RedisSnapshotStore implements RoomSnapshotStore {
      * KEYS[1] = snapshot key, KEYS[2] = shared epoch key. ARGV[1] = envelope bytes, ARGV[2] =
      * epoch as a decimal string -- Lua's {@code tonumber} parses that regardless of the value
      * codec used to carry it. A missing epoch key (room never had a lease acquired through
-     * {@code RedisRoomLeaseStore}) reads as {@code 0}, so the very first write always succeeds.
+     * {@code DistributedRoomLeaseStore}) reads as {@code 0}, so the very first write always
+     * succeeds.
      */
     private static final String SAVE_SCRIPT =
             "local current = tonumber(redis.call('GET', KEYS[2]) or '0') "
@@ -53,7 +56,7 @@ public final class RedisSnapshotStore implements RoomSnapshotStore {
 
     private final RedisAsyncCommands<String, byte[]> commands;
 
-    public RedisSnapshotStore(RedisAsyncCommands<String, byte[]> commands) {
+    public DistributedRoomSnapshotStore(RedisAsyncCommands<String, byte[]> commands) {
         this.commands = commands;
     }
 

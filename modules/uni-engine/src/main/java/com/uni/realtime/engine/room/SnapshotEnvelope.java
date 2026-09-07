@@ -12,11 +12,11 @@ import java.util.zip.CRC32;
 /**
  * Task 14 (§5.8): wraps a {@link RoomState#serializeSnapshot()} payload with
  * {@code schema_version}, {@code epoch}, and a CRC32 -- the three guards system-architecture.md
- * §5.8 requires before trusting a byte blob pulled back out of Redis:
+ * §5.8 requires before trusting a byte blob pulled back out of the room store:
  * <ul>
  *   <li>{@code schema_version} -- refuses to read a snapshot written by older/incompatible code
  *       after a deploy, rather than misinterpreting its bytes.</li>
- *   <li>{@code epoch} -- the fencing token from {@link RedisLeaseRoomOwnership#epochOf}. Not
+ *   <li>{@code epoch} -- the fencing token from {@link LeaseBasedRoomOwnership#epochOf}. Not
  *       enforced by this class (it has no notion of "current" epoch to compare against) --
  *       exposed via {@link Unwrapped#epoch()} so the caller (the pod about to resume a room)
  *       can reject a snapshot written by a zombie actor whose epoch is older than the lease it

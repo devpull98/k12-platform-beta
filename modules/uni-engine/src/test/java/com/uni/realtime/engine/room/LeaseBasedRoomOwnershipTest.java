@@ -10,20 +10,20 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Task 14 verification: pure logic against a fake {@link RoomLeaseStore}, no real Redis (there
- * is none available in this environment -- {@code RedisRoomLeaseStore}, the real Lettuce
- * implementation, is exercised by nothing in this repo and must be verified against a real
- * Redis Cluster before staging/production, exactly like {@code TicketAuthHandler}'s
+ * Task 14 verification: pure logic against a fake {@link RoomLeaseStore}, no real external store
+ * (there is none available in this environment -- {@code DistributedRoomLeaseStore}, the real
+ * Lettuce implementation, is exercised by nothing in this repo and must be verified against the
+ * real cluster before staging/production, exactly like {@code TicketAuthHandler}'s
  * placeholder verifier). Everything here is about the caching/async/fencing/fallback logic
  * this class owns, independent of which store backs it.
  */
-class RedisLeaseRoomOwnershipTest {
+class LeaseBasedRoomOwnershipTest {
 
     private static final Duration TTL = Duration.ofSeconds(20);
 
     @Test
     void should_answerUnknown_before_ensureAcquiredResolves() {
-        RedisLeaseRoomOwnership ownership = new RedisLeaseRoomOwnership(
+        LeaseBasedRoomOwnership ownership = new LeaseBasedRoomOwnership(
                 "engine-0", new NeverCompletingStore(), TTL, new ModuloRoomOwnership("engine-0", List.of("engine-0")));
 
         assertThat(ownership.isOwner("room-1")).isFalse();
@@ -33,7 +33,7 @@ class RedisLeaseRoomOwnershipTest {
     @Test
     void should_becomeOwner_when_ensureAcquiredWinsTheLease() {
         FakeRoomLeaseStore store = FakeRoomLeaseStore.acquiredBy("engine-0", 1L);
-        RedisLeaseRoomOwnership ownership = new RedisLeaseRoomOwnership(
+        LeaseBasedRoomOwnership ownership = new LeaseBasedRoomOwnership(
                 "engine-0", store, TTL, new ModuloRoomOwnership("engine-0", List.of("engine-0")));
 
         ownership.ensureAcquired("room-1");
@@ -46,7 +46,7 @@ class RedisLeaseRoomOwnershipTest {
     @Test
     void should_notOwn_when_anotherPodAlreadyHoldsTheLease() {
         FakeRoomLeaseStore store = FakeRoomLeaseStore.acquiredBy("engine-1", 3L);
-        RedisLeaseRoomOwnership ownership = new RedisLeaseRoomOwnership(
+        LeaseBasedRoomOwnership ownership = new LeaseBasedRoomOwnership(
                 "engine-0", store, TTL, new ModuloRoomOwnership("engine-0", List.of("engine-0", "engine-1")));
 
         ownership.ensureAcquired("room-1");
@@ -58,7 +58,7 @@ class RedisLeaseRoomOwnershipTest {
     @Test
     void should_callTheStoreExactlyOnce_when_ensureAcquiredIsCalledRepeatedlyAfterResolving() {
         FakeRoomLeaseStore store = FakeRoomLeaseStore.acquiredBy("engine-0", 1L);
-        RedisLeaseRoomOwnership ownership = new RedisLeaseRoomOwnership(
+        LeaseBasedRoomOwnership ownership = new LeaseBasedRoomOwnership(
                 "engine-0", store, TTL, new ModuloRoomOwnership("engine-0", List.of("engine-0")));
 
         ownership.ensureAcquired("room-1");
@@ -73,7 +73,7 @@ class RedisLeaseRoomOwnershipTest {
         // Simulates several frames for a brand-new room arriving before the first async
         // acquire resolves -- computeIfAbsent's atomicity is what this test actually proves.
         ControllableStore store = new ControllableStore();
-        RedisLeaseRoomOwnership ownership = new RedisLeaseRoomOwnership(
+        LeaseBasedRoomOwnership ownership = new LeaseBasedRoomOwnership(
                 "engine-0", store, TTL, new ModuloRoomOwnership("engine-0", List.of("engine-0")));
 
         ownership.ensureAcquired("room-1");
@@ -90,7 +90,7 @@ class RedisLeaseRoomOwnershipTest {
     @Test
     void should_fallBackToProvidedOwnership_when_theStoreFailsWithAnException() {
         RoomOwnership fallback = new ModuloRoomOwnership("engine-0", List.of("engine-0"));
-        RedisLeaseRoomOwnership ownership = new RedisLeaseRoomOwnership(
+        LeaseBasedRoomOwnership ownership = new LeaseBasedRoomOwnership(
                 "engine-0", new FailingStore(), TTL, fallback);
 
         ownership.ensureAcquired("room-1");
@@ -103,9 +103,9 @@ class RedisLeaseRoomOwnershipTest {
     @Test
     void should_allowRetrying_after_aFailedAcquireCompletes() {
         // The pending-marker must be cleared even on the exceptional path, or a room that hit
-        // a transient Redis error would be stuck unresolvable forever.
+        // a transient store error would be stuck unresolvable forever.
         FailingStore failingOnce = new FailingStore();
-        RedisLeaseRoomOwnership ownership = new RedisLeaseRoomOwnership(
+        LeaseBasedRoomOwnership ownership = new LeaseBasedRoomOwnership(
                 "engine-0", failingOnce, TTL, new ModuloRoomOwnership("engine-0", List.of("engine-0")));
         ownership.ensureAcquired("room-1");
         assertThat(failingOnce.calls.get()).isEqualTo(1);
@@ -121,7 +121,7 @@ class RedisLeaseRoomOwnershipTest {
     @Test
     void should_keepOwnership_when_renewSucceeds() {
         FakeRoomLeaseStore store = FakeRoomLeaseStore.acquiredBy("engine-0", 1L);
-        RedisLeaseRoomOwnership ownership = new RedisLeaseRoomOwnership(
+        LeaseBasedRoomOwnership ownership = new LeaseBasedRoomOwnership(
                 "engine-0", store, TTL, new ModuloRoomOwnership("engine-0", List.of("engine-0")));
         ownership.ensureAcquired("room-1");
         store.renewResult = true;
@@ -135,7 +135,7 @@ class RedisLeaseRoomOwnershipTest {
     @Test
     void should_loseTheLease_when_renewReportsItWasNotRenewed() {
         FakeRoomLeaseStore store = FakeRoomLeaseStore.acquiredBy("engine-0", 1L);
-        RedisLeaseRoomOwnership ownership = new RedisLeaseRoomOwnership(
+        LeaseBasedRoomOwnership ownership = new LeaseBasedRoomOwnership(
                 "engine-0", store, TTL, new ModuloRoomOwnership("engine-0", List.of("engine-0")));
         ownership.ensureAcquired("room-1");
         store.renewResult = false;
@@ -150,7 +150,7 @@ class RedisLeaseRoomOwnershipTest {
     void should_treatARenewException_asLostLease() {
         FakeRoomLeaseStore store = FakeRoomLeaseStore.acquiredBy("engine-0", 1L);
         store.renewThrows = true;
-        RedisLeaseRoomOwnership ownership = new RedisLeaseRoomOwnership(
+        LeaseBasedRoomOwnership ownership = new LeaseBasedRoomOwnership(
                 "engine-0", store, TTL, new ModuloRoomOwnership("engine-0", List.of("engine-0")));
         ownership.ensureAcquired("room-1");
 
@@ -162,7 +162,7 @@ class RedisLeaseRoomOwnershipTest {
     @Test
     void should_neverRenewARoomOwnedByAnotherPod() {
         FakeRoomLeaseStore store = FakeRoomLeaseStore.acquiredBy("engine-1", 5L);
-        RedisLeaseRoomOwnership ownership = new RedisLeaseRoomOwnership(
+        LeaseBasedRoomOwnership ownership = new LeaseBasedRoomOwnership(
                 "engine-0", store, TTL, new ModuloRoomOwnership("engine-0", List.of("engine-0", "engine-1")));
         ownership.ensureAcquired("room-1");
 
@@ -197,7 +197,7 @@ class RedisLeaseRoomOwnershipTest {
         public CompletableFuture<Boolean> renew(String roomId, String podId, long epoch, Duration ttl) {
             renewCalls.incrementAndGet();
             if (renewThrows) {
-                return CompletableFuture.failedFuture(new RuntimeException("simulated Redis error"));
+                return CompletableFuture.failedFuture(new RuntimeException("simulated store error"));
             }
             return CompletableFuture.completedFuture(renewResult);
         }
@@ -244,7 +244,7 @@ class RedisLeaseRoomOwnershipTest {
         @Override
         public CompletableFuture<RoomLease> tryAcquire(String roomId, String podId, Duration ttl) {
             calls.incrementAndGet();
-            return CompletableFuture.failedFuture(new RuntimeException("simulated Redis error"));
+            return CompletableFuture.failedFuture(new RuntimeException("simulated store error"));
         }
 
         @Override

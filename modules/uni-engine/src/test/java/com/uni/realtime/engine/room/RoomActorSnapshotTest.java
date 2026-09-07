@@ -237,7 +237,7 @@ class RoomActorSnapshotTest {
     private static final class FailingSnapshotStore implements RoomSnapshotStore {
         @Override
         public CompletableFuture<SnapshotWriteResult> save(String roomId, long epoch, byte[] envelopeBytes) {
-            return CompletableFuture.failedFuture(new RuntimeException("simulated Redis error"));
+            return CompletableFuture.failedFuture(new RuntimeException("simulated store error"));
         }
 
         @Override

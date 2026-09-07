@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * {@code RoomOwnershipHandler} calls {@link #isOwner}/{@link #ownerPodId} directly on the
  * EventLoop thread for every inbound frame (ADR-005 forbids blocking I/O there). This class
  * NEVER touches {@code roomStore} from those two methods -- they only ever read
- * {@link #cache}, an in-memory map, so they return in constant time regardless of Redis
+ * {@link #cache}, an in-memory map, so they return in constant time regardless of external-store
  * latency or an outage. All the actual network I/O happens in {@link #ensureAcquired}, and
  * only asynchronously: it kicks off {@code roomStore.tryAcquire(...)} and returns immediately,
  * updating {@link #cache} later via {@link CompletableFuture#whenComplete}. A room this pod has
@@ -31,9 +31,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * timer rather than a shared class inventing a second, competing scheduling mechanism. Wiring
  * that periodic call is a follow-up task, not done here.
  */
-public final class RedisLeaseRoomOwnership implements RoomOwnership {
+public final class LeaseBasedRoomOwnership implements RoomOwnership {
 
-    private static final Logger log = LoggerFactory.getLogger(RedisLeaseRoomOwnership.class);
+    private static final Logger log = LoggerFactory.getLogger(LeaseBasedRoomOwnership.class);
 
     private final String selfPodId;
     private final RoomLeaseStore roomStore;
@@ -44,13 +44,13 @@ public final class RedisLeaseRoomOwnership implements RoomOwnership {
     private final Map<String, CompletableFuture<RoomLease>> pending = new ConcurrentHashMap<>();
 
     /**
-     * @param fallback used ONLY when {@code roomStore} fails with an exception (Redis
-     *     unreachable) while acquiring a room this pod has never resolved before -- seeds the
-     *     cache with the fallback's answer for that one room so a Redis outage degrades to
-     *     Phase-1-modulo-like behavior for new rooms instead of refusing to answer at all.
-     *     Typically a {@link ModuloRoomOwnership} built from the same pod list.
+     * @param fallback used ONLY when {@code roomStore} fails with an exception (the external
+     *     store unreachable) while acquiring a room this pod has never resolved before -- seeds
+     *     the cache with the fallback's answer for that one room so an outage of that store
+     *     degrades to Phase-1-modulo-like behavior for new rooms instead of refusing to answer
+     *     at all. Typically a {@link ModuloRoomOwnership} built from the same pod list.
      */
-    public RedisLeaseRoomOwnership(String selfPodId, RoomLeaseStore roomStore, Duration ttl, RoomOwnership fallback) {
+    public LeaseBasedRoomOwnership(String selfPodId, RoomLeaseStore roomStore, Duration ttl, RoomOwnership fallback) {
         this.selfPodId = selfPodId;
         this.roomStore = roomStore;
         this.ttl = ttl;
@@ -98,7 +98,7 @@ public final class RedisLeaseRoomOwnership implements RoomOwnership {
     /**
      * The epoch this pod believes is current for {@code roomId}, for stamping
      * {@code InternalHeader.epoch} on outbound frames and snapshot writes (Task 14's Hot
-     * Snapshot half). {@code 0} both for "never resolved" and for the fallback path on a Redis
+     * Snapshot half). {@code 0} both for "never resolved" and for the fallback path on a store
      * outage -- Phase 1 already treats {@code epoch = 0} as "no fencing in effect" (ADR-007),
      * which is the correct, conservative answer when the real epoch could not be confirmed.
      */

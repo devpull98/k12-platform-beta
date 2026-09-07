@@ -38,12 +38,28 @@ for context.
   `/actuator/prometheus`, send OTLP traces to `localhost:4318`, and write JSON logs to
   `logs/<spring.application.name>.log` for Promtail. See `observability/README.md`.
 
-Phase 1 has **no datastore on the hot path** — no MySQL. Redis Cluster (one-time ticket
+Phase 1 has **no datastore on the hot path** — no MySQL. Valkey Cluster (one-time ticket
 guard via `SET ticket:{jti} 1 EX 30 NX`, Hot Snapshot < 5 KB) and Kafka Cluster
 (`game.events.v1` event streaming after scoring) **are** in scope per the 2026-09-05 decision
 in `_context.md` — both live in the async backplane, never inside a Netty EventLoop or on
-the synchronous `RoomActor` message path. If a task reaches for a *synchronous* DB/Redis/Kafka
+the synchronous `RoomActor` message path. If a task reaches for a *synchronous* DB/Valkey/Kafka
 call on the hot path, it has left Phase 1 scope; stop and check `_context.md`.
+
+Valkey, not Redis: a BSD-3/Linux Foundation fork of Redis 7.2.4, RESP-protocol-compatible, no
+client or command-level differences for anything this repo does (2026-09-07 decision). Lettuce
+(the client) never renamed its own API for it, so code still imports `io.lettuce.core.RedisClient`
+etc. and Lua scripts still call the `redis.call(...)` global — that is Valkey's own scripting API
+surface, not a leftover from before the switch.
+
+Code identifiers deliberately don't name Valkey (2026-09-07 decision, same day as the switch
+above): the class is `DistributedRoomLeaseStore`/`DistributedRoomSnapshotStore`
+(`LeaseBasedRoomOwnership` is the `RoomOwnership` built on top), config is
+`uni.engine.room-store.*` / `ENGINE_ROOM_STORE_*`, and the Compose service is `room-store`. Named
+by role so swapping the backing product again later is a config/ops change, not a repo-wide
+rename — see `DistributedRoomLeaseStore`'s javadoc. `application.yml`, `docker-compose.dev.yml`,
+and this file's own "Stack"/infra sections still say "Valkey" where the point is which real
+product is deployed — that distinction (identifier vs. infra description) is intentional, not
+inconsistency.
 
 ## Commands
 
@@ -123,16 +139,17 @@ code that passes a naive test and breaks in production.
 - **Losing an engine pod must not close client WebSockets** (§9.7). Send
   `CONNECTION_DEGRADED` and hold the socket open; mass reconnect turns one pod's failure
   into the whole system's.
-- **No DB/Redis/HTTP call inside a Netty EventLoop** (§13.2), and no `synchronized` around
+- **No DB/store/HTTP call inside a Netty EventLoop** (§13.2), and no `synchronized` around
   blocking I/O anywhere.
 
 ## Known Phase 1 trade-offs — deliberate, documented, not bugs to fix
 
 - No Cluster Sharding: losing an engine pod kills its rooms until the pod returns. Accepted
   at 2–3k CCU, **must go before Phase 2**, and the UI has to show it.
-- No `RESYNCING` state, no dashboard fan-in, no LZ4. Redis Cluster (ticket dedup + Hot
+- No `RESYNCING` state, no dashboard fan-in, no LZ4. Valkey Cluster (ticket dedup + Hot
   Snapshot) and Kafka Cluster (event streaming) **are** in Phase 1 scope, off the hot path —
-  see the note above; this used to say "no Redis, no Kafka" before the 2026-09-05 decision.
+  see the note above; this used to say "no Redis, no Kafka" before the 2026-09-05 decision
+  (and "Redis Cluster" rather than "Valkey Cluster" before the 2026-09-07 Valkey switch).
 - PH-3: the client-side contract (ring buffer, `sequence`, RESYNC) does not exist yet, so
   the "zero data loss" SLA has no basis regardless of server correctness. Do not publish it.
 

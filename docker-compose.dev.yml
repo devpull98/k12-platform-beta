@@ -7,10 +7,15 @@
 # Usage:
 #   mvn clean package -DskipTests                    # build the exec jars Dockerfiles COPY
 #   docker compose -f docker-compose.dev.yml up -d --build
-#   docker compose -f docker-compose.dev.yml down -v # tear down, including Redis/Kafka volumes
+#   docker compose -f docker-compose.dev.yml down -v # tear down, including room-store/Kafka volumes
 #
 # Base images verified to exist and pull successfully as of 2026-09-07: eclipse-temurin:25-jre,
-# redis:7-alpine, apache/kafka:3.9.0.
+# apache/kafka:3.9.0. valkey/valkey:8.1-alpine (swapped in for redis:7-alpine -- Valkey is the
+# BSD-licensed, Linux Foundation-governed fork of Redis 7.2.4, RESP-protocol-compatible, no
+# client/code changes needed) has NOT been pull-verified in this environment -- no working Docker
+# daemon here, same constraint recorded against DistributedRoomLeaseStore's javadoc. The service
+# below is named "room-store" (not "valkey") to match the code's naming -- see CLAUDE.md's note
+# on why identifiers don't name the product; the `image:` line is still the honest, real product.
 #
 # Explicit project name -- without this, Compose defaults the project name to the directory
 # basename ("spring-ticket-ddd"), which collided with an unrelated, pre-existing "spring-ticket-ddd"
@@ -23,8 +28,8 @@ networks:
     driver: bridge
 
 services:
-  redis:
-    image: redis:7-alpine
+  room-store:
+    image: valkey/valkey:8.1-alpine
     ports:
       - "6379:6379"
     networks: [uni-dev-net]
@@ -64,14 +69,14 @@ services:
       ENGINE_FRAME_PORT: "9100"
       ENGINE_POD_ID: "engine-0"
       ENGINE_POD_COUNT: "2"
-      ENGINE_REDIS_ENABLED: "true"
-      ENGINE_REDIS_URI: "redis://redis:6379"
+      ENGINE_ROOM_STORE_ENABLED: "true"
+      ENGINE_ROOM_STORE_URI: "redis://room-store:6379"
       ENGINE_KAFKA_ENABLED: "true"
       ENGINE_KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
       ENGINE_KAFKA_TOPIC: "game.events.v1"
     ports:
       - "18090:8090"
-    depends_on: [redis, kafka]
+    depends_on: [room-store, kafka]
     networks: [uni-dev-net]
     # GatewayNetworkLifecycle dials this pod's frame-channel port at ITS OWN startup, synchronously,
     # and a failed dial crashes the whole gateway JVM (no retry) -- Spring Boot's actuator port
@@ -94,14 +99,14 @@ services:
       ENGINE_FRAME_PORT: "9100"
       ENGINE_POD_ID: "engine-1"
       ENGINE_POD_COUNT: "2"
-      ENGINE_REDIS_ENABLED: "true"
-      ENGINE_REDIS_URI: "redis://redis:6379"
+      ENGINE_ROOM_STORE_ENABLED: "true"
+      ENGINE_ROOM_STORE_URI: "redis://room-store:6379"
       ENGINE_KAFKA_ENABLED: "true"
       ENGINE_KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
       ENGINE_KAFKA_TOPIC: "game.events.v1"
     ports:
       - "18091:8090"
-    depends_on: [redis, kafka]
+    depends_on: [room-store, kafka]
     networks: [uni-dev-net]
     healthcheck:
       test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/9100' 2>/dev/null"]

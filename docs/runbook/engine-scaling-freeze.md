@@ -1,8 +1,8 @@
 # Runbook vận hành: Cấm Auto-scaling Engine trong ca thi đấu
 
-**Trạng thái tại thời điểm viết (2026-09-07):** `RedisLeaseRoomOwnership` (plan.md Task 14) đã có
-code, **chưa verify với Redis thật**, và **chưa nối vào production mặc định**
-(`uni.engine.redis.enabled=false`). Cho tới khi task đó được bật và kiểm chứng bằng chaos test
+**Trạng thái tại thời điểm viết (2026-09-07):** `LeaseBasedRoomOwnership` (plan.md Task 14) đã có
+code, **chưa verify với Valkey thật**, và **chưa nối vào production mặc định**
+(`uni.engine.room-store.enabled=false`). Cho tới khi task đó được bật và kiểm chứng bằng chaos test
 thật, runbook này vẫn có hiệu lực **đầy đủ, không có ngoại lệ**.
 
 ## Vì sao runbook này tồn tại
@@ -15,7 +15,7 @@ tĩnh** đọc lúc JVM khởi động (`application.yml`), không phải cluste
 **Hệ quả nếu đổi N khi hệ thống đang có phòng sống:** hầu hết mọi `room_id % N` đổi kết quả cùng
 lúc → Gateway gửi gói tin sang nhầm pod cho **toàn bộ phòng trên mọi pod**, không chỉ phòng của
 pod bị thêm/bớt. Actor mới khởi tạo ở pod nhận nhầm không có state phòng cũ (vì
-`RedisSnapshotStore` — phần phục hồi state của Task 14 — cũng đang tắt cùng cờ Redis). Vỡ trận
+`DistributedRoomSnapshotStore` — phần phục hồi state của Task 14 — cũng đang tắt cùng cờ Valkey). Vỡ trận
 hàng loạt, khác hẳn quy mô của một pod crash đơn lẻ (chỉ ảnh hưởng ~300-375 phòng của đúng pod
 đó — xem system-architecture.md §6.1, "Đánh đổi chiến lược: 12-16 Pod nhỏ").
 
@@ -56,11 +56,11 @@ Trong khung giờ đó, **KHÔNG được**:
 Runbook này **không tự động hết hiệu lực** khi Task 14 có code — chỉ nới lỏng khi **cả hai** điều
 kiện sau đều đạt:
 
-1. `uni.engine.redis.enabled=true` đã chạy ổn định ở staging với Redis Cluster thật (không phải
-   môi trường dev không có Redis).
+1. `uni.engine.room-store.enabled=true` đã chạy ổn định ở staging với Valkey Cluster thật (không phải
+   môi trường dev không có Valkey).
 2. Chaos test thật đã xác nhận: kill 1 Engine pod giữa trận **và** scale thêm/bớt pod giữa trận
    đều không làm mất phòng đang chạy — đo được thời gian phục hồi thực tế (khuyến nghị: vài giây,
-   theo TTL đã cấu hình ở `uni.engine.redis.lease-ttl-seconds`), không phải suy luận từ code.
+   theo TTL đã cấu hình ở `uni.engine.room-store.lease-ttl-seconds`), không phải suy luận từ code.
 
 Sau khi đạt cả hai, runbook có thể đổi từ "cấm tuyệt đối" thành hướng dẫn vận hành lease (theo
 dõi `zombie_actor_stopped_total`, giám sát TTL/renewal) — cập nhật lại file này khi đó, không xoá.

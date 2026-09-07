@@ -20,7 +20,7 @@ domains:
   - observability           # modules/uni-observability — Prometheus/OTLP/JSON log/alert relay
 
 # --- Infrastructure ---
-# Giai đoạn 1 KHÔNG có datastore trên hot path — không MySQL, không Redis, không Kafka.
+# Giai đoạn 1 KHÔNG có datastore trên hot path — không MySQL, không Valkey, không Kafka.
 # (Kafka log appender chỉ bật ở profile prod, nằm ngoài packet path.)
 # db: []
 # messaging: []

@@ -132,7 +132,7 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
      *
      * @param snapshotStore where this room's Hot Snapshot is persisted. {@link NoopRoomSnapshotStore}
      *     if the caller has none (Phase 1 today, before wiring).
-     * @param epoch this room's fencing generation (from {@link RedisLeaseRoomOwnership#epochOf}
+     * @param epoch this room's fencing generation (from {@link LeaseBasedRoomOwnership#epochOf}
      *     at the moment {@code RoomSupervisor} decided to spawn this actor). Fixed for this
      *     actor's whole lifetime -- reacting to losing the lease mid-life (stopping the actor)
      *     is not wired yet, so a stale epoch here would keep being rejected by the store
@@ -415,7 +415,7 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
 
     /**
      * Task 14: fire-and-forget, off the actor's own execution -- {@link RoomSnapshotStore#save}
-     * returns a future this method never blocks on, so a slow or unavailable Redis cannot delay
+     * returns a future this method never blocks on, so a slow or unavailable room store cannot delay
      * the message this flush was already processing (§13.2, ADR-005's spirit extended to the
      * actor dispatcher, not just the Netty EventLoop).
      */
@@ -441,7 +441,7 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
         written.exceptionally(ex -> {
             // A network/timeout failure is NOT a definitive signal -- unlike FENCED (a
             // monotonic counter that never moves backward), an exception could just as easily
-            // be a transient blip. Never treated as a lease loss, or a flaky Redis connection
+            // be a transient blip. Never treated as a lease loss, or a flaky store connection
             // would wrongly kill perfectly healthy rooms.
             snapshotLog.warn("room {}: Hot Snapshot write failed", roomId, ex);
             return null;
@@ -468,7 +468,7 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
                     self.tell(LeaseLost.INSTANCE);
                 }
                 case DISABLED -> {
-                    // Phase 1 default (NoopRoomSnapshotStore, Redis off) -- expected on every
+                    // Phase 1 default (NoopRoomSnapshotStore, room store off) -- expected on every
                     // flush, not a failure of any kind. No action, no log: logging this at any
                     // level above trace would spam production for entirely by-design behavior.
                 }

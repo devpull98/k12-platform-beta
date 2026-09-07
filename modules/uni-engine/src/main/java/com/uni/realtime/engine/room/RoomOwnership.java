@@ -27,7 +27,7 @@ public interface RoomOwnership {
     /**
      * Called once per incoming frame, before {@link #isOwner} / {@link #ownerPodId}, so an
      * implementation that must consult an external system to learn ownership (Task 14's
-     * {@code RedisLeaseRoomOwnership}) gets a chance to kick that off. Must return immediately
+     * {@code LeaseBasedRoomOwnership}) gets a chance to kick that off. Must return immediately
      * and must never block the calling thread -- this runs on the Netty EventLoop via
      * {@code RoomOwnershipHandler} (ADR-005: no blocking I/O in an EventLoop), so an
      * implementation that needs a network round trip has to do it asynchronously and answer

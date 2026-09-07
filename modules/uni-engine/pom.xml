@@ -52,11 +52,14 @@
             <classifier>linux-x86_64</classifier>
         </dependency>
 
-        <!-- Task 14: RedisRoomLeaseStore (room ownership lease) + RedisSnapshotStore (Hot
-             Snapshot, remaining half of Task 14). Version managed transitively by
-             spring-boot-starter-parent's BOM, unpinned here, same convention as the Netty
-             dependencies above. NOT exercised against a real Redis instance by any test in
-             this repo (none available in this environment); see RedisRoomLeaseStore's javadoc. -->
+        <!-- Task 14: DistributedRoomLeaseStore (room ownership lease) + DistributedRoomSnapshotStore
+             (Hot Snapshot, remaining half of Task 14). Lettuce is the client; it speaks RESP so
+             this same artifact works against any RESP-compatible store (Valkey today; see
+             application.yml's comment), so the artifact is still io.lettuce:lettuce-core.
+             Version managed transitively by spring-boot-starter-parent's BOM, unpinned here, same
+             convention as the Netty dependencies above. NOT exercised against a real store
+             instance by any test in this repo (none available in this environment); see
+             DistributedRoomLeaseStore's javadoc. -->
         <dependency>
             <groupId>io.lettuce</groupId>
             <artifactId>lettuce-core</artifactId>

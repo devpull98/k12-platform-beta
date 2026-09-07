@@ -5,7 +5,7 @@ package com.uni.realtime.engine.events;
  * an event, kept as an interface so the queue/isolation logic is testable without a real Kafka
  * broker (the production implementation, {@code KafkaGameEventSink}, is not exercised by any
  * test in this repo -- no Kafka available in this environment, same caveat already carried by
- * {@code RedisRoomLeaseStore}/{@code RedisSnapshotStore}).
+ * {@code DistributedRoomLeaseStore}/{@code DistributedRoomSnapshotStore}).
  *
  * <p>{@link #send} is allowed to block or throw -- unlike
  * {@code com.uni.realtime.engine.room.RoomLeaseStore}/{@code RoomSnapshotStore} it does not need

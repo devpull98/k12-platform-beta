@@ -7,7 +7,7 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** Task 14 (§5.8) verification: pure logic, no Redis, no actor. */
+/** Task 14 (§5.8) verification: pure logic, no external store, no actor. */
 class SnapshotEnvelopeTest {
 
     @Test

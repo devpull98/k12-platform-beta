@@ -15,7 +15,7 @@ import java.util.List;
 
 /**
  * PH-1/PH-3/G1a-c stand-in, proven against the REAL {@code docker-compose.dev.yml} stack (gateway
- * + 2 engine pods + Redis + Kafka, all real containers/processes/networking) -- never runs during
+ * + 2 engine pods + room-store + Kafka, all real containers/processes/networking) -- never runs during
  * a normal {@code mvn clean install} (no Docker dependency for routine builds), only when
  * explicitly opted into.
  *

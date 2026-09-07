@@ -18,31 +18,43 @@ uni:
     pod-id: ${ENGINE_POD_ID:engine-0}
     # Phase 1 ownership is room_id % pod-count, isolated behind RoomOwnership so Phase 2
     # can swap in Cluster Sharding by replacing one class (decision B2). Used as the
-    # ModuloRoomOwnership fallback even when redis.enabled=true (see below).
+    # ModuloRoomOwnership fallback even when room-store.enabled=true (see below).
     pod-count: ${ENGINE_POD_COUNT:1}
 
-    redis:
-      # Task 14 (2026-09-07 decision): RedisLeaseRoomOwnership + Hot Snapshot replace static
-      # modulo ownership, but default OFF -- neither RedisRoomLeaseStore nor RedisSnapshotStore
-      # has been run against a real Redis instance (none available while writing this code, see
-      # their javadoc). Flip only after verifying against a real Redis Cluster; until then this
-      # pod behaves exactly as before (ModuloRoomOwnership, no snapshotting).
-      enabled: ${ENGINE_REDIS_ENABLED:false}
-      uri: ${ENGINE_REDIS_URI:redis://localhost:6379}
+    # The external, shared-across-pods store backing room ownership leases + Hot Snapshot.
+    # Deliberately named by role, not by product (Valkey today -- see docker-compose.dev.yml and
+    # DistributedRoomLeaseStore's javadoc): swapping the backing product later is a config/ops
+    # change, not a rename across this codebase.
+    room-store:
+      # Task 14 (2026-09-07 decision): LeaseBasedRoomOwnership + Hot Snapshot replace static
+      # modulo ownership, but default OFF -- neither DistributedRoomLeaseStore nor
+      # DistributedRoomSnapshotStore has been run against a real store instance (none available
+      # while writing this code, see their javadoc). Flip only after verifying against the real
+      # cluster; until then this pod behaves exactly as before (ModuloRoomOwnership, no
+      # snapshotting).
+      #
+      # This connects through Lettuce's RedisClient regardless of the backing product -- Lettuce
+      # is a RESP-protocol client and never renamed its own API for Valkey (see
+      # DistributedRoomLeaseStore's javadoc). The URI scheme below is "redis://" for the same
+      # reason, not a leftover.
+      enabled: ${ENGINE_ROOM_STORE_ENABLED:false}
+      uri: ${ENGINE_ROOM_STORE_URI:redis://localhost:6379}
       # Recommendation from plan.md Task 14: short enough for fast crash recovery, renewed at
       # ttl/3 by a live pod so a healthy room never loses its own lease mid-session.
-      lease-ttl-seconds: ${ENGINE_REDIS_LEASE_TTL_SECONDS:20}
+      lease-ttl-seconds: ${ENGINE_ROOM_STORE_LEASE_TTL_SECONDS:20}
 
     kafka:
-      # Task 18 (§9.3 Rủi ro 6): default OFF for the same reason redis.enabled is -- KafkaProducer
-      # construction itself doesn't block on a broker being reachable, but there is nothing to
-      # verify this against in this development environment (no broker), so it stays opt-in.
+      # Task 18 (§9.3 Rủi ro 6): default OFF for the same reason room-store.enabled is --
+      # KafkaProducer construction itself doesn't block on a broker being reachable, but there is
+      # nothing to verify this against in this development environment (no broker), so it stays
+      # opt-in.
       enabled: ${ENGINE_KAFKA_ENABLED:false}
       bootstrap-servers: ${ENGINE_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
       topic: ${ENGINE_KAFKA_TOPIC:game.events.v1}
       # Bounded queue capacity between RoomActor and the dedicated publisher worker thread
       # (Task 18) -- deliberately small; this is a drop-under-overload safety valve, not a
-      # durability buffer (Redis Hot Snapshot / client RingBuffer are the durability story).
+      # durability buffer (the room-store Hot Snapshot / client RingBuffer are the durability
+      # story).
       queue-capacity: ${ENGINE_KAFKA_QUEUE_CAPACITY:1000}
 
   room:

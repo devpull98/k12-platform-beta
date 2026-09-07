@@ -17,7 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Task 14 (Hot Snapshot) verification: {@link RoomState#serializeSnapshot()} /
  * {@link RoomState#restore} round-trip, and the {@link RoomState#submitAnswer} dedupe fix a
  * restored room depends on (a room rebuilt from a snapshot has {@code lastSeenSequence} but no
- * ack history -- see the comment in {@code submitAnswer}). Pure logic, no actor, no Redis.
+ * ack history -- see the comment in {@code submitAnswer}). Pure logic, no actor, no external store.
  */
 class RoomStateSnapshotTest {
 

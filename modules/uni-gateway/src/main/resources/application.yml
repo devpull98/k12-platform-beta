@@ -15,7 +15,7 @@ uni:
     # Plaintext WebSocket. TLS terminates at the LB/ingress, which must pass the WS upgrade
     # through and keep its idle timeout above the client heartbeat period (30s).
     ws-port: ${GATEWAY_WS_PORT:9000}
-    # Netty event loops = cores x 2, fixed. Never do DB/Redis/HTTP work on one.
+    # Netty event loops = cores x 2, fixed. Never do DB/store/HTTP work on one.
     event-loop-multiplier: 2
 
     engine:

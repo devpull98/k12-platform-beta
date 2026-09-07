@@ -104,7 +104,7 @@ có gõ nháp chung, đối kháng boss toàn phòng.
    race condition ở tầng nghiệp vụ. Đây là lựa chọn cốt lõi, mọi thứ khác xoay quanh nó.
 3. **Gateway không chứa business logic** — tuyệt đối. Gateway biết `room_id` để định tuyến,
    không biết luật chơi.
-4. **Hot path ngắn nhất có thể** — không broker, không Redis, không DB nằm giữa client và
+4. **Hot path ngắn nhất có thể** — không broker, không Valkey, không DB nằm giữa client và
    actor trong đường đi của một lượt nộp bài.
 5. **Không cam kết con số chưa đo** — mọi ngưỡng capacity đều gắn với một phép thử cụ thể.
 
@@ -160,7 +160,7 @@ T_total = T_detect + T_down + T_rebalance + T_load + T_reconnect
   T_detect     failure detector nhận ra node chết               5 – 10 s
   T_down       SBR quyết định + down node (stable-after)        5 – 10 s
   T_rebalance  ShardRegion tái phân bổ shard                    0,5 – 2 s
-  T_load       Redis read + deserialize snapshot                10 – 50 ms
+  T_load       Valkey read + deserialize snapshot                10 – 50 ms
   T_reconnect  client phát hiện đứt + backoff + nối lại         1 – 2 s
   ──────────────────────────────────────────────────────────────────────
   T_total ≈ 12 – 25 s
@@ -203,7 +203,7 @@ Fixed-rate tick chỉ bật cho game chuyển động liên tục, khai báo tro
    │  STATELESS                        │      │  • Auth / One-time ticket          │
    │  • Terminate TLS + WS handshake   │      │  • Matchmaking & Party             │
    │  • Xác thực ticket → ChannelAttr  │      │  • Player Profile & Progression    │
-   │  • Rate limit phân tầng (§10.1)   │      │  • Leaderboard (Redis ZSET)        │
+   │  • Rate limit phân tầng (§10.1)   │      │  • Leaderboard (Valkey ZSET)        │
    │  • Lazy-learned routing (§8.2)    │      └────────────────────────────────────┘
    │  • Fan-out zero-copy (§10.3)      │
    │  • Admission control (§10.4)      │
@@ -233,7 +233,7 @@ Fixed-rate tick chỉ bật cho game chuyển động liên tục, khai báo tro
           │ (virtual thread I/O)         │ (async, ngoài hot path) │ (async, cắt được)
           ▼                              ▼                         ▼
    ┌──────────────┐            ┌──────────────────┐      ┌──────────────────────┐
-   │ REDIS        │            │ POSTGRESQL       │      │ KAFKA  (giai đoạn 2) │
+   │ VALKEY       │            │ POSTGRESQL       │      │ KAFKA  (giai đoạn 2) │
    │ • snapshot   │            │ • tài khoản/lớp  │      │ • analytics/audit    │
    │ • epoch/lease│            │ • ngân hàng câu  │      │ • KHÔNG ở hot path   │
    │ • leaderboard│            │ • kết quả        │      │ • KHÔNG dùng cho     │
@@ -253,7 +253,7 @@ Fixed-rate tick chỉ bật cho game chuyển động liên tục, khai báo tro
 |---|---|---|---|
 | **Netty Gateway** | Không *(trừ cache định tuyến tự lành)* | TLS, WS handshake, xác thực ticket, rate limit, định tuyến, fan-out zero-copy, admission control | Chấm điểm, đọc luật chơi, gọi DB, giữ state phòng |
 | **Game Engine** | **Có** — nguồn sự thật lúc chạy | Toàn bộ luật chơi, chấm điểm, FSM, tick, snapshot, guardrails | Chạm socket của client trực tiếp, gọi blocking I/O trên dispatcher của actor |
-| **Redis** | Có | Snapshot nóng, fencing epoch, leaderboard, session registry cho vận hành | **Nằm trên đường đi của gói tin** — registry chỉ phục vụ dashboard/vận hành |
+| **Valkey** | Có | Snapshot nóng, fencing epoch, leaderboard, session registry cho vận hành | **Nằm trên đường đi của gói tin** — registry chỉ phục vụ dashboard/vận hành |
 | **PostgreSQL** | Có | Nguồn sự thật lâu dài: tài khoản, câu hỏi, kết quả, analytics partition theo tháng | Bị gọi đồng bộ trong hot path |
 | **Kafka** | Có | Event log cho analytics và audit | **Tham gia vào recovery** — ADR-3 cấm |
 | **Workers** | Không | Tiêu thụ event → leaderboard, audit, analytics | Ghi ngược vào state phòng |
@@ -262,7 +262,7 @@ Fixed-rate tick chỉ bật cho game chuyển động liên tục, khai báo tro
 
 | Thành phần | Trạng thái | Lý do |
 |---|---|---|
-| **Redis Pub/Sub trên hot path** | Không dùng | Bớt một broker hop và xoá cả một lớp bug rò dữ liệu chéo phòng. Gateway nhận broadcast thẳng từ Engine qua kênh nội bộ |
+| **Valkey Pub/Sub trên hot path** | Không dùng | Bớt một broker hop và xoá cả một lớp bug rò dữ liệu chéo phòng. Gateway nhận broadcast thẳng từ Engine qua kênh nội bộ |
 | **ClickHouse** | **Đã cắt** | Analytics ghi vào PostgreSQL partition theo tháng. Cân nhắc lại kho OLAP khi log vượt ~10 GB/ngày — không sớm hơn |
 | **Kafka ở giai đoạn 1** | Hoãn được thật | Sau khi recovery chuyển sang client-side replay (§9.3), Kafka không còn nằm trên bất kỳ đường đi quan trọng nào |
 
@@ -565,7 +565,7 @@ sách outbound với các game COALESCE.
                     → Gateway fan-out zero-copy tới các client cục bộ (§10.3)
 ```
 
-**Không có Redis, Kafka hay DB nào trong luồng trên.** Snapshot Redis được ghi bất đồng bộ
+**Không có Valkey, Kafka hay DB nào trong luồng trên.** Snapshot Valkey được ghi bất đồng bộ
 (mỗi 1–3 giây) trên virtual thread, ngoài đường đi của gói tin.
 
 ### 7.3. Qua nhiều pod
@@ -625,11 +625,11 @@ Ba tính chất quan trọng của cơ chế này:
 
 | Tính chất | Vì sao có |
 |---|---|
-| **Không cần Redis trên hot path** | Cache nằm trong RAM của Gateway |
+| **Không cần Valkey trên hot path** | Cache nằm trong RAM của Gateway |
 | **Không cần TTL** | Entry sai tự sửa ở lần dùng kế tiếp, không cần hết hạn theo thời gian |
 | **Không thể lệch khỏi sự thật** | Sự thật do chính Engine đóng dấu vào response — không có bản sao thứ hai để lệch |
 
-Redis vẫn giữ `room:routing:{room_id}` cho **dashboard giáo viên và vận hành**, nhưng nó
+Valkey vẫn giữ `room:routing:{room_id}` cho **dashboard giáo viên và vận hành**, nhưng nó
 không nằm trên đường đi của gói tin.
 
 ### 8.3. Cấu hình Cluster Sharding
@@ -687,7 +687,7 @@ chi phí ở §17.3.
 #### Lớp 2 — Fencing token
 
 SBR đảm bảo *cuối cùng* chỉ còn một node, nhưng tồn tại cửa sổ `stable-after` (10 giây) mà cả
-hai actor cùng sống và cùng ghi Redis. Vì vậy **mọi write phải mang epoch**:
+hai actor cùng sống và cùng ghi Valkey. Vì vậy **mọi write phải mang epoch**:
 
 ```
 Khi RoomActor khởi động:
@@ -755,7 +755,7 @@ Luồng khôi phục đầy đủ khi một Engine pod chết:
 ```
 1. Cluster Sharding tạo lại actor trên pod còn sống.
 2. Giành lease + epoch:  INCR room:epoch:{room_id}          (§9.1)
-3. Nạp snapshot Redis, kiểm CRC32.
+3. Nạp snapshot Valkey, kiểm CRC32.
    Checksum sai → bắt đầu từ state rỗng, dựa hoàn toàn vào bước 5.
 4. Vào trạng thái RESYNCING: nhận RESYNC, CHƯA broadcast.
 5. Client gửi RESYNC → áp qua LastSeenSequenceTable.
@@ -763,7 +763,7 @@ Luồng khôi phục đầy đủ khi một Engine pod chết:
 7. Về PLAYING, broadcast state đầy đủ một lần cho toàn phòng.
 ```
 
-**Kafka không xuất hiện ở bất kỳ bước nào.** Snapshot Redis trở thành *tối ưu tốc độ* (đỡ phải
+**Kafka không xuất hiện ở bất kỳ bước nào.** Snapshot Valkey trở thành *tối ưu tốc độ* (đỡ phải
 replay nhiều từ client), không phải *nguồn đúng đắn*.
 
 Trải nghiệm phía học sinh trong 15–25 giây gián đoạn:
@@ -771,7 +771,7 @@ Trải nghiệm phía học sinh trong 15–25 giây gián đoạn:
 | Cơ chế | Trách nhiệm |
 |---|---|
 | Client buffer | Giữ submission chưa ACK, tự gửi lại khi nối lại |
-| Server dedupe | `LastSeenSequenceTable` loại bản trùng — O(1), không cần Redis |
+| Server dedupe | `LastSeenSequenceTable` loại bản trùng — O(1), không cần Valkey |
 | UI | Overlay "Đang đồng bộ…". **Không văng lỗi, không mất đáp án đã chọn** |
 | Gia hạn deadline | Deadline câu hỏi được cộng bù đúng khoảng gián đoạn |
 
@@ -934,7 +934,7 @@ Tải EdTech không phẳng. 09:00 giáo viên bấm Bắt đầu → **54.000 k
 54.000 TLS handshake        ← đắt nhất, ~1–3ms CPU mỗi lượt
 54.000 xác thực ticket
  4.500 RoomActor spawn
- 4.500 Redis write (lease + epoch)
+ 4.500 Valkey write (lease + epoch)
 ```
 
 3.600 handshake/s chia cho 10 GW pod = **360 handshake/s/pod trên 2 vCPU**. Riêng TLS đã có
@@ -1010,7 +1010,7 @@ Ba lớp, mỗi lớp đủ để chặn một mình:
 | **2 — Sổ đăng ký cục bộ** | Gateway giữ `Map<room_id, Set<Channel>>` **cục bộ trong pod**. Fan-out chỉ lặp trên set của đúng phòng, không lọc động từ danh sách toàn cục |
 | **3 — Dọn dẹp** | Channel đóng → gỡ khỏi mọi set ngay trong `channelInactive`. `student_index` không tái sử dụng trong cùng phiên (§4.1) |
 
-Bỏ Redis Pub/Sub khỏi hot path (§3.3) xoá luôn nhóm bug nguy hiểm nhất ở đây: một pattern
+Bỏ Valkey Pub/Sub khỏi hot path (§3.3) xoá luôn nhóm bug nguy hiểm nhất ở đây: một pattern
 subscribe sai (`room:*`) sẽ khiến mọi pod nhận mọi phòng.
 
 ---
@@ -1139,7 +1139,7 @@ nguồn sai lầm thiết kế phổ biến nhất trong loại hệ thống nà
 |---|---|---|
 | **RoomActor** | **Pekko dispatcher** (platform thread) | Actor **không sở hữu thread** — dispatcher lập lịch chúng lên một pool nhỏ (~= số core). 1.125 actor chạy tốt trên ~8 platform thread |
 | **Netty EventLoop** (biên WS + kênh nội bộ) | Platform thread, cố định = cores × 2 | Non-blocking hoàn toàn. Virtual thread ở đây phản tác dụng |
-| **Redis snapshot I/O, PostgreSQL ghi kết quả** | **Virtual thread** ✅ | Blocking I/O, nhiều tác vụ đồng thời — đúng chỗ dùng |
+| **Valkey snapshot I/O, PostgreSQL ghi kết quả** | **Virtual thread** ✅ | Blocking I/O, nhiều tác vụ đồng thời — đúng chỗ dùng |
 | **Kafka producer** (giai đoạn 2) | Virtual thread hoặc async client | Blocking I/O |
 
 > [!IMPORTANT]
@@ -1153,7 +1153,7 @@ nguồn sai lầm thiết kế phổ biến nhất trong loại hệ thống nà
 Khi gọi I/O blocking trong khối `synchronized`, virtual thread bị "pin" vào carrier thread và
 làm nghẽn pool. Quy tắc:
 
-* **Phạm vi áp dụng**: chỉ tầng chạy trên virtual thread — Redis snapshot I/O, PostgreSQL,
+* **Phạm vi áp dụng**: chỉ tầng chạy trên virtual thread — Valkey snapshot I/O, PostgreSQL,
   Kafka producer. Dùng `ReentrantLock`, **không** dùng `synchronized` bao quanh lời gọi blocking.
 * **`RoomActor` không dính pinning** (chạy trên platform thread) và **không cần khoá gì cả** —
   mô hình actor đã tuần tự hoá sẵn. Netty EventLoop cũng vậy.
@@ -1164,7 +1164,7 @@ làm nghẽn pool. Quy tắc:
 ┌──────────────────────────────────────────────────────────────────────┐
 │ NETTY EVENT LOOP (IO-only, non-blocking, Epoll)                      │
 │   Chỉ làm: đọc bytes từ socket, đóng/mở gói frame nhị phân.          │
-│   NGHIÊM CẤM: DB query, Redis call, HTTP call, JSON parse,           │
+│   NGHIÊM CẤM: DB query, Valkey call, HTTP call, JSON parse,           │
 │               CPU-heavy logic, mọi lời gọi blocking.                 │
 └────────────────────────────┬─────────────────────────────────────────┘
                              │ Internal Frame Channel (zero-copy)
@@ -1186,7 +1186,7 @@ làm nghẽn pool. Quy tắc:
 |---|---|---|---|
 | **Gateway** | 10 – 12 | 2 vCPU / 4 GB | Stateless — HPA theo CPU + số kết nối |
 | **Engine** | **12 – 16** | 2 vCPU / 4 GB | ~300–375 phòng/pod. **Không** HPA theo CPU (xem cảnh báo dưới) |
-| Redis | 3 shard + replica | | Giai đoạn 1 có thể chỉ cần 1 node + replica |
+| Valkey | 3 shard + replica | | Giai đoạn 1 có thể chỉ cần 1 node + replica |
 | PostgreSQL | Multi-AZ | | |
 | MongoDB | Replica set 3 | | Match history |
 | Kafka | 3 broker | | Giai đoạn 2 trở đi |
@@ -1258,7 +1258,7 @@ t=10–20s  SBR quyết định (stable-after=10s), down node thiểu số
 t≈20s     ShardRegion tái phân bổ shard sang node còn sống
           → actor được tạo lại, INCR epoch, nạp snapshot, vào RESYNCING
           → STAGGER: nạp snapshot theo lô với jitter 0–500ms
-            (không có bước này, ~350 phòng đập vào Redis cùng lúc)
+            (không có bước này, ~350 phòng đập vào Valkey cùng lúc)
 t≈21s     Client gửi RESYNC { last_acked_seq, pending[] }
           → LastSeenSequenceTable loại bản trùng
           → deadline câu hỏi được gia hạn đúng khoảng gián đoạn
@@ -1397,7 +1397,7 @@ nhưng lỗ trên mỗi học sinh là kiến trúc sai.
 |---|---|---|
 | Gateway pods | 10–12 × (2 vCPU / 4 GB) | Xác nhận bằng H1 |
 | Engine pods | 12–16 × (2 vCPU / 4 GB) | §14.1 |
-| Redis (managed) | 3 shard + replica | Giai đoạn 1: 1 node + replica là đủ |
+| Valkey (managed) | 3 shard + replica | Giai đoạn 1: 1 node + replica là đủ |
 | PostgreSQL (managed) | Multi-AZ | |
 | MongoDB | Replica set 3 | |
 | Kafka (managed) | 3 broker | **Hoãn được** — không nằm trên hot path |
@@ -1443,7 +1443,7 @@ Mỗi giai đoạn tối đa 2–3 tuần.
 
 | | |
 |---|---|
-| **Có** | Netty Gateway (2 pod) · Engine Pekko (2 pod) · Redis snapshot · PostgreSQL · Protobuf envelope · tick coalescing · client replay + `LastSeenSequenceTable` · server-authoritative timestamp · rate limit phân tầng |
+| **Có** | Netty Gateway (2 pod) · Engine Pekko (2 pod) · Valkey snapshot · PostgreSQL · Protobuf envelope · tick coalescing · client replay + `LastSeenSequenceTable` · server-authoritative timestamp · rate limit phân tầng |
 | **Cắt** | Kafka · ClickHouse · nén LZ4 · Cluster Sharding |
 | **Ưu tiên tuyệt đối** | Dựng Gateway ↔ Engine ↔ Protobuf thông suốt trong 3–4 ngày đầu. Mọi thứ khác (Auth REST, ghi DB, trang trí UI) chỉ làm sau khi luồng nhị phân đã chạy |
 
@@ -1461,7 +1461,7 @@ Cluster Sharding. Đây là lợi ích trực tiếp của ADR-3.
 | Tuần | Việc |
 |---|---|
 | 1 | Kafka (managed), tách hot/cold path. Engine phát `GAME_FINISHED` sang Kafka thay vì gọi DB trực tiếp |
-| 2 | Leaderboard Worker (`ZADD` Redis) + Audit Worker (MongoDB) + Analytics Worker (PostgreSQL partition) |
+| 2 | Leaderboard Worker (`ZADD` Valkey) + Audit Worker (MongoDB) + Analytics Worker (PostgreSQL partition) |
 | 3 | **Cluster Sharding + SBR `keep-majority` + fencing token + stagger recovery**, phân bổ trên **12–16 Engine pod nhỏ**. Chaos test |
 
 > [!CAUTION]
@@ -1509,7 +1509,7 @@ và bị loại có lý do**, không phải một phương án bị bỏ qua.
 | **Socket.io** | Payload JSON, client ngoài JS chất lượng không đồng đều, và cơ chế room/reconnect có sẵn vẫn phải viết lại lớp thích ứng cho FSM phòng — §5.2 |
 | **Consistent hashing ở Gateway** | Hai nguồn sự thật về vị trí phòng; vòng hash trỏ sai sau rebalance và không tự biết — §8.1 |
 | **ClickHouse** | Analytics ở quy mô hiện tại vừa với PostgreSQL partition theo tháng. Cân nhắc lại khi log vượt ~10 GB/ngày |
-| **Redis Pub/Sub trên hot path** | Thêm một broker hop và mở ra cả một lớp bug rò dữ liệu chéo phòng — §10.6 |
+| **Valkey Pub/Sub trên hot path** | Thêm một broker hop và mở ra cả một lớp bug rò dữ liệu chéo phòng — §10.6 |
 | **Kafka trong đường recovery** | Snapshot và Kafka offset không atomic → hoặc mất đáp án hoặc replay trùng — §9.2 |
 | **Fixed-rate tick cho mọi game** | Nặng hơn ~10× cho quiz, loại game chính của nền tảng — §6.2 |
 | **Rate limit theo IP làm tầng chính** | Chặn đứng chính khách hàng mục tiêu (trường học sau NAT) — §10.1 |

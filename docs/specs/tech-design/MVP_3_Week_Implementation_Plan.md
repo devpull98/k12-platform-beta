@@ -19,12 +19,12 @@
 - Học sinh vào phòng và chơi **Quiz realtime** (12 học sinh/phòng).
 - Nộp bài ➔ nhận kết quả tức thì.
 - Hiển thị điểm số và bảng xếp hạng trong phòng.
-- Reconnect rớt mạng vẫn tiếp tục được chơi (nạp lại UI state từ Redis).
+- Reconnect rớt mạng vẫn tiếp tục được chơi (nạp lại UI state từ Valkey).
 - Hệ thống chịu được **2.000 – 3.000 CCU** ổn định.
 - Gateway tách biệt Engine (0% business logic).
 - 1 Room = 1 Pekko Actor (hoặc Virtual Thread Java 25+).
 - Native WebSocket + Protobuf Binary.
-- Snapshot Redis cơ bản + Recovery.
+- Snapshot Valkey cơ bản + Recovery.
 - Rate Limiting + Idempotency kép cơ bản.
 - Flutter Native + WebView JavascriptBridge.
 
@@ -37,7 +37,7 @@
 | Matchmaking MMR nâng cao | Chỉ cần tạo phòng đơn giản |
 | Apache Kafka | Hoãn sang Giai đoạn 2 (Tuần 4 - Tuần 6) |
 | ClickHouse | CẮT BỎ HOÀN TOÀN (Dùng Postgres Partitioning) |
-| Adaptive LZ4HC | Snapshot Redis thường là đủ |
+| Adaptive LZ4HC | Snapshot Valkey thường là đủ |
 | Pekko Cluster Sharding | Dùng Static Routing (`room_id % 2`) trước |
 | Go Gateway | Giữ Java Vert.x / Netty Gateway |
 | Full Chaos Engineering | Chỉ test restart Pod cơ bản |
@@ -51,7 +51,7 @@
 | **Client** | Flutter + `webview_flutter` + Protobuf | Flutter Native giữ WebSocket |
 | **Gateway** | Netty hoặc Vert.x (Java 25+) | 2 Pods tối thiểu (Stateless) |
 | **Engine** | Java 25+ + Pekko Actor (Generational ZGC) | 2 Pods tối thiểu ($1.500 	ext{ rooms/pod}$) |
-| **State** | Managed Redis (ElastiCache) | Session + Snapshot |
+| **State** | Managed Valkey (ElastiCache) | Session + Snapshot |
 | **Database** | Managed PostgreSQL (RDS) | Auth + Lưu kết quả trận (`@Async`) |
 | **Giao tiếp nội bộ** | gRPC Bi-directional Stream | Direct Gateway ↔ Engine Stream |
 | **Monitoring** | Prometheus + Grafana cơ bản | Latency, CCU, Mailbox depth |
@@ -77,7 +77,7 @@
 |---|---|---|
 | **Ngày 8-9** | - Thêm Guardrails (Timeout 60s + Safe Math)<br>- Idempotency cơ bản (sequence number)<br>- Rate Limiting tại Gateway | Chống crash và spam cơ bản |
 | **Ngày 10-11** | - Flutter Native giữ WebSocket<br>- Truyền data xuống WebView qua `JavascriptChannel`<br>- Optimistic UI cơ bản | Client Flutter + WebView hoạt động |
-| **Ngày 12-13** | - Snapshot vào Redis (`SET game:snapshot:{room_id}`)<br>- Cơ chế Reconnect + load state<br>- Bảng xếp hạng trong phòng | Reconnect không mất trạng thái |
+| **Ngày 12-13** | - Snapshot vào Valkey (`SET game:snapshot:{room_id}`)<br>- Cơ chế Reconnect + load state<br>- Bảng xếp hạng trong phòng | Reconnect không mất trạng thái |
 | **Ngày 14** | - Tích hợp end-to-end hoàn chỉnh<br>- Fix bug từ test nội bộ | Hệ thống chạy mượt trên môi trường dev/staging |
 
 ### 📅 Tuần 3: Ổn định – Load Test – Release
@@ -96,7 +96,7 @@
 
 | Giai đoạn | Thời gian | Mục tiêu & Công việc | Target CCU |
 |---|---|---|---|
-| **Giai đoạn 1 (Lean MVP)** | **3 Tuần** (Tuần 1 - 3) | Dựng Game Engine, Netty Gateway, Protobuf, Redis, Postgres `@Async`. | **2k - 3k CCU** |
+| **Giai đoạn 1 (Lean MVP)** | **3 Tuần** (Tuần 1 - 3) | Dựng Game Engine, Netty Gateway, Protobuf, Valkey, Postgres `@Async`. | **2k - 3k CCU** |
 | **Giai đoạn 2 (Scale-Out)** | **3 Tuần** (Tuần 4 - 6) | Tích hợp Kafka (AWS MSK), Pekko Cluster Sharding, Async Leaderboard Worker. | **10k - 20k CCU** |
 | **Giai đoạn 3 (Enterprise)**| **2 Tuần** (Tuần 7 - 8) | Adaptive LZ4HC Compression, Postgres Partitioning, Multi-AZ HA, Stress Test 54k CCU. | **54.000+ CCU** |
 

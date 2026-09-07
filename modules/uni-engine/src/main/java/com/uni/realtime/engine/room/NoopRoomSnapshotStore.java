@@ -4,8 +4,8 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * Default {@link RoomSnapshotStore} for callers with no Redis wiring (Phase 1's default until
- * {@code uni.engine.redis.enabled} is turned on) -- every read reports nothing found, and every
+ * Default {@link RoomSnapshotStore} for callers with no room-store wiring (Phase 1's default
+ * until {@code uni.engine.room-store.enabled} is turned on) -- every read reports nothing found, and every
  * write reports {@link SnapshotWriteResult#DISABLED}, never {@code ACCEPTED}.
  *
  * <p>{@code DISABLED}, not {@code ACCEPTED}, is deliberate and load-bearing (Task 15 / B2): an
@@ -21,7 +21,7 @@ import java.util.concurrent.CompletableFuture;
  * <p>Shared by {@link RoomActor} and {@link RoomSupervisor} rather than duplicated so there is
  * exactly one no-op behavior to reason about. Public (not package-private) since Task 18's
  * wiring in {@code EngineNetworkLifecycle} (a different package) needs a real
- * {@link RoomSnapshotStore} to pass even when only Kafka, not Redis, is enabled.
+ * {@link RoomSnapshotStore} to pass even when only Kafka, not the room store, is enabled.
  */
 public final class NoopRoomSnapshotStore implements RoomSnapshotStore {
     public static final NoopRoomSnapshotStore INSTANCE = new NoopRoomSnapshotStore();

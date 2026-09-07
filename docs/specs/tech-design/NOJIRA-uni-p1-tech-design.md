@@ -48,7 +48,7 @@ Ba ràng buộc dưới đây **suy ra được từ thiết kế đã chốt**,
 
 | # | Ràng buộc | Suy ra từ |
 |---|---|---|
-| R1 | Ticket phải **tự chứa và verify được cục bộ** — không tra cứu, không gọi mạng | §13.2 cấm mọi DB/Redis/HTTP call trong EventLoop. Ticket dạng handle mờ (phải tra ra danh tính) **vi phạm trực tiếp** rule này |
+| R1 | Ticket phải **tự chứa và verify được cục bộ** — không tra cứu, không gọi mạng | §13.2 cấm mọi DB/Valkey/HTTP call trong EventLoop. Ticket dạng handle mờ (phải tra ra danh tính) **vi phạm trực tiếp** rule này |
 | R2 | Ticket phải mang chữ ký | [README §2.3](../../architecture/system-architecture.md#23-bên-trong-gateway): *"Mọi gói sau đó KHÔNG verify lại chữ ký"* — câu đó chỉ có nghĩa nếu có chữ ký để verify một lần |
 | R3 | Claim tối thiểu: `student_id`, `room_id`, `session_id`, `roles`, `exp` | [README §3.4](../../architecture/system-architecture.md#34-xác-thực-one-time-ticket) bước 3 — đó đúng là tập `ChannelAttributes` gateway phải bind |
 
@@ -59,10 +59,10 @@ secret chung hay chữ ký bất đối xứng), cách phân phối/xoay khoá, 
 sẽ được code theo và lệch với thứ đang chạy thật.
 
 > [!NOTE]
-> **Cơ chế cưỡng chế "Dùng MỘT lần" với Redis Cluster (ĐÃ CHỐT):**
+> **Cơ chế cưỡng chế "Dùng MỘT lần" với Valkey Cluster (ĐÃ CHỐT):**
 >
 > Cưỡng chế một-lần đòi hỏi trạng thái **dùng chung giữa các Gateway pod** (đã tiêu ticket nào).
-> Với hạ tầng **Redis Cluster đã có sẵn**, Gateway cưỡng chế vé 1 lần tại `TicketAuthHandler` (T6) bằng lệnh atomic:
+> Với hạ tầng **Valkey Cluster đã có sẵn**, Gateway cưỡng chế vé 1 lần tại `TicketAuthHandler` (T6) bằng lệnh atomic:
 > ```text
 > SET ticket:{jti} "1" EX 30 NX
 > ```
@@ -121,12 +121,12 @@ chặn** T7 — nhưng người code T7 cần biết trước, không phát hi�
 
 ## 3. Thay đổi Database
 
-**Không có Database trên hot path.** Redis Cluster được tích hợp ở tầng phụ trợ async:
+**Không có Database trên hot path.** Valkey Cluster được tích hợp ở tầng phụ trợ async:
 - Chặn replay ticket: `SET ticket:{jti} "1" EX 30 NX` tại Gateway handshake (ngoài hot path trận đấu).
 - Lưu Hot Snapshot phòng: `SET room:snap:{room_id}` định kỳ (< 5 KB, ghi async qua Virtual Thread từ `RoomActor`).
 - PostgreSQL: Lưu trữ kết quả phiên thi đấu sau khi kết thúc trận (được đẩy bất đồng bộ từ Kafka event consumer).
 
-Task nào bắt đầu chèn truy vấn database/Redis đồng bộ vào hot path trận đấu là task vi phạm kiến trúc — dừng lại và đọc `_context.md`.
+Task nào bắt đầu chèn truy vấn database/Valkey đồng bộ vào hot path trận đấu là task vi phạm kiến trúc — dừng lại và đọc `_context.md`.
 
 ## 4. Events / Messages
 
@@ -174,7 +174,7 @@ trên:
   chung IP). L1 theo IP = **4.000 handshake/phút** (đã chốt 2026-09-06, xem README §5.6 —
   ước lượng theo quy mô phiên lớn nhất, chưa phải số đo IP thật).
 - **Cache:** chỉ có `RouteCache` (`room_id → pod`), in-memory, **không TTL** — entry sai tự sửa
-  ở lần dùng kế tiếp (§8.2). Không có Redis nào để đặt TTL lên.
+  ở lần dùng kế tiếp (§8.2). Không có Valkey nào để đặt TTL lên.
 
 ## 8. Bản đồ module
 
@@ -197,7 +197,7 @@ sao: `stack: spring` ở repo này chỉ nghĩa là "boot bằng Spring Boot" �
 
 - [ ] **G1a** Thuật toán ký ticket + phân phối khoá — **đi hỏi đội dịch vụ nền tảng**, không tự
       thiết kế (dịch vụ đã tồn tại). *Chặn T6.*
-- [x] **G1b** "Một lần" hay "TTL ngắn"? → **ĐÃ CHỐT:** Cưỡng chế vé 1 lần bằng Redis Cluster `SET ticket:{jti} "1" EX 30 NX` tại Gateway handshake. Không còn chặn T6.
+- [x] **G1b** "Một lần" hay "TTL ngắn"? → **ĐÃ CHỐT:** Cưỡng chế vé 1 lần bằng Valkey Cluster `SET ticket:{jti} "1" EX 30 NX` tại Gateway handshake. Không còn chặn T6.
 - [ ] **G1c** Dung sai lệch đồng hồ khi kiểm `exp`. *Chặn T6.*
 - [x] **G2a** `N` = bao nhiêu lần flush thì gửi full snapshot? → **ĐÃ CHỐT (2026-09-06, trong đội):**
       `N = 10` (~2 giây ở trần 200ms/flush). Hiện thực ở

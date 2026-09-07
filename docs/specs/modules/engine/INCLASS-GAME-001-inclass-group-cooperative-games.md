@@ -45,7 +45,7 @@ Bổ sung 3 chế độ chơi mới lên trên hạ tầng RoomActor/Gateway đ�
 
 ## 4. Ràng buộc kỹ thuật kế thừa từ Giai đoạn 1 (không được vi phạm)
 
-- Hot path vẫn đơn luồng trong `RoomActor`, không I/O chặn (Redis/Kafka) trên đường tính điểm.
+- Hot path vẫn đơn luồng trong `RoomActor`, không I/O chặn (Valkey/Kafka) trên đường tính điểm.
 - `DraftUpdate` phải scoped theo `team_id`, tuyệt đối không broadcast toàn phòng (rủi ro traffic
   storm đã ghi nhận ở `plan.md` Task 20's Risk Assessment).
 - `client_timestamp_ms` (nếu `DraftUpdate` mang theo) không được dùng cho bất kỳ tính điểm nào —

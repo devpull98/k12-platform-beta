@@ -103,7 +103,7 @@ public final class KafkaGameEventSink implements GameEventSink {
         // read, so the event silently vanishes with no log line anywhere. This callback closes
         // that gap; it does not change the accepted "Kafka events are not the durability story"
         // trade-off (§9.3) -- it only makes an unexpected failure observable instead of silent,
-        // matching how RedisSnapshotStore/GameEventPublisher already log every failure they see.
+        // matching how DistributedRoomSnapshotStore/GameEventPublisher already log every failure they see.
         producer.send(new ProducerRecord<>(topic, partitionKey, payload), (metadata, exception) -> {
             if (exception != null) {
                 log.warn("game event publish failed for key {}", partitionKey, exception);
