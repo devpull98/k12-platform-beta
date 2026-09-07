@@ -1,0 +1,86 @@
+# Plan: Uni Realtime Giai đoạn 2 — Game Nhóm & Tập Thể Inclass (In-class Group & Cooperative Games)
+
+<!--
+Lưu tại:      docs/work/NOJIRA-uni-p2-inclass-game/plan.md
+Product Brief: docs/specs/modules/engine/INCLASS-GAME-001-inclass-group-cooperative-games.md
+Yêu cầu PO:   docs/specs/modules/engine/PO_Require_Game+nhóm_+tập+thể+Inclass.doc
+Kiến trúc:   docs/architecture/system-architecture.md (§10)
+-->
+
+---
+uc_id: NOJIRA-uni-p2
+track: feature
+size: L
+parallel_safe: true
+---
+
+## 1. Overview & Risk Assessment
+
+Giai đoạn 2 bổ sung các chế độ chơi tương tác nhóm và tập thể trong lớp học (`PO_Require_Game+nhóm_+tập+thể+Inclass.doc`):
+1. **Chế độ Tập thể (`cooperative`):** 12 học sinh cùng nhau đóng góp đáp án đúng để hoàn thành thanh tiến trình chung (`progress_meter`), hạ gục Boss (ví dụ: Boss Rồng Số Học).
+2. **Chế độ Chia nhóm (`team`):** Chia phòng 12 học sinh thành 2–4 nhóm thi đấu tốc độ (`first_to_finish`) hoặc tổng điểm (`sum_all`), có hỗ trợ đồng bộ bản nháp gõ chung (`UPDATE_DRAFT`).
+3. **Chế độ Cá nhân Mở rộng (`individual`):** Mở rộng tính năng cá nhân kèm theo các mốc tiến trình và tài nguyên dùng chung (`shared_resource`: thời gian/mạng).
+4. **Tích hợp `lms-worker`:** Đẩy sự kiện kết quả thi đấu, thảo luận nhóm, bầu chọn tên nhóm qua Kafka `game.events.v1` để hệ thống cũ ghi nhận cúp và thành tích.
+
+### Risk Assessment
+
+| Risk | Likelihood | Impact | Mitigation |
+|---|---|---|---|
+| **High Traffic Draft Sync (`UPDATE_DRAFT`) gây sập socket** | Med | **High** | Ép client debounce 150ms. Engine chỉ broadcast draft cho các thành viên trong *cùng nhóm*, không broadcast toàn phòng |
+| **Race Condition khi 2 HS cùng Submit làm vượt mốc 100% Progress** | Med | Med | `RoomActor` xử lý đơn luồng sequential. Dùng `AtomicInteger` / State check để đảm bảo chỉ trigger `GameOver` đúng 1 lần |
+| **Kafka lag làm block Engine thread ở chế độ Team** | Low | **High** | Đã xử lý ở Phase 1: `max.block.ms=0`, đẩy event qua worker thread riêng biệt |
+| **Lệch điểm giữa `lms-worker` và Game Engine** | Low | Med | Game Engine là **Authoritative Source**. Event gửi sang Kafka chứa kết quả cuối cùng đã verified bởi Server |
+
+---
+
+## 2. Task List
+
+### Task 20: Mở rộng Schema Protobuf (`game_message.proto`)
+- **Mô tả:** Thêm enum `GameMode` (`SOLO`, `COOPERATIVE`, `TEAM`, `INDIVIDUAL`), các message payload cho `TeamAssignment`, `DraftUpdate`, `ProgressMeterSnapshot`, `SharedResourceState`.
+- **File:** `modules/uni-protocol/src/main/proto/game_message.proto`
+- **Acceptance Criteria:**
+  - [ ] Support payload `TeamAssignment` chứa `team_id`, `member_student_ids`
+  - [ ] Support `DraftUpdate` mang `draft_content` và `team_id`
+  - [ ] Support `ProgressMeterSnapshot` mang `current_progress`, `target_progress`, `stage_index`
+
+### Task 21: Nâng cấp `GameDefinition` & `RoomState` cho Cooperative Mode
+- **Mô tả:** Cấu hình `progress_target`, `progress_stages` trong `GameDefinition`. `RoomState` theo dõi tổng điểm/câu đúng cả phòng.
+- **File:** `modules/uni-engine/.../definition/GameDefinition.java`, `modules/uni-engine/.../room/RoomState.java`
+- **Acceptance Criteria:**
+  - [ ] Tính toán `% = (tổng_câu_đúng / progress_target) * 100` khi có `SubmitAnswer` hợp lệ
+  - [ ] Tự động chuyển `stage_index` visual khi đạt mốc % tương ứng
+
+### Task 22: Triển khai Chế độ Chia Nhóm (`Team` Mode) & Scoped Draft Sync
+- **Mô tả:** Quản lý danh sách đội nhóm trong `RoomState`. Xử lý sự kiện `UPDATE_DRAFT` và broadcast scoped trong nhóm.
+- **File:** `modules/uni-engine/.../room/RoomActor.java`, `modules/uni-engine/.../room/TeamState.java`
+- **Acceptance Criteria:**
+  - [ ] Gửi `UPDATE_DRAFT` chỉ tới 3 thành viên còn lại trong cùng `team_id`
+  - [ ] Tính điểm dồn nhóm (`sum_all`) hoặc điểm trung bình nhóm (`average`) chuẩn xác
+
+### Task 23: Triển khai FSM Win Condition Evaluator & Shared Resource Penalty
+- **Mô tả:** Đánh giá điều kiện thắng (`progress_completed`, `first_to_finish`, `most_points_when_time_up`) và xử lý phạt tài nguyên chung (trừ `time` hoặc `lives`).
+- **File:** `modules/uni-engine/.../scoring/WinConditionEvaluator.java`, `modules/uni-engine/.../scoring/PenaltyCalculator.java`
+- **Acceptance Criteria:**
+  - [ ] Khi thỏa mãn `win_condition`, FSM đổi trạng thái `FINISHED` lập tức
+  - [ ] Trả lời sai bị trừ đúng số thời gian/mạng cấu hình trong `shared_resource`
+
+### Task 24: Tích hợp Kafka Event Publisher với `lms-worker`
+- **Mô tả:** Phát `TeamSubmitExerciseEvent`, `GroupDiscussionEvent`, `VoteGroupNameEvent` sang Kafka topic `game.events.v1`.
+- **File:** `modules/uni-engine/.../events/GameEventPublisher.java`
+- **Acceptance Criteria:**
+  - [ ] Payload JSON/Protobuf đúng contract mà `SubmitExerciseListener` và `ActiveGroupDiscussionListener` của `lms-worker` mong đợi
+
+### Task 25: Unit Tests & RoomActor FSM Tests
+- **Mô tả:** Viết Unit Test phủ 100% logic tính tiến trình, phân nhóm, và phạt tài nguyên.
+- **File:** `modules/uni-engine/src/test/java/.../room/CooperativeRoomActorTest.java`, `TeamRoomActorTest.java`
+
+### Task 26: Xây dựng E2E Cucumber Tests (`uni-e2e`)
+- **Mô tả:** Khởi chạy 12 client WebSocket giả lập kiểm thử 3 kịch bản BDD thực chiến.
+- **File:** `modules/uni-e2e/src/test/resources/features/inclass_game.feature`
+
+---
+
+## 3. Verification Plan
+
+- `mvn clean test` xanh toàn bộ reactor.
+- Chạy Cucumber E2E tests: `mvn -pl :uni-e2e test`.
