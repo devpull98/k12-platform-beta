@@ -145,13 +145,13 @@ Các cấu trúc RAM quan trọng tại Gateway:
 - `RoomActor(room_id)`: Đơn vị cô lập nghiệp vụ cốt lõi (1 phòng = 1 actor đơn luồng).
 - `SessionAggregator(session_id)`: Tầng World, quản lý dashboard giáo viên tổng thể.
 
-#### Bốn tầng định danh:
+#### 2.4.1 Bốn tầng định danh:
 1. **World / Session** (`session_id`, `teacher_id`): Ánh xạ tới `SessionAggregator`.
 2. **Room** (`room_id`, `game_id`): Ánh xạ tới `RoomActor` (đơn vị cô lập nghiệp vụ cốt lõi).
 3. **Team** (`team_id`): Cấu trúc danh sách trong state của `RoomActor`, không tách thành actor riêng.
 4. **Member** (`student_id`, `student_index` từ 0–11): `student_index` (1 byte thay UUID 16 byte) được cấp khi vào phòng và **không tái sử dụng trong cùng phiên**.
 
-#### FSM của RoomActor:
+#### 2.4.2 FSM của RoomActor:
 ```text
 LOBBY ──TEACHER_START──► PLAYING ──hết step cuối / TEACHER_END──► FINISHED
   ▲                       ▲    │                                    │
@@ -170,7 +170,7 @@ LOBBY ──TEACHER_START──► PLAYING ──hết step cuối / TEACHER_END
 > Rủi ro 4, `plan.md` Task 14 — **chưa triển khai**) để một phòng phục hồi được trên **pod khác**,
 > không chỉ đợi đúng pod cũ.
 
-#### State của một phòng (RAM & Snapshot):
+#### 2.4.3 State của một phòng (RAM & Snapshot):
 Toàn bộ state nằm trong RAM actor và phải nén được vào snapshot:
 - `epoch`: Fencing token chống split-brain.
 - `step_index`, `step_deadline_at`: Mốc thời gian server hết hạn câu hỏi.
@@ -230,7 +230,7 @@ Cấu trúc `GameMessage`:
 - `internal`: Chứa `InternalHeader` (chỉ xuất hiện trên kênh Gateway ↔ Engine, Gateway phải gỡ trước khi gửi client).
 - `payload`: `oneof` (Client→Server: `JoinRoom`, `SubmitAnswer`, `Resync`, `TeacherCommand`; Server→Client: `RoomStateSnapshot`, `AnswerAck`, `QuestionStarted`, `StudentJoined`, `GameOver`, `ConnectionDegraded`).
 
-#### Cấu trúc `InternalHeader`:
+#### 3.3.1 Cấu trúc `InternalHeader`:
 - `owner_pod_id`: Pod Engine sở hữu phòng (giúp Gateway học route).
 - `epoch`: Fencing token chống split-brain (GĐ1 luôn gửi `0`).
 - `trace_id`: UUID sinh từ handshake để liên kết distributed tracing giữa Gateway và Engine.
@@ -442,9 +442,9 @@ Mỗi bản ghi snapshot gồm `{ schema_version, epoch, crc32, payload }`:
 
 ## 6. Triển Khai, Vận Hành & Khôi Phục Sự Cố
 
-#### 6.1 Phân Tích Tài Nguyên Hệ Thống Cũ (`k12-socketio`) vs Dự Toán Hệ Thống Mới (`uni-realtime`)
+### 6.1 Phân Tích Tài Nguyên Hệ Thống Cũ (`k12-socketio`) vs Dự Toán Hệ Thống Mới (`uni-realtime`)
 
-#### 📊 1. Phân Tích Hiện Trạng Thực Tế Hệ Thống Cũ (`Netty-SocketIO + Node.js/Spring`):
+#### 6.1.1 Phân Tích Hiện Trạng Thực Tế Hệ Thống Cũ (`Netty-SocketIO + Node.js/Spring`)
 Dựa trên số liệu đo đạc thực tế tại ca cao điểm (19:00 – 21:30):
 * **Tổng CPU tiêu thụ toàn cụm:** Chỉ khoảng **2.5 – 3.0 cores CPU** cho toàn bộ 7 Pods (gồm 4 pod `k12-socketio` và 3 pod `k12-socketio-worker`).
 * **Chi tiết Tầng Socket (`k12-socketio` - 4 Pods):**
@@ -457,7 +457,7 @@ Dựa trên số liệu đo đạc thực tế tại ca cao điểm (19:00 – 2
 
 ---
 
-#### 🔄 2. Bảng Đối Soát Kiến Trúc & Hiệu Năng (Hệ Thống Cũ vs Hệ Thống Mới):
+#### 6.1.2 Bảng Đối Soát Kiến Trúc & Hiệu Năng (Hệ Thống Cũ vs Hệ Thống Mới)
 
 | Tiêu chí | Hệ Thống Cũ (`k12-socketio`) | Hệ Thống Mới (`uni-realtime`) | Lợi ích Kiến trúc Mới |
 |---|---|---|---|
@@ -469,7 +469,7 @@ Dựa trên số liệu đo đạc thực tế tại ca cao điểm (19:00 – 2
 
 ---
 
-#### 📐 3. Bảng Dự Toán Tài Nguyên K8s Hệ Thống Mới (Phục vụ 54.000 CCU / 4.500 Phòng):
+#### 6.1.3 Bảng Dự Toán Tài Nguyên K8s Hệ Thống Mới (Phục vụ 54.000 CCU / 4.500 Phòng)
 
 | Tầng / Dịch vụ | Số Pod | Request (CPU / RAM) | Limit (CPU / RAM) | Ghi chú vận hành |
 |---|:---:|:---:|:---:|---|
@@ -486,7 +486,7 @@ Dựa trên số liệu đo đạc thực tế tại ca cao điểm (19:00 – 2
 
 ---
 
-#### 📈 4. Quy Trình Co Giãn Hạ Tầng: Tải Thường (10k – 20k CCU) vs Tải Đỉnh 3x (54k CCU)
+#### 6.1.4 Quy Trình Co Giãn Hạ Tầng: Tải Thường (10k – 20k CCU) vs Tải Đỉnh 3x (54k CCU)
 
 Bảng chi tiết quy tắc co giãn (Scaling Rules) khi chạy ở mức tải bình thường và khi có spike 3x CCU:
 
@@ -507,14 +507,14 @@ Bảng chi tiết quy tắc co giãn (Scaling Rules) khi chạy ở mức tải 
 * **Quy trình TĂNG TÀI NGUYÊN (Scale-Up) khi có tin báo thi đấu 3x CCU:**
   1. **Bước 1 (18:30 - Trước ca thi 20 phút):** Thực hiện `kubectl scale deployment uni-engine --replicas=7` để khởi tạo sẵn 7 Engine Pods (chỉ áp dụng sau Task 14). Các Pods mới sẽ đăng ký danh sách vào `RedisLeaseRoomOwnership` sẵn sàng nhận phòng mới.
   2. **Bước 2 (18:40 - Trước ca thi 10 phút):** Thực hiện `kubectl scale deployment uni-gateway --replicas=5` để sẵn sàng đón đợt bão kết nối WebSocket (Connection Storm).
-  3. **Bước 3 (18:50 - Bắt đầu ca thi):** Khóa chức năng Auto-scaling of Engine (Task 19) để giữ nguyên topology 7 Pods ổn định suốt ca thi 18h50 - 21h30.
+  3. **Bước 3 (18:50 - Bắt đầu ca thi):** Khóa chức năng Auto-scaling của Engine (Task 19) để giữ nguyên topology 7 Pods ổn định suốt ca thi 18h50 - 21h30.
 * **Quy trình GIẢM TÀI NGUYÊN (Scale-Down) sau ca thi:**
   1. **Sau 21:30 (Khi ca thi kết thúc):** Kiểm tra số lượng kết nối CCU hạ xuống $< 10.000$.
   2. Scale down `uni-gateway` về **2 Pods** và `uni-engine` về **3 Pods** để tiết kiệm tài nguyên Cloud ban đêm.
 
 ---
 
-#### 🧬 5. Phân Rã Bộ Nhớ RSS (Resident Set Size Memory Budget - Limit 6.0 GiB/pod):
+#### 6.1.5 Phân Rã Bộ Nhớ RSS (Resident Set Size Memory Budget - Limit 6.0 GiB/pod)
 
 Bộ nhớ K8s kiểm soát để trigger `OOMKilled` là **RSS Memory** (Heap + DirectMemory + Metaspace + Stacks + Native Memory):
 
