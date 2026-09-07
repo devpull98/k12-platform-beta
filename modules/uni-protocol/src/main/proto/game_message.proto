@@ -60,6 +60,7 @@ message GameMessage {
     StudentJoined student_joined = 43;
     GameOver game_over = 44;
     ConnectionDegraded connection_degraded = 45;
+    CommittedSeq committed_seq = 46;
   }
 }
 
@@ -144,6 +145,15 @@ message RoomStateSnapshot {
   string current_question_id = 4;
   int64 server_question_started_at_ms = 5;
   int64 deadline_ms = 6;
+
+  // Task 16 / B3 (docs/work/.../_context.md): monotonic per-room counter, assigned by the
+  // SERVER on every broadcast (full or delta) -- unlike GameMessage.sequence (client-assigned,
+  // SubmitAnswer dedupe only, 9.5), this is what lets a client detect a dropped broadcast:
+  // any gap between the last broadcast_seq it saw and the next one means it missed (next -
+  // last - 1) updates. Introduced with no consumer yet on the client side (PH-3 unresolved) --
+  // this field only gives PH-3 something to detect gaps with, it does not itself define a
+  // RESYNC protocol for broadcasts.
+  uint64 broadcast_seq = 7;
 }
 
 message PlayerState {
@@ -214,6 +224,23 @@ message ConnectionDegraded {
   bool retryable = 3;
 }
 
+// BEST_EFFORT (Task 15 / B2, docs/work/.../_context.md): sent AFTER the engine confirms a Hot
+// Snapshot write succeeded, carrying the sequence each student's answer is now durably
+// persisted at. ANSWER_ACK stays the immediate, optimistic acknowledgement -- it is NOT the
+// signal a client should discard a RingBuffer entry on, because it fires before the async
+// snapshot write, not after (the exact gap that made a pod crash between the two lose an
+// already-acked answer). A client is only safe to discard sequence N for a student once it has
+// seen a CommittedSeq entry for that student with sequence >= N. Losing an occasional
+// CommittedSeq is harmless and self-heals: the next successful snapshot write reports a higher
+// sequence covering it.
+message CommittedSeq {
+  message Entry {
+    string student_id = 1;
+    uint64 sequence = 2;
+  }
+  repeated Entry committed = 1;
+}
+
 // ---------------------------------------------------------------------------
 // Enums
 // ---------------------------------------------------------------------------
@@ -234,6 +261,7 @@ enum MessageType {
   STUDENT_JOINED = 23;
   GAME_OVER = 24;
   CONNECTION_DEGRADED = 25;
+  COMMITTED_SEQ = 26;
 }
 
 enum GamePhase {

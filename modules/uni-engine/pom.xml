@@ -62,6 +62,14 @@
             <artifactId>lettuce-core</artifactId>
         </dependency>
 
+        <!-- Task 18 (§9.3 Rủi ro 6): GameEventPublisher's real KafkaGameEventSink. Already
+             present transitively via uni-observability's KafkaLogAppender dependency, declared
+             explicitly here too since uni-engine code now uses it directly, not just inherits it. -->
+        <dependency>
+            <groupId>org.apache.kafka</groupId>
+            <artifactId>kafka-clients</artifactId>
+        </dependency>
+
         <!-- BehaviorTestKit + ManualTime: the room FSM and tick coalescing are tested
              without a network and without sleeping on a real clock. -->
         <dependency>

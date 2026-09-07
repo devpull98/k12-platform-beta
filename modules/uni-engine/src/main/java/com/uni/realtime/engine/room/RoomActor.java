@@ -19,6 +19,7 @@ import org.slf4j.LoggerFactory;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -277,6 +278,10 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
             return;
         }
         lastSnapshotAtMs = now;
+        // Captured HERE, on this actor's own thread, before handing off to an async write --
+        // the completion callback below runs on a foreign thread and must never read `state`
+        // again (Task 15, see RoomState.lastSeenSequenceSnapshot's javadoc).
+        Map<String, Long> committedSequenceByStudent = state.lastSeenSequenceSnapshot();
         Optional<byte[]> envelope = SnapshotEnvelope.wrap(epoch, state.serializeSnapshot());
         if (envelope.isEmpty()) {
             snapshotLog.error("room {}: Hot Snapshot exceeds {} bytes, skipping this write",
@@ -288,9 +293,26 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
             snapshotLog.warn("room {}: Hot Snapshot write failed", roomId, ex);
             return null;
         }).thenAccept(accepted -> {
-            if (Boolean.FALSE.equals(accepted)) {
-                snapshotLog.warn("room {}: Hot Snapshot write rejected -- epoch {} is stale, "
-                        + "another pod holds a newer lease for this room", roomId, epoch);
+            // Prove-it (2026-09-07): broadcasting unconditionally here turned exactly the 2
+            // negative tests (failed write, fenced-out write) red -- confirms both are exercised.
+            if (Boolean.TRUE.equals(accepted)) {
+                // Task 15 / B2: ANSWER_ACK already went out immediately (optimistic, hot path,
+                // unchanged) -- this is the SEPARATE, later signal that tells a client which
+                // sequences are now actually safe to discard from its RingBuffer.
+                // ActorRef.tell() is thread-safe by design, so calling it from this callback
+                // (not the actor's own thread) is fine -- unlike reaching back into `state`.
+                broadcastTarget.tell(RoomState.buildCommittedSeq(roomId, committedSequenceByStudent));
+            } else if (Boolean.FALSE.equals(accepted)) {
+                // debug, not warn: with the Phase 1 default (NoopRoomSnapshotStore, Redis
+                // disabled) EVERY flush takes this branch, so warn-level here would spam
+                // production logs for entirely expected, by-design behavior. The genuinely
+                // actionable case -- a real RedisSnapshotStore rejecting a write because this
+                // pod's epoch is stale (another pod holds a newer lease) -- is indistinguishable
+                // from "disabled" at this boolean-only interface; watch a dedicated metric
+                // (zombie_actor_stopped_total or a Task-14 follow-up) for that signal instead of
+                // this log line.
+                snapshotLog.debug("room {}: Hot Snapshot write not accepted (epoch {}) -- CommittedSeq withheld for this flush",
+                        roomId, epoch);
             }
         });
     }

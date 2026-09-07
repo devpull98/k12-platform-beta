@@ -95,8 +95,8 @@ system-architecture.md §7.5 — Product/Business chưa trả lời.
 > rolling update đổi số replica) giữa ca thi đấu sẽ đổi `N` trong `room_id % N`
 > (`ModuloRoomOwnership`) và rehash **toàn bộ phòng trên mọi pod cùng lúc** — nặng hơn 1 pod
 > crash đơn lẻ. Đây là rủi ro quy trình vận hành, không sửa được bằng code ở GĐ1 (xem
-> `system-architecture.md` §9.3 Rủi ro 6, ADR-002, và `plan.md` Task 19 — runbook vận hành cụ thể
-> cho DevOps, `docs/runbook/engine-scaling-freeze.md`, chưa viết).
+> `system-architecture.md` §9.2 Rủi ro 4, ADR-002, và runbook cụ thể cho DevOps:
+> [`docs/runbook/engine-scaling-freeze.md`](../../runbook/engine-scaling-freeze.md), `plan.md` Task 19).
 
 ## Phát hiện review kiến trúc (2026-09-07) — chưa có task xử lý
 

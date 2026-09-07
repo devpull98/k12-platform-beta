@@ -99,6 +99,21 @@ class RoomStateSnapshotTest {
     }
 
     @Test
+    void should_continueBroadcastSeq_notResetItToZero_afterRestore() {
+        // Task 16 / B3: broadcast_seq must survive a pod handoff, or the first broadcast after
+        // restore would look like a rewind to any client still tracking the pre-restore count.
+        RoomState original = new RoomState("room-1", CLOCK, FormulaScoreCalculator.binaryChoice());
+        original.joinRoom("student-1", "Alice"); // broadcast_seq -> 1
+        original.joinRoom("student-2", "Bob"); // broadcast_seq -> 2
+
+        RoomState restored = RoomState.restore("room-1", CLOCK, FormulaScoreCalculator.binaryChoice(),
+                original.serializeSnapshot());
+        long nextSeq = restored.joinRoom("student-3", "Carol").getRoomStateSnapshot().getBroadcastSeq();
+
+        assertThat(nextSeq).as("must continue from 2, not restart at 1").isEqualTo(3L);
+    }
+
+    @Test
     void should_stayUnderFiveKilobytes_forARealisticFullRoom() {
         RoomState state = new RoomState("room-large", CLOCK, FormulaScoreCalculator.binaryChoice());
         state.startGame();

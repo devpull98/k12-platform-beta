@@ -24,6 +24,17 @@ public final class DefinitionLoader {
         if (definition.maxTransitions() <= 0) {
             throw new DefinitionRejectedException("max_transitions must be positive");
         }
+        if (definition.missedStepPolicy() != MissedStepPolicy.ZERO) {
+            // Task 17 / B4 (docs/work/.../_context.md): RoomActor/RoomState have no late-join
+            // flow and never consult this field -- SKIP would silently behave as ZERO, and
+            // ALLOW_LATE additionally blows the < 5 KB Hot Snapshot budget (system-architecture.md
+            // §4.8: "cấm dùng trong thi đấu... làm phình snapshot > 5 KB"). Reject at load time
+            // rather than let either lie dormant until someone trusts a policy the engine
+            // silently ignores -- same fail-fast pattern as tick_mode FIXED above.
+            throw new DefinitionRejectedException(
+                    "missed_step_policy " + definition.missedStepPolicy()
+                            + " has no Phase 1 implementation (only ZERO is honored -- plan.md Task 17)");
+        }
 
         Map<String, Step> stepsById = new HashMap<>();
         for (Step step : definition.steps()) {

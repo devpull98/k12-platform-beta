@@ -74,6 +74,38 @@ class DefinitionLoaderTest {
     }
 
     @Test
+    void should_rejectAtLoadTime_when_missedStepPolicyIsSkip() {
+        GameDefinition definition = new GameDefinition(
+                List.of(new Step("q1", 25_000, List.of())),
+                "q1",
+                TickMode.COALESCE,
+                new ScoringFormula.Constant(100),
+                MissedStepPolicy.SKIP,
+                50);
+
+        assertThatThrownBy(() -> loader.load(definition))
+                .isInstanceOf(DefinitionRejectedException.class)
+                .hasMessageContaining("SKIP");
+    }
+
+    @Test
+    void should_rejectAtLoadTime_when_missedStepPolicyIsAllowLate() {
+        // system-architecture.md §4.8: ALLOW_LATE also blows the < 5 KB Hot Snapshot budget --
+        // not just "unimplemented", actively unsafe to allow through.
+        GameDefinition definition = new GameDefinition(
+                List.of(new Step("q1", 25_000, List.of())),
+                "q1",
+                TickMode.COALESCE,
+                new ScoringFormula.Constant(100),
+                MissedStepPolicy.ALLOW_LATE,
+                50);
+
+        assertThatThrownBy(() -> loader.load(definition))
+                .isInstanceOf(DefinitionRejectedException.class)
+                .hasMessageContaining("ALLOW_LATE");
+    }
+
+    @Test
     void should_rejectAtLoadTime_when_startStepIdIsUndefined() {
         GameDefinition definition = new GameDefinition(
                 List.of(new Step("q1", 25_000, List.of())),

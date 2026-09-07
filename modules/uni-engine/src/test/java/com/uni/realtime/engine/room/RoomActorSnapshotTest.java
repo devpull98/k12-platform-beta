@@ -4,6 +4,7 @@ import com.uni.realtime.engine.definition.TickMode;
 import com.uni.realtime.engine.metrics.EngineMetrics;
 import com.uni.realtime.engine.scoring.FormulaScoreCalculator;
 import com.uni.realtime.protocol.GameMessage;
+import com.uni.realtime.protocol.MessageType;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.apache.pekko.actor.testkit.typed.javadsl.BehaviorTestKit;
 import org.apache.pekko.actor.testkit.typed.javadsl.TestInbox;
@@ -16,6 +17,7 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -99,6 +101,66 @@ class RoomActorSnapshotTest {
     }
 
     @Test
+    void should_broadcastCommittedSeqWithTheCorrectSequence_afterASuccessfulSnapshotWrite() {
+        MutableClock clock = new MutableClock(Instant.parse("2026-09-07T09:00:00Z"));
+        RecordingSnapshotStore store = new RecordingSnapshotStore();
+        TestInbox<GameMessage> broadcast = TestInbox.create();
+        BehaviorTestKit<RoomActor.Command> testKit = BehaviorTestKit.create(
+                RoomActor.create("room-1", clock, FormulaScoreCalculator.binaryChoice(),
+                        new EngineMetrics(new SimpleMeterRegistry()), TickMode.COALESCE,
+                        broadcast.getRef(), store, 0L, null));
+        testKit.run(new RoomActor.JoinRoom("student-1", "Alice", TestInbox.<GameMessage>create().getRef()));
+        broadcast.receiveMessage(); // ROOM_STATE_SNAPSHOT from the join's own flush
+        broadcast.receiveMessage(); // CommittedSeq from the join's snapshot write (empty so far)
+        testKit.run(new RoomActor.StartGame());
+        testKit.run(new RoomActor.StartQuestion("q-1", 25_000, List.of("a")));
+        clock.advanceMillis(2_001); // clear the 200ms flush gate and the 2s snapshot gate together
+
+        testKit.run(new RoomActor.SubmitAnswer(
+                "student-1", 7L, "q-1", List.of("a"), 0L, TestInbox.<GameMessage>create().getRef()));
+
+        GameMessage delta = broadcast.receiveMessage();
+        assertThat(delta.getType()).isEqualTo(MessageType.ROOM_STATE_SNAPSHOT);
+        GameMessage committedSeq = broadcast.receiveMessage();
+        assertThat(committedSeq.getType()).isEqualTo(MessageType.COMMITTED_SEQ);
+        assertThat(committedSeq.getCommittedSeq().getCommittedList())
+                .extracting(e -> e.getStudentId(), e -> e.getSequence())
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("student-1", 7L));
+    }
+
+    @Test
+    void should_notBroadcastCommittedSeq_whenTheSnapshotWriteFails() {
+        MutableClock clock = new MutableClock(Instant.parse("2026-09-07T09:00:00Z"));
+        TestInbox<GameMessage> broadcast = TestInbox.create();
+        BehaviorTestKit<RoomActor.Command> testKit = BehaviorTestKit.create(
+                RoomActor.create("room-1", clock, FormulaScoreCalculator.binaryChoice(),
+                        new EngineMetrics(new SimpleMeterRegistry()), TickMode.COALESCE,
+                        broadcast.getRef(), new FailingSnapshotStore(), 0L, null));
+
+        testKit.run(new RoomActor.JoinRoom("student-1", "Alice", TestInbox.<GameMessage>create().getRef()));
+
+        GameMessage only = broadcast.receiveMessage();
+        assertThat(only.getType()).isEqualTo(MessageType.ROOM_STATE_SNAPSHOT);
+        assertThat(broadcast.hasMessages()).as("a failed write must never produce a CommittedSeq").isFalse();
+    }
+
+    @Test
+    void should_notBroadcastCommittedSeq_whenTheWriteIsFencedOut() {
+        MutableClock clock = new MutableClock(Instant.parse("2026-09-07T09:00:00Z"));
+        TestInbox<GameMessage> broadcast = TestInbox.create();
+        BehaviorTestKit<RoomActor.Command> testKit = BehaviorTestKit.create(
+                RoomActor.create("room-1", clock, FormulaScoreCalculator.binaryChoice(),
+                        new EngineMetrics(new SimpleMeterRegistry()), TickMode.COALESCE,
+                        broadcast.getRef(), new FencedSnapshotStore(), 0L, null));
+
+        testKit.run(new RoomActor.JoinRoom("student-1", "Alice", TestInbox.<GameMessage>create().getRef()));
+
+        GameMessage only = broadcast.receiveMessage();
+        assertThat(only.getType()).isEqualTo(MessageType.ROOM_STATE_SNAPSHOT);
+        assertThat(broadcast.hasMessages()).as("a fenced-out write is not a success either").isFalse();
+    }
+
+    @Test
     void should_resumeScoreAndRoster_when_createdFromASnapshot() {
         RoomState original = new RoomState("room-1", Clock.systemUTC(), FormulaScoreCalculator.binaryChoice());
         original.joinRoom("student-1", "Alice");
@@ -131,6 +193,30 @@ class RoomActorSnapshotTest {
             saveCalls.incrementAndGet();
             lastEpoch.set(epoch);
             return CompletableFuture.completedFuture(true);
+        }
+
+        @Override
+        public CompletableFuture<Optional<byte[]>> load(String roomId) {
+            return CompletableFuture.completedFuture(Optional.empty());
+        }
+    }
+
+    private static final class FailingSnapshotStore implements RoomSnapshotStore {
+        @Override
+        public CompletableFuture<Boolean> save(String roomId, long epoch, byte[] envelopeBytes) {
+            return CompletableFuture.failedFuture(new RuntimeException("simulated Redis error"));
+        }
+
+        @Override
+        public CompletableFuture<Optional<byte[]>> load(String roomId) {
+            return CompletableFuture.completedFuture(Optional.empty());
+        }
+    }
+
+    private static final class FencedSnapshotStore implements RoomSnapshotStore {
+        @Override
+        public CompletableFuture<Boolean> save(String roomId, long epoch, byte[] envelopeBytes) {
+            return CompletableFuture.completedFuture(false);
         }
 
         @Override

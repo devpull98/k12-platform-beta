@@ -992,8 +992,16 @@ khỏi phần **đề xuất cho GĐ2** (cần ADR riêng, chưa được phép 
   - Gói tin nộp bài của học sinh đã nằm sẵn trong socket buffer của hệ điều hành, nhưng JVM bị dừng lại (Stop-The-World) nên Actor chưa lấy ra khỏi Mailbox để đóng dấu được.
   - **Hệ quả:** Khi GC pause kết thúc, Actor mới đóng dấu `server_received_at` → Học sinh bị tính thêm 100ms oan uổng, dẫn đến bị trừ điểm oan hoặc bị từ chối do quá deadline!
 - **Chiến lược phòng ngừa:**
-  1. **Tối ưu cờ JVM GC:** `-XX:+UseG1GC -XX:MaxGCPauseMillis=10 -XX:G1ReservePercent=15`.
-  2. **Đóng dấu thời gian sớm tại Netty:** Đóng dấu `received_at` ngay tại `FrameChannelServer` (tầng transport Netty) trước khi đẩy vào Mailbox của Actor, sau đó truyền timestamp này vào message để Actor dùng tính điểm.
+  1. **Tối ưu cờ JVM GC:** `-XX:+UseG1GC -XX:MaxGCPauseMillis=10 -XX:G1ReservePercent=15` — đây
+     là biện pháp **thật, đang áp dụng** ở GĐ1.
+  2. ~~Đóng dấu thời gian sớm tại Netty~~ — **mâu thuẫn trực tiếp với §5.1 rule 1** ("`server_received_at`
+     phải được đóng dấu ngay khi lấy gói tin khỏi mailbox của actor") và **không phải hành vi code
+     thật**: `RoomState.submitAnswer` đóng dấu `clock.millis()` tại mailbox, đúng §5.1, không phải
+     ở `FrameChannelServer`. Mục này từng ghi nhầm như một chiến lược đã áp dụng — **sửa lại
+     (2026-09-07): đây là phương án đã cân nhắc và loại**, vì đóng dấu ở Netty đòi hỏi thêm một
+     trường timestamp xuyên qua `GameMessage`/`InternalHeader` (thay đổi wire schema, PR riêng)
+     chỉ để tiết kiệm phần đuôi GC pause vốn đã có công cụ giảm thiểu riêng (mục 1). Rủi ro GC
+     pause **vẫn tồn tại** ở GĐ1 — chỉ được giảm nhẹ bằng tuning GC, chưa được loại bỏ triệt để.
 
 #### ⚠️ Rủi ro 4: "Cái bẫy" Modulo Hash (`room_id % N`) khi thay đổi số Pod
 - **Hiện trạng (2026-09-07):** GĐ1 hiện tại vẫn chạy `ModuloRoomOwnership`. **Đã chốt thay bằng

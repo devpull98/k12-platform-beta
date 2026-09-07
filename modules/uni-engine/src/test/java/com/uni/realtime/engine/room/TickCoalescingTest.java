@@ -166,6 +166,30 @@ class TickCoalescingTest {
         assertThat(tenthFlush.getRoomStateSnapshot().getPlayersList()).hasSize(1);
     }
 
+    @Test
+    void should_incrementBroadcastSeqMonotonically_acrossJoinAndEveryFlush() {
+        // Task 16 / B3: the join's own full snapshot and every later flush (full or delta)
+        // must share one unbroken counter -- a client uses gaps in this to detect a dropped
+        // broadcast, so it must never restart or skip depending on which snapshot type fired.
+        TestProbe<GameMessage> broadcast = testKit.createTestProbe(GameMessage.class);
+        TestProbe<GameMessage> replies = testKit.createTestProbe(GameMessage.class);
+        spawnRoom(broadcast.getRef());
+
+        room.tell(new RoomActor.JoinRoom("student-1", "Alice", replies.getRef()));
+        long joinReplySeq = replies.receiveMessage().getRoomStateSnapshot().getBroadcastSeq();
+        long firstFlushSeq = broadcast.receiveMessage().getRoomStateSnapshot().getBroadcastSeq();
+
+        startGameAndQuestion();
+        room.tell(new RoomActor.SubmitAnswer("student-1", 1L, "q-1", List.of("a"), 0L, replies.getRef()));
+        replies.receiveMessage(); // ANSWER_ACK, not a snapshot -- must not consume a broadcast_seq
+        advanceTime(Duration.ofMillis(200));
+        long secondFlushSeq = broadcast.receiveMessage().getRoomStateSnapshot().getBroadcastSeq();
+
+        assertThat(joinReplySeq).isEqualTo(1L);
+        assertThat(firstFlushSeq).isEqualTo(2L);
+        assertThat(secondFlushSeq).isEqualTo(3L);
+    }
+
     private void spawnRoom(ActorRef<GameMessage> broadcastTarget) {
         clock = new MutableClock(Instant.parse("2026-09-06T09:00:00Z"));
         room = testKit.spawn(RoomActor.create("room-" + roomSequence.incrementAndGet(), clock,

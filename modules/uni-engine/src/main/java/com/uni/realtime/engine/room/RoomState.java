@@ -2,6 +2,7 @@ package com.uni.realtime.engine.room;
 
 import com.uni.realtime.engine.scoring.ScoreCalculator;
 import com.uni.realtime.protocol.AnswerAck;
+import com.uni.realtime.protocol.CommittedSeq;
 import com.uni.realtime.protocol.GameMessage;
 import com.uni.realtime.protocol.GamePhase;
 import com.uni.realtime.protocol.MessageType;
@@ -67,6 +68,8 @@ final class RoomState {
     private final Set<String> dirtyStudentIds = new LinkedHashSet<>();
     private int nextStudentIndex = 0;
     private int flushesSinceFullSnapshot = 0;
+    /** Task 16 / B3: monotonic per-room broadcast counter (proto field 7), never reset on restore. */
+    private long broadcastSeq = 0;
 
     private GamePhase phase = GamePhase.LOBBY;
     private String currentQuestionId;
@@ -103,6 +106,7 @@ final class RoomState {
             out.writeLong(deadlineMs);
             out.writeInt(nextStudentIndex);
             out.writeInt(flushesSinceFullSnapshot);
+            out.writeLong(broadcastSeq);
 
             out.writeInt(players.size());
             for (Map.Entry<String, PlayerRecord> entry : players.entrySet()) {
@@ -165,6 +169,7 @@ final class RoomState {
             state.deadlineMs = in.readLong();
             state.nextStudentIndex = in.readInt();
             state.flushesSinceFullSnapshot = in.readInt();
+            state.broadcastSeq = in.readLong();
 
             int playerCount = in.readInt();
             for (int i = 0; i < playerCount; i++) {
@@ -307,6 +312,36 @@ final class RoomState {
     }
 
     /**
+     * Task 15: an immutable copy of {@link #lastSeenSequence}, taken on {@code RoomActor}'s own
+     * thread at the moment a Hot Snapshot is serialized. {@code RoomActor} holds onto this copy
+     * and uses it later, from the async callback that learns whether the snapshot write
+     * succeeded, to build a {@code CommittedSeq} -- that callback runs on whatever thread
+     * completed the store's future, never this room's own actor thread, so it must not touch
+     * {@code this} again (no synchronization exists for that, by design: only the owning actor
+     * is ever supposed to read or write this instance).
+     */
+    Map<String, Long> lastSeenSequenceSnapshot() {
+        return Map.copyOf(lastSeenSequence);
+    }
+
+    /**
+     * Task 15 / B2: deliberately a static, pure function of its arguments -- not an instance
+     * method -- so the async snapshot-write callback in {@code RoomActor} can build a
+     * {@code CommittedSeq} from a previously captured {@link #lastSeenSequenceSnapshot()} without
+     * reaching back into a {@code RoomState} instance from a foreign thread.
+     */
+    static GameMessage buildCommittedSeq(String roomId, Map<String, Long> committedSequenceByStudent) {
+        CommittedSeq.Builder committedSeq = CommittedSeq.newBuilder();
+        committedSequenceByStudent.forEach((studentId, sequence) -> committedSeq.addCommitted(
+                CommittedSeq.Entry.newBuilder().setStudentId(studentId).setSequence(sequence)));
+        return GameMessage.newBuilder()
+                .setType(MessageType.COMMITTED_SEQ)
+                .setRoomId(roomId)
+                .setCommittedSeq(committedSeq)
+                .build();
+    }
+
+    /**
      * Builds and returns the next outbound broadcast, then clears dirty state. Every
      * {@value #FULL_SNAPSHOT_EVERY_N_FLUSHES}th flush sends a full snapshot instead of a delta
      * (§G2a) -- a safety net against a best-effort delta dropped under backpressure (§5.4),
@@ -350,6 +385,12 @@ final class RoomState {
     }
 
     private GameMessage buildSnapshotMessage(RoomStateSnapshot.Builder snapshot) {
+        // Every RoomStateSnapshot this room ever emits (full or delta, join-triggered or
+        // flush-triggered) shares this one counter -- a client needs an unbroken sequence to
+        // detect a dropped broadcast (B3), not one restarted per snapshot type.
+        // Prove-it (2026-09-07): freezing this (not incrementing) turned exactly the 2 tests
+        // that assert monotonic broadcast_seq red -- confirms they exercise this line.
+        snapshot.setBroadcastSeq(++broadcastSeq);
         return GameMessage.newBuilder()
                 .setType(MessageType.ROOM_STATE_SNAPSHOT)
                 .setRoomId(roomId)
