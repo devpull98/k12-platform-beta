@@ -6,7 +6,7 @@
 
     <parent>
         <groupId>com.uni</groupId>
-        <artifactId>uni-realtime</artifactId>
+        <artifactId>k12-platform-beta</artifactId>
         <version>0.0.1-SNAPSHOT</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
@@ -19,6 +19,13 @@
         webhook relay. Carried over from the previous project in this repo -- it is the
         only part of it that survives, because it is stack-independent.
     </description>
+
+    <!-- This module's own Java version, independent of every other module in the reactor
+         (see docs/architecture/adr-platform-foundation.md); root no longer sets java.version. -->
+    <properties>
+        <java.version>25</java.version>
+        <maven.compiler.release>${java.version}</maven.compiler.release>
+    </properties>
 
     <dependencies>
         <!-- Actuator endpoints (/actuator/prometheus) are the whole point of running a

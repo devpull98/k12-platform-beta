@@ -6,7 +6,7 @@
 
     <parent>
         <groupId>com.uni</groupId>
-        <artifactId>uni-realtime</artifactId>
+        <artifactId>k12-platform-beta</artifactId>
         <version>0.0.1-SNAPSHOT</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
@@ -18,6 +18,13 @@
         wired together in one JVM over real loopback sockets, driven by a real WebSocket client.
         No main sources -- this module exists to run the test in src/test/java.
     </description>
+
+    <!-- This module's own Java version, independent of every other module in the reactor
+         (see docs/architecture/adr-platform-foundation.md); root no longer sets java.version. -->
+    <properties>
+        <java.version>25</java.version>
+        <maven.compiler.release>${java.version}</maven.compiler.release>
+    </properties>
 
     <dependencies>
         <dependency>

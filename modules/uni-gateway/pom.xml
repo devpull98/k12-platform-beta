@@ -6,7 +6,7 @@
 
     <parent>
         <groupId>com.uni</groupId>
-        <artifactId>uni-realtime</artifactId>
+        <artifactId>k12-platform-beta</artifactId>
         <version>0.0.1-SNAPSHOT</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
@@ -18,6 +18,13 @@
         the hot path travels a hand-built Netty pipeline (decision A1). No TLS handler --
         the LB/ingress terminates TLS and this pod receives plaintext WS.
     </description>
+
+    <!-- This module's own Boot/Java version, independent of every other module in the reactor
+         (see docs/architecture/adr-platform-foundation.md); root no longer sets java.version. -->
+    <properties>
+        <java.version>25</java.version>
+        <maven.compiler.release>${java.version}</maven.compiler.release>
+    </properties>
 
     <dependencies>
         <dependency>
@@ -51,6 +58,10 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+                <!-- Explicit version: no starter-parent pluginManagement to supply a default
+                     anymore; pin to the same Boot version this module's dependencyManagement
+                     imports (root's ${spring-boot.version}). -->
+                <version>${spring-boot.version}</version>
                 <configuration>
                     <!-- Run from the repo root, not this module dir. Logback writes to a
                          relative logs/ path and Promtail mounts the root one; without this
@@ -68,6 +79,15 @@
                          packaged jar. -->
                     <classifier>exec</classifier>
                 </configuration>
+                <!-- The starter-parent used to bind `repackage` to the `package` phase for free;
+                     without it as our parent, that binding needs declaring explicitly here. -->
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>repackage</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>

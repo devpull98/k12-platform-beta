@@ -4,18 +4,11 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <parent>
-        <groupId>org.springframework.boot</groupId>
-        <artifactId>spring-boot-starter-parent</artifactId>
-        <version>4.1.1</version>
-        <relativePath/>
-    </parent>
-
     <groupId>com.uni</groupId>
-    <artifactId>uni-realtime</artifactId>
+    <artifactId>k12-platform-beta</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <packaging>pom</packaging>
-    <name>uni-realtime</name>
+    <name>k12-platform-beta</name>
     <description>Realtime classroom game platform — WebSocket Gateway + Pekko Game Engine (Phase 1)</description>
 
     <modules>
@@ -27,7 +20,8 @@
     </modules>
 
     <properties>
-        <java.version>25</java.version>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <spring-boot.version>4.1.1</spring-boot.version>
         <protobuf.version>4.29.3</protobuf.version>
         <pekko.version>1.1.3</pekko.version>
         <scala.binary.version>2.13</scala.binary.version>
@@ -36,6 +30,13 @@
 
     <dependencyManagement>
         <dependencies>
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-dependencies</artifactId>
+                <version>${spring-boot.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
             <dependency>
                 <groupId>com.google.protobuf</groupId>
                 <artifactId>protobuf-bom</artifactId>
@@ -88,6 +89,9 @@
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-surefire-plugin</artifactId>
+                    <!-- Explicit version: no starter-parent pluginManagement to supply a default
+                         anymore (see the no-<parent> note above). -->
+                    <version>3.5.2</version>
                     <configuration>
                         <argLine>
                             -XX:+EnableDynamicAgentLoading
