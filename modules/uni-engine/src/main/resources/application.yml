@@ -33,6 +33,18 @@ uni:
       # ttl/3 by a live pod so a healthy room never loses its own lease mid-session.
       lease-ttl-seconds: ${ENGINE_REDIS_LEASE_TTL_SECONDS:20}
 
+    kafka:
+      # Task 18 (§9.3 Rủi ro 6): default OFF for the same reason redis.enabled is -- KafkaProducer
+      # construction itself doesn't block on a broker being reachable, but there is nothing to
+      # verify this against in this development environment (no broker), so it stays opt-in.
+      enabled: ${ENGINE_KAFKA_ENABLED:false}
+      bootstrap-servers: ${ENGINE_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+      topic: ${ENGINE_KAFKA_TOPIC:game.events.v1}
+      # Bounded queue capacity between RoomActor and the dedicated publisher worker thread
+      # (Task 18) -- deliberately small; this is a drop-under-overload safety valve, not a
+      # durability buffer (Redis Hot Snapshot / client RingBuffer are the durability story).
+      queue-capacity: ${ENGINE_KAFKA_QUEUE_CAPACITY:1000}
+
   room:
     # Ceiling on broadcast frequency, NOT a tick rate: a silent room emits zero packets
     # (ADR-4). Phase 1 implements COALESCE only; a definition asking for FIXED is rejected

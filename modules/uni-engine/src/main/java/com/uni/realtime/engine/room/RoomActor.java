@@ -1,6 +1,8 @@
 package com.uni.realtime.engine.room;
 
+import com.uni.realtime.engine.definition.MissedStepPolicy;
 import com.uni.realtime.engine.definition.TickMode;
+import com.uni.realtime.engine.events.GameEventPublisher;
 import com.uni.realtime.engine.metrics.EngineMetrics;
 import com.uni.realtime.engine.scoring.ScoreCalculator;
 import com.uni.realtime.protocol.GameMessage;
@@ -118,13 +120,62 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
             String roomId, Clock clock, ScoreCalculator scoreCalculator, EngineMetrics engineMetrics,
             TickMode tickMode, ActorRef<GameMessage> broadcastTarget,
             RoomSnapshotStore snapshotStore, long epoch, byte[] restoreFromSnapshot) {
+        return create(roomId, clock, scoreCalculator, engineMetrics, tickMode, broadcastTarget,
+                snapshotStore, epoch, restoreFromSnapshot, MissedStepPolicy.ZERO);
+    }
+
+    /**
+     * Task 17 (B4): the true master constructor, adding {@code missedStepPolicy} on top of
+     * Task 14's nine-arg overload above (which now just delegates here with
+     * {@link MissedStepPolicy#ZERO}) -- same additive-overload shape as Task 14 used for
+     * {@code snapshotStore}/{@code epoch}/{@code restoreFromSnapshot}, so every existing caller
+     * with no policy to offer keeps compiling unchanged.
+     *
+     * @param missedStepPolicy must be {@link MissedStepPolicy#ZERO} — same fail-fast shape as
+     *     {@code tickMode} above. {@link com.uni.realtime.engine.definition.DefinitionLoader}
+     *     already rejects {@code SKIP}/{@code ALLOW_LATE} at load time; failing fast here too
+     *     catches a caller that bypassed the loader. Not stored as a field: like {@code tickMode},
+     *     its only job in Phase 1 is this gate -- there is no late-join flow yet for a
+     *     non-{@code ZERO} policy to change the behavior of (see plan.md Task 17's "Chưa làm").
+     */
+    public static Behavior<Command> create(
+            String roomId, Clock clock, ScoreCalculator scoreCalculator, EngineMetrics engineMetrics,
+            TickMode tickMode, ActorRef<GameMessage> broadcastTarget,
+            RoomSnapshotStore snapshotStore, long epoch, byte[] restoreFromSnapshot,
+            MissedStepPolicy missedStepPolicy) {
+        return create(roomId, clock, scoreCalculator, engineMetrics, tickMode, broadcastTarget,
+                snapshotStore, epoch, restoreFromSnapshot, missedStepPolicy, null);
+    }
+
+    /**
+     * Task 18 (§9.3 Rủi ro 6): the true master constructor, adding {@code gameEventPublisher} on
+     * top of Task 17's ten-arg overload above -- same additive shape, so every existing caller
+     * with no publisher to offer keeps compiling unchanged.
+     *
+     * @param gameEventPublisher where {@code SubmitAnswer} outcomes are shipped for analytics/
+     *     audit (§4.3 step 5), or {@code null} to skip publishing entirely (Phase 1 default,
+     *     before wiring). Nullable rather than a {@code NoopGameEventPublisher} because
+     *     {@link GameEventPublisher} owns a real background thread -- a no-op instance would
+     *     still have to start and stop one for nothing.
+     */
+    public static Behavior<Command> create(
+            String roomId, Clock clock, ScoreCalculator scoreCalculator, EngineMetrics engineMetrics,
+            TickMode tickMode, ActorRef<GameMessage> broadcastTarget,
+            RoomSnapshotStore snapshotStore, long epoch, byte[] restoreFromSnapshot,
+            MissedStepPolicy missedStepPolicy, GameEventPublisher gameEventPublisher) {
         if (tickMode != TickMode.COALESCE) {
             throw new IllegalArgumentException(
                     "RoomActor only implements TickMode.COALESCE in Phase 1, got " + tickMode);
         }
+        // Prove-it (2026-09-07): temporarily disabling this guard turned exactly
+        // should_rejectNonZeroMissedStepPolicy_when_creatingRoomActor_because_onlyZeroIsImplemented red.
+        if (missedStepPolicy != MissedStepPolicy.ZERO) {
+            throw new IllegalArgumentException(
+                    "RoomActor only implements MissedStepPolicy.ZERO in Phase 1, got " + missedStepPolicy);
+        }
         return Behaviors.withTimers(timers -> Behaviors.setup(
                 context -> new RoomActor(context, timers, roomId, clock, scoreCalculator, engineMetrics,
-                        broadcastTarget, snapshotStore, epoch, restoreFromSnapshot)));
+                        broadcastTarget, snapshotStore, epoch, restoreFromSnapshot, gameEventPublisher)));
     }
 
     private final String roomId;
@@ -136,6 +187,7 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
     private final ActorRef<GameMessage> broadcastTarget;
     private final RoomSnapshotStore snapshotStore;
     private final long epoch;
+    private final GameEventPublisher gameEventPublisher;
 
     private boolean flushScheduled = false;
     private long lastFlushAtMs = 0;
@@ -143,7 +195,8 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
 
     private RoomActor(ActorContext<Command> context, TimerScheduler<Command> timers, String roomId, Clock clock,
             ScoreCalculator scoreCalculator, EngineMetrics engineMetrics, ActorRef<GameMessage> broadcastTarget,
-            RoomSnapshotStore snapshotStore, long epoch, byte[] restoreFromSnapshot) {
+            RoomSnapshotStore snapshotStore, long epoch, byte[] restoreFromSnapshot,
+            GameEventPublisher gameEventPublisher) {
         super(context);
         this.timers = timers;
         this.roomId = roomId;
@@ -155,6 +208,7 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
         this.engineMetrics = engineMetrics;
         this.broadcastTarget = broadcastTarget;
         this.snapshotStore = snapshotStore;
+        this.gameEventPublisher = gameEventPublisher;
         this.epoch = epoch;
     }
 
@@ -222,7 +276,26 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
                 command.questionId(), command.answerIds());
         command.replyTo().tell(ack);
         scheduleFlushIfDirty();
+        publishGameEvent(ack);
         return this;
+    }
+
+    /**
+     * Task 18 (§9.3 Rủi ro 6, §4.3 step 5): ships the {@code AnswerAck} itself as the event
+     * payload -- no separate {@code GameEvent} schema exists yet, and this is the exact record
+     * of a scored submission §4.3 describes pushing to Kafka, so reusing it avoids inventing a
+     * business decision this task isn't scoped to make. Partitioned by {@code roomId}, not
+     * {@code session_id} as §4.3/§7.6 name it -- {@code session_id} does not exist anywhere in
+     * this data model (only {@code room_id}/{@code student_id} do); revisit this key once a real
+     * session concept exists. {@code gameEventPublisher} is {@code null} until wired (Phase 1
+     * default), and {@link GameEventPublisher#publish} never blocks regardless (Task 18).
+     */
+    private void publishGameEvent(GameMessage ack) {
+        // Prove-it (2026-09-07): dropping the accepted check turned exactly
+        // should_notPublish_when_theAnswerIsRejected red -- confirms it's exercised.
+        if (gameEventPublisher != null && ack.getAnswerAck().getAccepted()) {
+            gameEventPublisher.publish(roomId, ack.toByteArray());
+        }
     }
 
     private Behavior<Command> onEndGame(EndGame command) {

@@ -16,10 +16,12 @@ import java.util.concurrent.CompletableFuture;
  * prevent, worse than not having {@code CommittedSeq} at all.
  *
  * <p>Shared by {@link RoomActor} and {@link RoomSupervisor} rather than duplicated so there is
- * exactly one no-op behavior to reason about.
+ * exactly one no-op behavior to reason about. Public (not package-private) since Task 18's
+ * wiring in {@code EngineNetworkLifecycle} (a different package) needs a real
+ * {@link RoomSnapshotStore} to pass even when only Kafka, not Redis, is enabled.
  */
-final class NoopRoomSnapshotStore implements RoomSnapshotStore {
-    static final NoopRoomSnapshotStore INSTANCE = new NoopRoomSnapshotStore();
+public final class NoopRoomSnapshotStore implements RoomSnapshotStore {
+    public static final NoopRoomSnapshotStore INSTANCE = new NoopRoomSnapshotStore();
 
     private NoopRoomSnapshotStore() {
     }

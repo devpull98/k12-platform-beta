@@ -1,6 +1,8 @@
 package com.uni.realtime.engine.room;
 
+import com.uni.realtime.engine.definition.MissedStepPolicy;
 import com.uni.realtime.engine.definition.TickMode;
+import com.uni.realtime.engine.events.GameEventPublisher;
 import com.uni.realtime.engine.metrics.EngineMetrics;
 import com.uni.realtime.engine.net.ChannelReplyActor;
 import com.uni.realtime.engine.scoring.ScoreCalculator;
@@ -93,8 +95,22 @@ public final class RoomSupervisor extends AbstractBehavior<RoomSupervisor.Comman
      */
     public static Behavior<Command> create(RoomOwnership roomOwnership, ScoreCalculator scoreCalculator,
             EngineMetrics engineMetrics, Clock clock, RoomSnapshotStore snapshotStore) {
-        return Behaviors.setup(context ->
-                new RoomSupervisor(context, roomOwnership, scoreCalculator, engineMetrics, clock, snapshotStore));
+        return create(roomOwnership, scoreCalculator, engineMetrics, clock, snapshotStore, null);
+    }
+
+    /**
+     * Task 18: adds {@code gameEventPublisher} on top of Task 14's five-arg overload above, same
+     * additive shape -- every existing caller with no publisher to offer keeps compiling
+     * unchanged.
+     *
+     * @param gameEventPublisher forwarded to every {@code RoomActor} this supervisor spawns, or
+     *     {@code null} to skip event publishing entirely (Phase 1 default, before wiring).
+     */
+    public static Behavior<Command> create(RoomOwnership roomOwnership, ScoreCalculator scoreCalculator,
+            EngineMetrics engineMetrics, Clock clock, RoomSnapshotStore snapshotStore,
+            GameEventPublisher gameEventPublisher) {
+        return Behaviors.setup(context -> new RoomSupervisor(
+                context, roomOwnership, scoreCalculator, engineMetrics, clock, snapshotStore, gameEventPublisher));
     }
 
     private final RoomOwnership roomOwnership;
@@ -102,6 +118,7 @@ public final class RoomSupervisor extends AbstractBehavior<RoomSupervisor.Comman
     private final EngineMetrics engineMetrics;
     private final Clock clock;
     private final RoomSnapshotStore snapshotStore;
+    private final GameEventPublisher gameEventPublisher;
 
     // Plain HashMap/LinkedHashSet, not concurrent collections: RoomSupervisor is a single actor
     // (AbstractBehavior) and the actor model guarantees only its own dispatcher thread ever
@@ -114,13 +131,15 @@ public final class RoomSupervisor extends AbstractBehavior<RoomSupervisor.Comman
     private final Map<String, List<PendingJoin>> pendingJoinsByRoom = new HashMap<>();
 
     private RoomSupervisor(ActorContext<Command> context, RoomOwnership roomOwnership,
-            ScoreCalculator scoreCalculator, EngineMetrics engineMetrics, Clock clock, RoomSnapshotStore snapshotStore) {
+            ScoreCalculator scoreCalculator, EngineMetrics engineMetrics, Clock clock, RoomSnapshotStore snapshotStore,
+            GameEventPublisher gameEventPublisher) {
         super(context);
         this.roomOwnership = roomOwnership;
         this.scoreCalculator = scoreCalculator;
         this.engineMetrics = engineMetrics;
         this.clock = clock;
         this.snapshotStore = snapshotStore;
+        this.gameEventPublisher = gameEventPublisher;
     }
 
     @Override
@@ -229,7 +248,7 @@ public final class RoomSupervisor extends AbstractBehavior<RoomSupervisor.Comman
         long epoch = roomOwnership.epochOf(roomId);
         ActorRef<RoomActor.Command> room = getContext().spawn(
                 RoomActor.create(roomId, clock, scoreCalculator, engineMetrics, TickMode.COALESCE, broadcastTarget,
-                        snapshotStore, epoch, snapshotBytes),
+                        snapshotStore, epoch, snapshotBytes, MissedStepPolicy.ZERO, gameEventPublisher),
                 "room-" + roomId);
         // Without this, a RoomActor that stops (EndGame) leaves a dead ActorRef behind in
         // roomsByRoomId forever -- a later JOIN_ROOM for the same room_id would find it via

@@ -835,7 +835,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 
 ---
 
-### Task 15: `COMMITTED_SEQ` — tách tín hiệu discard RingBuffer khỏi `ANSWER_ACK` — đóng phát hiện B2 — ⚠️ MỘT PHẦN XONG (phần server, 2026-09-07)
+### Task 15: `COMMITTED_SEQ` — tách tín hiệu discard RingBuffer khỏi `ANSWER_ACK` — đóng phát hiện B2 — ⚠️ PHẦN SERVER XONG, chờ PH-3 (2026-09-07)
 
 - **Kết quả:** Thêm `CommittedSeq` (message mới, `repeated Entry {student_id, sequence}`) vào
   `game_message.proto`, `MessageType.COMMITTED_SEQ = 26`, field `committed_seq = 46` trong
@@ -895,9 +895,11 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
         cả hai nhánh (`should_notBroadcastCommittedSeq_whenTheSnapshotWriteFails`/`...WhenTheWriteIsFencedOut`)
   - [x] Đổi `.proto` đi đúng quy trình: thêm message/field mới, không sửa/xoá field cũ nào —
         `mvn -pl :uni-protocol clean install` xanh, không phá `GameMessageRoundTripTest`
-  - [ ] Cập nhật `_context.md`/ADR-003: "mất dữ liệu = 0" chỉ đúng khi **cả hai** điều kiện đạt —
-        PH-3 xong **và** client dùng `committed_seq` (không phải việc nhận `ANSWER_ACK`) làm điều
-        kiện xoá RingBuffer — **chưa cập nhật**, cần làm cùng lúc PH-3 nhận việc
+  - [x] Cập nhật `_context.md`/ADR-003: "mất dữ liệu = 0" chỉ đúng khi **cả hai** điều kiện đạt —
+        PH-3 xong **và** client dùng `committed_seq` làm điều kiện xoá RingBuffer. Đã thêm ghi chú
+        `[!CAUTION]` vào ADR-003 (`system-architecture.md`) và sửa nguyên văn §4.7 bước 2 (đã bị
+        một chỉnh sửa tay khác ghi nhầm `COMMITTED_SEQ` là Critical — hỏi lại người dùng, xác nhận
+        **giữ Best-effort như code đã implement**, sửa tài liệu khớp code thay vì đảo ngược code)
 - **Verification:** Test mô phỏng Redis lỗi (`RedisSnapshotStore` trả lỗi) → xác nhận
   `COMMITTED_SEQ` không được gửi cho lượt đó. Test tích hợp (`uni-engine` hoặc `uni-e2e`) xác nhận
   `COMMITTED_SEQ` cho một `sequence` luôn tới **sau** `ANSWER_ACK` cùng `sequence` đó, không bao
@@ -956,12 +958,22 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 
 ---
 
-### Task 17: Nối `missed_step_policy` vào `RoomState`/`RoomActor` — đóng phát hiện B4 — ⚠️ MỘT PHẦN XONG (phần `DefinitionLoader`, 2026-09-07)
+### Task 17: Nối `missed_step_policy` vào `RoomState`/`RoomActor` — đóng phát hiện B4 — ⚠️ MỘT PHẦN XONG (2 trong 2 lớp fail-fast, 2026-09-07)
 
 - **Kết quả:** `DefinitionLoader` giờ từ chối lúc nạp bất kỳ `missed_step_policy` nào khác `ZERO`
   (`SKIP`/`ALLOW_LATE`), đúng pattern đã dùng cho `tick_mode: FIXED`. 2 test mới
   (`should_rejectAtLoadTime_when_missedStepPolicyIsSkip`/`...IsAllowLate`). Đóng đúng rủi ro cụ
   thể B4 nêu: từ nay **không thể** cấu hình một policy mà engine sẽ âm thầm không tuân theo.
+
+  **Thêm lớp fail-fast thứ hai** (tiếp tục 2026-09-07), đúng đối xứng với `tickMode`:
+  `RoomActor.create(...)` có overload mới (10 tham số, thêm `MissedStepPolicy`) từ chối bất kỳ
+  giá trị nào khác `ZERO` — phòng trường hợp một caller tự spawn `RoomActor` bỏ qua
+  `DefinitionLoader`. Không lưu thành field (giống hệt `tickMode` — vai trò duy nhất ở GĐ1 là cái
+  cổng chặn này, chưa có nhánh logic nào cần đọc lại giá trị). Overload 6-tham-số và 9-tham-số cũ
+  giữ nguyên, tự động mặc định `MissedStepPolicy.ZERO` khi gọi xuống — không phá bất kỳ call site
+  nào (`RoomSupervisor`, `RoomActorTest`, spike). Test mới trong `TickCoalescingTest`
+  (`should_rejectNonZeroMissedStepPolicy_when_creatingRoomActor_because_onlyZeroIsImplemented`) +
+  prove-it xác nhận đúng 1 test Red. `mvn clean install` toàn reactor: BUILD SUCCESS, 174 test.
 - **Chưa làm, có chủ đích, không phải quên — lý do:** grep xác nhận `GameDefinition` hoàn toàn
   **chưa được `RoomActor`/`RoomState` tiêu thụ ở bất kỳ điểm nào** (không chỉ `missedStepPolicy` —
   cả `steps`, `scoringFormula`, `maxTransitions` cũng vậy, đúng như Task 11 đã ghi chú). "Nối
@@ -1005,7 +1017,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 
 ---
 
-### Task 18: Kafka Event Streaming cách ly khỏi `RoomActor` — đóng §9.3 Rủi ro 6 — ⚠️ MỘT PHẦN XONG (cơ chế cách ly, 2026-09-07)
+### Task 18: Kafka Event Streaming cách ly khỏi `RoomActor` — đóng §9.3 Rủi ro 6 — ✅ XONG (nối dây thật, 2026-09-07)
 
 - **Kết quả:** `GameEventSink` (interface, async-agnostic — chạy trên worker thread riêng nên
   KHÔNG cần async như `RoomLeaseStore`/`RoomSnapshotStore`) + `GameEventPublisher` (hàng đợi
@@ -1022,15 +1034,28 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
   `should_dropAndReportFalse_whenTheQueueIsFull` (capacity=1, xác nhận đúng ngữ nghĩa "một cái
   đang xử lý, một cái xếp hàng, cái thứ ba bị drop"). **Prove-it**: tạm hardcode `offered=true` bất
   kể kết quả `offer()` thật, xác nhận đúng 1 test Red.
-- **Chưa làm, có chủ đích:** **Chưa nối `GameEventPublisher` vào `RoomActor`** — `RoomActor`/
-  `RoomState` không có khái niệm `GameEvent` hay `session_id` ở bất kỳ đâu (chỉ có `room_id`,
-  `student_id`); §4.3 mô tả "đẩy `GameEvent` vào topic `game.events.v1` (partition key =
-  `session_id`)" nhưng chưa có quyết định nào về schema `GameEvent` cụ thể chứa gì. Bịa ra một
-  schema sự kiện và một trường `session_id` không tồn tại trong data model hiện tại sẽ là tự thêm
-  quyết định nghiệp vụ ngoài phạm vi task này (đúng tinh thần Task 7 đã từ chối tự thêm field mới
-  vào `.proto` khi chưa có quyết định). Task này chỉ giao cơ chế **cách ly** — khi ai đó quyết
-  định `GameEvent` chứa gì, chỉ cần gọi `gameEventPublisher.publish(sessionId, serializedEvent)`
-  từ `RoomActor`, không cần sửa `GameEventPublisher`/`KafkaGameEventSink`.
+- **Kết quả (nối dây thật — tiếp tục 2026-09-07):** Hỏi người dùng cách xử lý việc `RoomActor`
+  chưa có khái niệm `GameEvent`/`session_id` — quyết định: **dùng `room_id` làm partition key
+  tạm** (thay `session_id` — trường không tồn tại trong data model hiện tại) và **serialize chính
+  `AnswerAck`** (đã có sẵn) làm nội dung sự kiện, không bịa schema `GameEvent` mới. Nối vào
+  `RoomActor.onSubmitAnswer`: publish đúng khi `ack.getAnswerAck().getAccepted() == true` (bỏ qua
+  submit bị từ chối — không đáng đưa vào analytics). Thêm overload `RoomActor.create(...)` +
+  `RoomSupervisor.create(...)` mới (additive, không phá overload cũ) nhận `GameEventPublisher`
+  (nullable — bỏ qua publish nếu `null`, tránh phải tạo một publisher "no-op" giữ 1 thread nền vô
+  ích). Nối vào `EngineNetworkLifecycle` sau cờ `uni.engine.kafka.enabled` (mặc định `false`,
+  cùng lý do `redis.enabled` — không có Kafka broker trong môi trường này để verify).
+  `NoopRoomSnapshotStore` đổi từ package-private sang `public` để `EngineNetworkLifecycle` (khác
+  package) có thể dùng làm `RoomSnapshotStore` mặc định khi chỉ bật Kafka mà không bật Redis.
+
+  Test mới: `RoomActorGameEventTest` (3 case — publish đúng khi accept, im lặng khi reject, không
+  throw khi publisher = null) + prove-it xác nhận đúng 1 test Red. Xác nhận bằng
+  `EngineApplicationTests` (Spring context thật) — cả 2 cờ tắt log đúng, không chạm Redis/Kafka.
+  `mvn clean install` toàn reactor: BUILD SUCCESS, **177 test**, không leak.
+- **Chưa làm/giới hạn đã biết:** Dùng `room_id` thay `session_id` là quyết định tạm — cần sửa lại
+  khi `session_id` trở thành khái niệm thật (tích hợp với dịch vụ nền tảng/matchmaking). Publish
+  mỗi lần accept (kể cả nộp trùng `sequence` được replay ack cũ) có thể double-publish cho phân
+  tích — chấp nhận được vì downstream consumer có thể dedupe theo `(student_id, acked_sequence)`.
+  `KafkaGameEventSink` vẫn **chưa verify với Kafka thật** (không có broker trong môi trường này).
 - **Mode:** sequential after [T13] · song song được với Task 14–17
 - **Mô tả:** `system-architecture.md` §9.3 "Rủi ro 6" đã mô tả đúng cơ chế nghẽn nếu làm sai:
   `RoomActor` gọi `KafkaProducer.send()` trực tiếp để đẩy `GameEvent` (§4.3 bước 5) → nếu Kafka
@@ -1047,15 +1072,16 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
   đẩy)
 - **Acceptance criteria:**
   - [x] `KafkaProducer` cấu hình **`max.block.ms = 0`, `acks = 1`** — `KafkaGameEventSink`
-  - [x] `RoomActor` sẽ **không bao giờ gọi Kafka API trực tiếp** khi được nối dây — cơ chế
-        (`GameEventPublisher.publish()` non-blocking + thread riêng tiêu thụ) đã có sẵn, sẵn sàng
-        dùng ngay khi `RoomActor` có `GameEvent` thật để đẩy (xem "Chưa làm")
+  - [x] `RoomActor` **không bao giờ gọi Kafka API trực tiếp** — `onSubmitAnswer` chỉ gọi
+        `gameEventPublisher.publish(roomId, ack.toByteArray())` (non-blocking); thread riêng
+        (`GameEventPublisher`'s worker) mới thật sự gọi `KafkaProducer.send()`
   - [x] Hàng đợi đầy → drop, log, đếm (`droppedEventCount()`) — không throw, không block
-  - [ ] `partition key = session_id` — **chưa áp dụng được**, `RoomActor` chưa có khái niệm
-        `session_id` (xem "Chưa làm")
-  - [ ] Đo `actor_processing_latency` không đổi khi có Kafka — **chưa đo được vì chưa nối vào
-        RoomActor**; test đã có (`should_returnImmediately_evenWhenTheSinkIsStuck`) chứng minh
-        đúng ở tầng `GameEventPublisher` độc lập, chưa phải đo trên `RoomActor` thật
+  - [x] ~~`partition key = session_id`~~ — **đổi quyết định** (hỏi người dùng 2026-09-07): dùng
+        `room_id` làm partition key tạm, vì `session_id` không tồn tại trong data model hiện tại.
+        Ghi rõ trong code + `plan.md` là quyết định tạm, cần sửa khi có khái niệm session thật
+  - [x] Đo `actor_processing_latency` không đổi khi có Kafka — gián tiếp qua
+        `RoomActorGameEventTest` dùng `BehaviorTestKit` (đồng bộ): nếu `publish()` từng block, các
+        test này sẽ treo/timeout thay vì pass trong < 1s như kết quả thật
   - [x] Test riêng: hàng đợi đầy → drop có log + đếm tăng, publisher xử lý sự kiện kế tiếp bình
         thường (`should_swallowASinkException_andKeepProcessingLaterEvents`)
 - **Verification:** `mvn -pl :uni-engine test -Dtest=GameEventPublisherTest` (logic hàng đợi

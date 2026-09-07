@@ -345,7 +345,11 @@ Thay vì phát định kỳ 200ms cố định (sinh ra 270.000 pkt/s vô ích k
 ### 4.7 Kết nối lại (Reconnect Flow)
 **Nguồn khôi phục đúng đắn là client, không phải snapshot:**
 1. Client duy trì RingBuffer N=10 submission gần nhất kèm sequence.
-2. **Chỉ xoá submission khỏi RingBuffer khi đã nhận tín hiệu bền vững `COMMITTED_SEQ` / `ANSWER_COMMITTED` (Critical)** — nhận `ANSWER_ACK` chưa được xoá.
+2. **Chỉ xoá submission khỏi RingBuffer khi đã nhận tín hiệu bền vững `COMMITTED_SEQ`** (Best-effort,
+   §5.4 — cố tình KHÔNG phải Critical: mất một gói tự lành ở lần ghi Hot Snapshot kế tiếp, gói đó
+   luôn mang `sequence` mới hơn nên bao trùm cả phần trước đó; đóng kết nối học sinh chỉ vì một tín
+   hiệu dọn RingBuffer nội bộ bị nghẽn tạm thời là phản tác dụng — xem `plan.md` Task 15) —
+   nhận `ANSWER_ACK` (Critical, tức thời) chỉ là xác nhận lạc quan, chưa được xoá.
 3. Khi mất mạng và kết nối lại: Client gửi `RESYNC{last_acked_seq, pending[]}`.
 4. `RoomActor` nhận lệnh, kiểm tra `pending[]` qua `LastSeenSequenceTable` để loại bỏ các bản ghi trùng lặp trong $O(1)$.
 5. `RoomActor` trả về full snapshot và **gia hạn deadline câu hỏi** bù đúng bằng thời gian gián đoạn.
@@ -796,6 +800,18 @@ không được tham gia recovery**.
 **Rủi ro đang mở:** Hợp đồng client **chưa tồn tại và chưa ai được giao** (PH-3,
 [§7.4](#74-phụ-thuộc-ngoài-phạm-vi-blockers)) → mục tiêu của ADR này hiện **không có cơ sở** dù server làm
 đúng 100%. Không công bố SLA trước khi client ship phần đó.
+
+> [!CAUTION]
+> **Cập nhật 2026-09-07 (Task 15 / phát hiện B2):** review kiến trúc phát hiện thêm một khoảng
+> trống ở phía **server**, độc lập với PH-3: `ANSWER_ACK` gửi tức thời (hot path), còn Hot
+> Snapshot ghi Redis là async và luôn xảy ra **sau** — nếu client xoá RingBuffer ngay khi nhận
+> `ANSWER_ACK` (như §4.7 mô tả), một pod crash đúng lúc giữa hai mốc đó làm mất câu trả lời đã
+> ACK nhưng chưa persist, **kể cả khi PH-3 hoàn thành 100%**. Đã thêm message `CommittedSeq`
+> (Task 15, gửi sau khi Redis xác nhận ghi — xem `plan.md`) làm tín hiệu discard thật, tách khỏi
+> `ANSWER_ACK`. **"Mất dữ liệu = 0" chỉ đúng khi CẢ HAI điều kiện đạt: PH-3 xong VÀ client dùng
+> `committed_seq` (không phải việc nhận `ANSWER_ACK`) làm điều kiện xoá RingBuffer** — nếu PH-3
+> triển khai theo đúng nguyên văn §4.7 hiện tại (xoá khi nhận ACK) mà không cập nhật theo
+> `CommittedSeq`, lỗ hổng này vẫn còn nguyên dù client đã ship xong.
 
 ---
 

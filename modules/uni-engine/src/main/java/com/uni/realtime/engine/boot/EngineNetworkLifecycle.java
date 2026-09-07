@@ -1,10 +1,13 @@
 package com.uni.realtime.engine.boot;
 
+import com.uni.realtime.engine.events.GameEventPublisher;
 import com.uni.realtime.engine.metrics.EngineMetrics;
 import com.uni.realtime.engine.net.FrameChannelServer;
+import com.uni.realtime.engine.persistence.KafkaGameEventSink;
 import com.uni.realtime.engine.persistence.RedisRoomLeaseStore;
 import com.uni.realtime.engine.persistence.RedisSnapshotStore;
 import com.uni.realtime.engine.room.ModuloRoomOwnership;
+import com.uni.realtime.engine.room.NoopRoomSnapshotStore;
 import com.uni.realtime.engine.room.RedisLeaseRoomOwnership;
 import com.uni.realtime.engine.room.RoomOwnership;
 import com.uni.realtime.engine.room.RoomSnapshotStore;
@@ -43,6 +46,13 @@ import java.util.stream.IntStream;
  * {@link RedisRoomLeaseStore} nor {@link RedisSnapshotStore} has run against a real Redis
  * instance -- see their javadoc. Flip it only after that verification (plan.md Task 14's
  * remaining "chưa làm"), never as a side effect of this class compiling.
+ *
+ * <p>Task 18 (2026-09-07): {@code uni.engine.kafka.enabled} (default {@code false}, same
+ * reasoning as {@code redis.enabled} -- no broker in this development environment) wires a
+ * {@link GameEventPublisher} backed by {@link KafkaGameEventSink} and forwards it to every
+ * {@code RoomActor} {@link RoomSupervisor} spawns, which ships each accepted
+ * {@code SubmitAnswer}'s {@code AnswerAck}, partitioned by {@code room_id} (a documented stand-in
+ * for {@code session_id} -- see {@code RoomActor.publishGameEvent}'s javadoc).
  */
 @Component
 public final class EngineNetworkLifecycle implements ApplicationRunner, DisposableBean {
@@ -56,6 +66,10 @@ public final class EngineNetworkLifecycle implements ApplicationRunner, Disposab
     private final boolean redisEnabled;
     private final String redisUri;
     private final long leaseTtlSeconds;
+    private final boolean kafkaEnabled;
+    private final String kafkaBootstrapServers;
+    private final String kafkaTopic;
+    private final int kafkaQueueCapacity;
 
     private ActorSystem<RoomSupervisor.Command> system;
     private FrameChannelServer frameChannelServer;
@@ -63,6 +77,7 @@ public final class EngineNetworkLifecycle implements ApplicationRunner, Disposab
     private StatefulRedisConnection<String, String> leaseConnection;
     private StatefulRedisConnection<String, byte[]> snapshotConnection;
     private ScheduledExecutorService leaseRenewalScheduler;
+    private GameEventPublisher gameEventPublisher;
 
     public EngineNetworkLifecycle(EngineMetrics engineMetrics,
             @Value("${uni.engine.pod-id}") String podId,
@@ -70,7 +85,11 @@ public final class EngineNetworkLifecycle implements ApplicationRunner, Disposab
             @Value("${uni.engine.frame-port}") int framePort,
             @Value("${uni.engine.redis.enabled}") boolean redisEnabled,
             @Value("${uni.engine.redis.uri}") String redisUri,
-            @Value("${uni.engine.redis.lease-ttl-seconds}") long leaseTtlSeconds) {
+            @Value("${uni.engine.redis.lease-ttl-seconds}") long leaseTtlSeconds,
+            @Value("${uni.engine.kafka.enabled}") boolean kafkaEnabled,
+            @Value("${uni.engine.kafka.bootstrap-servers}") String kafkaBootstrapServers,
+            @Value("${uni.engine.kafka.topic}") String kafkaTopic,
+            @Value("${uni.engine.kafka.queue-capacity}") int kafkaQueueCapacity) {
         this.engineMetrics = engineMetrics;
         this.podId = podId;
         this.podCount = podCount;
@@ -78,6 +97,10 @@ public final class EngineNetworkLifecycle implements ApplicationRunner, Disposab
         this.redisEnabled = redisEnabled;
         this.redisUri = redisUri;
         this.leaseTtlSeconds = leaseTtlSeconds;
+        this.kafkaEnabled = kafkaEnabled;
+        this.kafkaBootstrapServers = kafkaBootstrapServers;
+        this.kafkaTopic = kafkaTopic;
+        this.kafkaQueueCapacity = kafkaQueueCapacity;
     }
 
     @Override
@@ -90,7 +113,7 @@ public final class EngineNetworkLifecycle implements ApplicationRunner, Disposab
         ModuloRoomOwnership modulo = new ModuloRoomOwnership(podId, podIds);
 
         RoomOwnership roomOwnership = modulo;
-        RoomSnapshotStore snapshotStore = null;
+        RoomSnapshotStore snapshotStore = NoopRoomSnapshotStore.INSTANCE;
 
         if (redisEnabled) {
             redisClient = RedisClient.create(redisUri);
@@ -120,9 +143,20 @@ public final class EngineNetworkLifecycle implements ApplicationRunner, Disposab
             log.info("pod {}: uni.engine.redis.enabled=false -- ModuloRoomOwnership, no Hot Snapshot (Phase 1 default)", podId);
         }
 
-        system = ActorSystem.create(snapshotStore == null
-                        ? RoomSupervisor.create(roomOwnership, FormulaScoreCalculator.binaryChoice(), engineMetrics, Clock.systemUTC())
-                        : RoomSupervisor.create(roomOwnership, FormulaScoreCalculator.binaryChoice(), engineMetrics, Clock.systemUTC(), snapshotStore),
+        if (kafkaEnabled) {
+            gameEventPublisher = new GameEventPublisher(
+                    new KafkaGameEventSink(kafkaBootstrapServers, kafkaTopic), kafkaQueueCapacity);
+            gameEventPublisher.start();
+            log.info("pod {}: Kafka event publishing ENABLED (topic={}, bootstrap-servers={}) -- "
+                            + "NOT verified against a real Kafka broker in development, see KafkaGameEventSink javadoc",
+                    podId, kafkaTopic, kafkaBootstrapServers);
+        } else {
+            log.info("pod {}: uni.engine.kafka.enabled=false -- SubmitAnswer outcomes are not published (Phase 1 default)", podId);
+        }
+
+        system = ActorSystem.create(
+                RoomSupervisor.create(roomOwnership, FormulaScoreCalculator.binaryChoice(), engineMetrics,
+                        Clock.systemUTC(), snapshotStore, gameEventPublisher),
                 "engine");
 
         frameChannelServer = new FrameChannelServer(framePort, roomOwnership,
@@ -134,6 +168,9 @@ public final class EngineNetworkLifecycle implements ApplicationRunner, Disposab
 
     @Override
     public void destroy() throws Exception {
+        if (gameEventPublisher != null) {
+            gameEventPublisher.close();
+        }
         if (leaseRenewalScheduler != null) {
             leaseRenewalScheduler.shutdownNow();
         }

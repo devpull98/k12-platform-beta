@@ -1,5 +1,6 @@
 package com.uni.realtime.engine.room;
 
+import com.uni.realtime.engine.definition.MissedStepPolicy;
 import com.uni.realtime.engine.definition.TickMode;
 import com.uni.realtime.engine.metrics.EngineMetrics;
 import com.uni.realtime.engine.scoring.ScoreCalculator;
@@ -70,6 +71,17 @@ class TickCoalescingTest {
     void should_rejectFixedTickMode_when_creatingRoomActor_because_onlyCoalesceIsImplemented() {
         assertThatThrownBy(() -> RoomActor.create("room-x", Clock.systemUTC(), fixedScoreCalculator(0),
                 new EngineMetrics(new SimpleMeterRegistry()), TickMode.FIXED, testKit.createTestProbe(GameMessage.class).getRef()))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void should_rejectNonZeroMissedStepPolicy_when_creatingRoomActor_because_onlyZeroIsImplemented() {
+        // Task 17 / B4: DefinitionLoader already rejects SKIP/ALLOW_LATE at load time -- this is
+        // the second fail-fast layer for a caller that bypassed the loader, same shape as tickMode.
+        assertThatThrownBy(() -> RoomActor.create("room-x", Clock.systemUTC(), fixedScoreCalculator(0),
+                new EngineMetrics(new SimpleMeterRegistry()), TickMode.COALESCE,
+                testKit.createTestProbe(GameMessage.class).getRef(),
+                NoopRoomSnapshotStore.INSTANCE, 0L, null, MissedStepPolicy.SKIP))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
