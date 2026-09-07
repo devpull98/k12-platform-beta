@@ -28,25 +28,25 @@ Chi tiết kỹ thuật đầy đủ: [system-architecture.md §9.2 Rủi ro 4](
 
 Trong khung giờ đó, **KHÔNG được**:
 
-1. Có bất kỳ `HorizontalPodAutoscaler` nào target Deployment `uni-engine`.
-2. Chạy `kubectl scale deployment uni-engine --replicas=<N khác>` thủ công.
+1. Có bất kỳ `HorizontalPodAutoscaler` nào target Deployment `uni-game-engine`.
+2. Chạy `kubectl scale deployment uni-game-engine --replicas=<N khác>` thủ công.
 3. Rolling update Engine pod theo cách đổi `ENGINE_POD_COUNT` hoặc thay đổi tập giá trị
    `ENGINE_POD_ID` đang chạy (một rolling update giữ nguyên cả hai giá trị này — ví dụ chỉ đổi
    image tag — KHÔNG nằm trong lệnh cấm này, vì `pod-count`/`pod-id` không đổi).
-4. Lên lịch bất kỳ pipeline auto-deploy/CI-CD nào có khả năng chạm tới Deployment `uni-engine`
+4. Lên lịch bất kỳ pipeline auto-deploy/CI-CD nào có khả năng chạm tới Deployment `uni-game-engine`
    trong khung giờ trên.
 
-`uni-gateway` **không** nằm trong lệnh cấm này — Gateway là stateless (§2.3), scale tự do không
+`uni-websocket-gateway` **không** nằm trong lệnh cấm này — Gateway là stateless (§2.3), scale tự do không
 ảnh hưởng tới `RoomOwnership`.
 
 ## Checklist DevOps — ký xác nhận trước khi mở ca thi đấu
 
-- [ ] Xác nhận **không có `HorizontalPodAutoscaler`** nào tồn tại cho Deployment `uni-engine`
-      (`kubectl get hpa -n <namespace>` — không thấy dòng nào target `uni-engine`).
+- [ ] Xác nhận **không có `HorizontalPodAutoscaler`** nào tồn tại cho Deployment `uni-game-engine`
+      (`kubectl get hpa -n <namespace>` — không thấy dòng nào target `uni-game-engine`).
 - [ ] Xác nhận `ENGINE_POD_COUNT` và danh sách `ENGINE_PODS` (phía Gateway) đã **fix cứng**,
       khớp đúng số Engine pod thực tế đang chạy.
 - [ ] Xác nhận **không có pipeline auto-deploy/rolling-update nào** được lên lịch chạy trong
-      khung giờ 18h50–21h30 cho Deployment `uni-engine`.
+      khung giờ 18h50–21h30 cho Deployment `uni-game-engine`.
 - [ ] Nếu cần tăng công suất trước ca thi (ví dụ 12 → 14 pod theo kịch bản
       `system-architecture.md` §6.1.4): thực hiện **trước** 18h50 ít nhất 20 phút, xác nhận đủ
       pod healthy, rồi mới khoá chức năng auto-scale — không scale giữa chừng ca thi.

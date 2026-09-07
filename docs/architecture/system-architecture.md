@@ -103,8 +103,8 @@ Hệ thống gồm 4 module Maven nhưng chỉ đóng gói thành **2 process**:
 |---|---|---|---|
 | `modules/uni-protocol` | Thư viện | Nhúng vào **cả hai** process | Chứa schema Protobuf duy nhất của kênh giao tiếp; cấm copy `.proto` sang module khác |
 | `modules/uni-observability` | Thư viện | Nhúng vào **cả hai** process | Plumbing metrics (Prometheus/OTLP), log JSON, Alertmanager relay |
-| `modules/uni-gateway` | **Process** | Gateway pod (×10–12) | Đón kết nối WebSocket, xác thực ticket, rate limit, định tuyến, fan-out |
-| `modules/uni-engine` | **Process** | Engine pod (×12–16) | Chạy RoomActor, xử lý FSM, chấm điểm, tick coalescing |
+| `modules/uni-websocket-gateway` | **Process** | Gateway pod (×10–12) | Đón kết nối WebSocket, xác thực ticket, rate limit, định tuyến, fan-out |
+| `modules/uni-game-engine` | **Process** | Engine pod (×12–16) | Chạy RoomActor, xử lý FSM, chấm điểm, tick coalescing |
 
 ### 2.2 Trách nhiệm từng tầng
 
@@ -478,8 +478,8 @@ Dựa trên số liệu đo đạc thực tế tại ca cao điểm (19:00 – 2
 
 | Tầng / Dịch vụ | Số Pod | Request (CPU / RAM) | Limit (CPU / RAM) | Ghi chú vận hành |
 |---|:---:|:---:|:---:|---|
-| **Gateway (`uni-gateway`)** | **4 – 5 Pods** | **1.5 CPU / 3 GiB** | **3.0 CPU / 6 GiB** | Peak Load Target: ~10.000–13.000 WS conns/pod (Tải thường 10k–20k CCU dùng 2–3 pods ~5k–6.5k WS/pod). |
-| **Engine (`uni-engine`)** | **6 – 8 Pods** | **1.5 CPU / 3 GiB** | **3.0 CPU / 6 GiB** | Gánh ~550–750 phòng/pod (~6.700–9.000 HS) ở tải đỉnh (*chỉ áp dụng sau Task 14*; trước Task 14 giữ 300–375 phòng/pod). **Cấm HPA**. |
+| **Gateway (`uni-websocket-gateway`)** | **4 – 5 Pods** | **1.5 CPU / 3 GiB** | **3.0 CPU / 6 GiB** | Peak Load Target: ~10.000–13.000 WS conns/pod (Tải thường 10k–20k CCU dùng 2–3 pods ~5k–6.5k WS/pod). |
+| **Engine (`uni-game-engine`)** | **6 – 8 Pods** | **1.5 CPU / 3 GiB** | **3.0 CPU / 6 GiB** | Gánh ~550–750 phòng/pod (~6.700–9.000 HS) ở tải đỉnh (*chỉ áp dụng sau Task 14*; trước Task 14 giữ 300–375 phòng/pod). **Cấm HPA**. |
 | **Valkey Cluster** | 3 shard + replica | Cluster | Cluster | Ticket SETNX, Hot Snapshot (<5KB) & Lease (`Task 14`). |
 | **PostgreSQL** | Multi-AZ | Primary-Replica | Primary-Replica | Lưu kết quả phiên sau khi FINISHED. |
 | **Kafka Cluster** | 3 broker | Cluster | Cluster | Async event log analytics (`game.events.v1`, `Task 18`). |
@@ -498,8 +498,8 @@ Bảng chi tiết quy tắc co giãn (Scaling Rules) khi chạy ở mức tải 
 | Thành phần / Tầng | Mức Tải Thường (10k – 20k CCU) | Mức Tải Đỉnh 3x (54.000 CCU) | Chi Tiết Hành Động Co Giãn (Scaling Action) |
 |---|:---:|:---:|---|
 | **Số phòng game (`room_id`)** | ~850 – 1.700 phòng | ~4.500 phòng | Tăng số phòng 12 người tương ứng theo lượng học sinh |
-| **Gateway (`uni-gateway`)** | **2 – 3 Pods** | **4 – 5 Pods** | **TĂNG +2 Pods** (Scheduled Scaling trước 18:50 hoặc HPA theo CPU >65%) |
-| **Engine (`uni-engine`)** | **3 – 4 Pods** | **6 – 8 Pods** | **TĂNG +3–4 Pods TRƯỚC 18:50** (Cấm auto-scale tự động; **CẤM scale khi chạy Modulo**) |
+| **Gateway (`uni-websocket-gateway`)** | **2 – 3 Pods** | **4 – 5 Pods** | **TĂNG +2 Pods** (Scheduled Scaling trước 18:50 hoặc HPA theo CPU >65%) |
+| **Engine (`uni-game-engine`)** | **3 – 4 Pods** | **6 – 8 Pods** | **TĂNG +3–4 Pods TRƯỚC 18:50** (Cấm auto-scale tự động; **CẤM scale khi chạy Modulo**) |
 | **Tổng Gateway Request** | 3.0–4.5 CPUs / 6–9 GiB | 6.0–7.5 CPUs / 12–15 GiB | Tự động mở rộng Quota K8s cho Gateway |
 | **Tổng Engine Request** | 4.5–6.0 CPUs / 9–12 GiB | 9.0–12.0 CPUs / 18–24 GiB | Mở rộng Quota K8s cho Engine trước ca thi đấu |
 | **Valkey Connection Pool** | 50 conns/pod | 150 conns/pod | **TĂNG max-connections pool** để xử lý bão ticket `SETNX` lúc 19:00 |
@@ -510,12 +510,12 @@ Bảng chi tiết quy tắc co giãn (Scaling Rules) khi chạy ở mức tải 
 > - **ĐẶC BIỆT NGHÊM CẤM:** Khi hệ thống vẫn đang sử dụng `ModuloRoomOwnership` (Phase 1), **CẤM TUYỆT ĐỐI** mọi thao tác scale Engine Pod (cả scale-up lẫn scale-down) trong ca thi đấu vì phép chia `room_id % N` sẽ bị xáo trộn làm vỡ room ownership toàn cụm. Việc scale Engine Pod **chỉ được phép thực hiện sau khi Task 14 (`LeaseBasedRoomOwnership`) đã triển khai chính thức và verify thành công**.
 
 * **Quy trình TĂNG TÀI NGUYÊN (Scale-Up) khi có tin báo thi đấu 3x CCU:**
-  1. **Bước 1 (18:30 - Trước ca thi 20 phút):** Thực hiện `kubectl scale deployment uni-engine --replicas=7` để khởi tạo sẵn 7 Engine Pods (chỉ áp dụng sau Task 14). Các Pods mới sẽ đăng ký danh sách vào `LeaseBasedRoomOwnership` sẵn sàng nhận phòng mới.
-  2. **Bước 2 (18:40 - Trước ca thi 10 phút):** Thực hiện `kubectl scale deployment uni-gateway --replicas=5` để sẵn sàng đón đợt bão kết nối WebSocket (Connection Storm).
+  1. **Bước 1 (18:30 - Trước ca thi 20 phút):** Thực hiện `kubectl scale deployment uni-game-engine --replicas=7` để khởi tạo sẵn 7 Engine Pods (chỉ áp dụng sau Task 14). Các Pods mới sẽ đăng ký danh sách vào `LeaseBasedRoomOwnership` sẵn sàng nhận phòng mới.
+  2. **Bước 2 (18:40 - Trước ca thi 10 phút):** Thực hiện `kubectl scale deployment uni-websocket-gateway --replicas=5` để sẵn sàng đón đợt bão kết nối WebSocket (Connection Storm).
   3. **Bước 3 (18:50 - Bắt đầu ca thi):** Khóa chức năng Auto-scaling của Engine (Task 19) để giữ nguyên topology 7 Pods ổn định suốt ca thi 18h50 - 21h30.
 * **Quy trình GIẢM TÀI NGUYÊN (Scale-Down) sau ca thi:**
   1. **Sau 21:30 (Khi ca thi kết thúc):** Kiểm tra số lượng kết nối CCU hạ xuống $< 10.000$.
-  2. Scale down `uni-gateway` về **2 Pods** và `uni-engine` về **3 Pods** để tiết kiệm tài nguyên Cloud ban đêm.
+  2. Scale down `uni-websocket-gateway` về **2 Pods** và `uni-game-engine` về **3 Pods** để tiết kiệm tài nguyên Cloud ban đêm.
 
 ---
 
@@ -1100,18 +1100,18 @@ Mục này trình bày ví dụ thực tế quy trình chuyển đổi tài li�
 
 | Yêu cầu PO (`PO_Require_Game...doc`) | Đặc tả Kỹ thuật Developer (Dev Specs) | Thành phần / Codebase Phụ trách |
 |---|---|---|
-| **Chế độ chơi (Game Modes):**<br>- `cooperative`: Tập thể (Đánh boss)<br>- `team`: Chia X nhóm thi đấu<br>- `individual`: Thi đấu cá nhân | Mở rộng `GameDefinition` (Task 11) chứa enum `game_mode` (`SOLO`, `COOPERATIVE`, `TEAM`, `INDIVIDUAL`). Khai báo `team_count` và `team_assignment` trong Data Model `RoomState`. | `modules/uni-engine/.../definition/GameDefinition.java`<br>`modules/uni-engine/.../room/RoomState.java` |
-| **Cơ chế Mechanic:**<br>- `progress_meter` (Thanh tiến trình)<br>- `progress_display_mode`: `simple_bar` / `staged_visual` | Cấu hình `progress_target` (đích tiến trình). Thêm mốc phần trăm (`progress_stages`) trong payload Protobuf `RoomStateSnapshot`. `RoomActor` tự tính `% = (câu đúng / progress_target) * 100`. | `modules/uni-protocol/.../game_message.proto`<br>`modules/uni-engine/.../room/RoomActor.java` |
-| **Điều kiện Thắng (`win_condition`):**<br>- `progress_completed`: Đạt 100%<br>- `first_to_finish`: Đội đầu tiên chạm 100%<br>- `most_points_when_time_up`: Điểm cao nhất khi hết giờ | Thêm `WinConditionEvaluator` vào `RoomState.evaluateStep()`. Khi thỏa mãn điều kiện, `RoomActor` chuyển FSM sang trạng thái `FINISHED` và dừng ván game. | `modules/uni-engine/.../room/RoomState.java`<br>`modules/uni-engine/.../scoring/FormulaScoreCalculator.java` |
-| **Tài nguyên dùng chung (`shared_resource`):**<br>- `time`: Trừ thời gian khi sai<br>- `lives`: Trừ số mạng của phòng | Thêm `shared_resource_type` và `penalty_value`. Khi nộp bài sai, `RoomState` trừ trực tiếp vào `step_deadline_at` hoặc `remaining_lives` của nhóm/phòng. | `modules/uni-engine/.../room/RoomState.java` |
-| **Tự động hiện nút "Vào chơi" (No Room Code):**<br>- Không cần link hay mã phòng.<br>- Lấy danh tính từ tài khoản Uniclass/CMS | Xác thực `TicketAuthHandler` tại Gateway qua JWT ticket một lần (`TicketAuthHandler.java`). Trích xuất `student_id`, `room_id`, `session_id` từ token claim. | `modules/uni-gateway/.../auth/TicketAuthHandler.java` |
-| **Tương thích Hệ thống Cũ (`lms-worker`):**<br>- Thảo luận nhóm, nộp bài tập nhóm, trao cúp thành tích | `GameEventPublisher` đẩy `GameEvent` bất đồng bộ sang Kafka topic `game.events.v1`. Các listener `lms-worker` (`ActiveGroupDiscussionListener`, `SubmitExerciseListener`) tiêu thụ sự kiện từ Kafka để trao cúp/lưu DB. | `modules/uni-engine/.../events/GameEventPublisher.java`<br>`vn.edupiaclass.lms.worker.listener.event.group_discussion.*` |
+| **Chế độ chơi (Game Modes):**<br>- `cooperative`: Tập thể (Đánh boss)<br>- `team`: Chia X nhóm thi đấu<br>- `individual`: Thi đấu cá nhân | Mở rộng `GameDefinition` (Task 11) chứa enum `game_mode` (`SOLO`, `COOPERATIVE`, `TEAM`, `INDIVIDUAL`). Khai báo `team_count` và `team_assignment` trong Data Model `RoomState`. | `modules/uni-game-engine/.../definition/GameDefinition.java`<br>`modules/uni-game-engine/.../room/RoomState.java` |
+| **Cơ chế Mechanic:**<br>- `progress_meter` (Thanh tiến trình)<br>- `progress_display_mode`: `simple_bar` / `staged_visual` | Cấu hình `progress_target` (đích tiến trình). Thêm mốc phần trăm (`progress_stages`) trong payload Protobuf `RoomStateSnapshot`. `RoomActor` tự tính `% = (câu đúng / progress_target) * 100`. | `modules/uni-protocol/.../game_message.proto`<br>`modules/uni-game-engine/.../room/RoomActor.java` |
+| **Điều kiện Thắng (`win_condition`):**<br>- `progress_completed`: Đạt 100%<br>- `first_to_finish`: Đội đầu tiên chạm 100%<br>- `most_points_when_time_up`: Điểm cao nhất khi hết giờ | Thêm `WinConditionEvaluator` vào `RoomState.evaluateStep()`. Khi thỏa mãn điều kiện, `RoomActor` chuyển FSM sang trạng thái `FINISHED` và dừng ván game. | `modules/uni-game-engine/.../room/RoomState.java`<br>`modules/uni-game-engine/.../scoring/FormulaScoreCalculator.java` |
+| **Tài nguyên dùng chung (`shared_resource`):**<br>- `time`: Trừ thời gian khi sai<br>- `lives`: Trừ số mạng của phòng | Thêm `shared_resource_type` và `penalty_value`. Khi nộp bài sai, `RoomState` trừ trực tiếp vào `step_deadline_at` hoặc `remaining_lives` của nhóm/phòng. | `modules/uni-game-engine/.../room/RoomState.java` |
+| **Tự động hiện nút "Vào chơi" (No Room Code):**<br>- Không cần link hay mã phòng.<br>- Lấy danh tính từ tài khoản Uniclass/CMS | Xác thực `TicketAuthHandler` tại Gateway qua JWT ticket một lần (`TicketAuthHandler.java`). Trích xuất `student_id`, `room_id`, `session_id` từ token claim. | `modules/uni-websocket-gateway/.../auth/TicketAuthHandler.java` |
+| **Tương thích Hệ thống Cũ (`lms-worker`):**<br>- Thảo luận nhóm, nộp bài tập nhóm, trao cúp thành tích | `GameEventPublisher` đẩy `GameEvent` bất đồng bộ sang Kafka topic `game.events.v1`. Các listener `lms-worker` (`ActiveGroupDiscussionListener`, `SubmitExerciseListener`) tiêu thụ sự kiện từ Kafka để trao cúp/lưu DB. | `modules/uni-game-engine/.../events/GameEventPublisher.java`<br>`vn.edupiaclass.lms.worker.listener.event.group_discussion.*` |
 
 ---
 
 ### 10.2 Kịch Bản Kiểm Thử Theo Phát Triển Bằng Hành Vi (BDD Scenarios)
 
-Dưới đây là 3 kịch bản BDD chuẩn (`Given - When - Then`) ánh xạ từ yêu cầu của PO để Dev viết Integration Test (`uni-e2e` / `uni-engine`):
+Dưới đây là 3 kịch bản BDD chuẩn (`Given - When - Then`) ánh xạ từ yêu cầu của PO để Dev viết Integration Test (`uni-e2e` / `uni-game-engine`):
 
 #### 🧪 Kịch bản BDD 1: Game Tập Thể — Đánh Boss Rồng Số Học (`cooperative` Mode)
 ```gherkin
@@ -1170,7 +1170,7 @@ Feature: Khôi phục kết nối và Chống nộp trùng dữ liệu
    ├─► 2. Viết BDD Scenarios (Given - When - Then)
    └─► 3. Ánh xạ vào Codebase hiện tại:
            ├── Protocol: Thêm field vào GameMessage / RoomStateSnapshot (uni-protocol)
-           ├── Engine FSM: Bổ sung WinCondition & Progress Calculator vào RoomState (uni-engine)
-           ├── Gateway: Giữ nguyên TicketAuthHandler & RouteCache (uni-gateway)
+           ├── Engine FSM: Bổ sung WinCondition & Progress Calculator vào RoomState (uni-game-engine)
+           ├── Gateway: Giữ nguyên TicketAuthHandler & RouteCache (uni-websocket-gateway)
            └─► Worker Integration: Đẩy Kafka Event sang lms-worker / SubmitExerciseListener
 ```

@@ -43,20 +43,20 @@ module: `docs/`, `observability/` (compose stack Grafana), `scripts/`.
 
 ```
 modules/
-  uni-protocol/        game_message.proto + code sinh ra. Cả hai service cùng phụ thuộc
-  uni-observability/   observability dùng chung: Prometheus/OTLP, log JSON, Kafka log
-                       appender, relay webhook Alertmanager
-  uni-gateway/         biên WebSocket: handshake, ticket auth, rate limit, fan-out,
-                       backpressure, định tuyến học được từ engine
-  uni-engine/          RoomActor FSM, chấm điểm, dedupe, tick coalescing, sở hữu phòng
+  uni-protocol/             game_message.proto + code sinh ra. Cả hai service cùng phụ thuộc
+  uni-observability/        observability dùng chung: Prometheus/OTLP, log JSON, Kafka log
+                             appender, relay webhook Alertmanager
+  uni-websocket-gateway/    biên WebSocket: handshake, ticket auth, rate limit, fan-out,
+                             backpressure, định tuyến học được từ engine
+  uni-game-engine/          RoomActor FSM, chấm điểm, dedupe, tick coalescing, sở hữu phòng
 docs/
 observability/         <- compose stack Grafana/Prometheus/Loki/Tempo
 scripts/
 pom.xml                <- aggregator
 ```
 
-Chỉ `uni-gateway` và `uni-engine` deploy được; hai module còn lại là thư viện.
-Chọn module bằng artifactId (`-pl :uni-engine`) chứ không bằng đường dẫn — lệnh chạy được
+Chỉ `uni-websocket-gateway` và `uni-game-engine` deploy được; hai module còn lại là thư viện.
+Chọn module bằng artifactId (`-pl :uni-game-engine`) chứ không bằng đường dẫn — lệnh chạy được
 từ root bất kể thư mục nằm đâu.
 
 ## Ports
@@ -78,8 +78,8 @@ từ root bất kể thư mục nằm đâu.
 ```bash
 mvn clean install                  # build + test toàn bộ
 
-mvn -pl :uni-gateway spring-boot:run    # terminal 1
-mvn -pl :uni-engine spring-boot:run     # terminal 2
+mvn -pl :uni-websocket-gateway spring-boot:run    # terminal 1
+mvn -pl :uni-game-engine spring-boot:run     # terminal 2
 
 cd observability && docker compose up -d   # terminal 3 (tuỳ chọn)
 ```
@@ -87,8 +87,8 @@ cd observability && docker compose up -d   # terminal 3 (tuỳ chọn)
 Chạy instance thứ hai để thấy route cache học `owner_pod_id` (§8.2):
 
 ```bash
-mvn -pl :uni-gateway spring-boot:run -Dspring-boot.run.arguments=--server.port=8081
-ENGINE_POD_ID=engine-1 ENGINE_FRAME_PORT=9101 mvn -pl :uni-engine spring-boot:run \
+mvn -pl :uni-websocket-gateway spring-boot:run -Dspring-boot.run.arguments=--server.port=8081
+ENGINE_POD_ID=engine-1 ENGINE_FRAME_PORT=9101 mvn -pl :uni-game-engine spring-boot:run \
   -Dspring-boot.run.arguments=--server.port=8091
 ```
 
@@ -104,7 +104,7 @@ qua `host.docker.internal`.
 ```bash
 mvn clean install                              # tất cả module + test
 mvn -pl :uni-protocol test                     # round-trip protobuf
-mvn -pl :uni-engine test -Dtest=RoomActorTest  # 1 test class
+mvn -pl :uni-game-engine test -Dtest=RoomActorTest  # 1 test class
 mvn -DskipTests package                        # build jar
 ```
 
@@ -117,7 +117,7 @@ Stack ở `observability/` chạy như một compose project riêng, không ph�
 Xem `observability/README.md`.
 
 Cả hai service pin `spring-boot:run` về root repo, nên log JSON ghi vào `logs/` ở root
-(`logs/uni-gateway.log`, `logs/uni-engine.log`) chứ không rơi vào `modules/`.
+(`logs/uni-websocket-gateway.log`, `logs/uni-game-engine.log`) chứ không rơi vào `modules/`.
 Promtail tail `logs/*.log` và promote `application` + `traceId` thành label để nối
 Loki ↔ Tempo.
 

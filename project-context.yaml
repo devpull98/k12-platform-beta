@@ -14,8 +14,8 @@ test_runner: junit5         # Maven Surefire; đã bật -Dio.netty.leakDetectio
 
 # --- Domain routing ---
 domains:
-  - gateway                 # modules/uni-gateway — biên WebSocket
-  - engine                  # modules/uni-engine  — RoomActor FSM
+  - gateway                 # modules/uni-websocket-gateway — biên WebSocket
+  - engine                  # modules/uni-game-engine  — RoomActor FSM
   - protocol                # modules/uni-protocol — game_message.proto (dùng chung 2 hop)
   - observability           # modules/uni-observability — Prometheus/OTLP/JSON log/alert relay
 

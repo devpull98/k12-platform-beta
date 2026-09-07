@@ -18,7 +18,7 @@ public class NotificationTestController {
     @GetMapping("/internal/test-alert/oom")
     public Map<String, Object> triggerOomAlert() {
         Map<String, Boolean> sent = notificationService.broadcast(new ContainerAlert(
-                "uni-gateway",
+                "uni-websocket-gateway",
                 "OOMKilled",
                 "Container Memory RSS (1.2GB) exceeded limit (1.0GB)",
                 137
@@ -29,7 +29,7 @@ public class NotificationTestController {
     @GetMapping("/internal/test-alert/down")
     public Map<String, Object> triggerDownAlert() {
         Map<String, Boolean> sent = notificationService.broadcast(new ContainerAlert(
-                "uni-engine",
+                "uni-game-engine",
                 "CrashLoopBackOff",
                 "Container failed health probe check 3 times consecutively",
                 1

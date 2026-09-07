@@ -48,7 +48,7 @@ Ví dụ: `should_closeChannel_when_payloadRoomIdMismatchesHandshake`
 ```
 mvn clean install                            # build + test toàn bộ
 mvn -pl :uni-protocol test                   # protobuf round-trip
-mvn -pl :uni-engine test -Dtest=RoomActorTest
+mvn -pl :uni-game-engine test -Dtest=RoomActorTest
 ```
-Chọn module bằng artifactId (`-pl :uni-engine`), không bằng path — chạy được từ repo root bất kể
+Chọn module bằng artifactId (`-pl :uni-game-engine`), không bằng path — chạy được từ repo root bất kể
 thư mục module nằm đâu.

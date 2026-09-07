@@ -20,7 +20,7 @@ wheel" gom lô ở tầng pod thay vì timer mỗi actor.
 
 ## Approach
 1. Viết harness thật (không mock): 1.000 actor Pekko typed rỗng
-   (`modules/uni-engine/src/test/java/.../spike/SchedulerCapacitySpike.java`), mỗi actor tự hẹn
+   (`modules/uni-game-engine/src/test/java/.../spike/SchedulerCapacitySpike.java`), mỗi actor tự hẹn
    **một single-shot timer** đúng cơ chế ADR-4 (không dùng `startTimerAtFixedRate`, vì nhịp cố
    định sẽ tự che giấu độ trôi thời gian mà spike cần đo).
 2. Nhịp khởi động jitter ngẫu nhiên trong `[0, 200ms)` để mô phỏng các phòng trở "dirty" không

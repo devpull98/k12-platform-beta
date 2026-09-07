@@ -22,12 +22,12 @@ Hệ thống `uni-realtime` Phase 1 đã hoàn thiện hạ tầng Core (WebSock
 
 | Yêu cầu PO (`PO_Require_Game...doc`) | Đặc tả Kỹ thuật Developer (Dev Specs) | Thành phần Codebase |
 |---|---|---|
-| **Chế độ chơi (Game Modes):**<br>- `cooperative`<br>- `team`<br>- `individual` | Enum `GameMode` (`SOLO`, `COOPERATIVE`, `TEAM`, `INDIVIDUAL`). Cấu hình `team_count` và `team_assignment` trong `RoomState`. | `modules/uni-protocol/.../game_message.proto`<br>`modules/uni-engine/.../definition/GameDefinition.java`<br>`modules/uni-engine/.../room/RoomState.java` |
-| **Mechanic `progress_meter`:**<br>- `simple_bar`<br>- `staged_visual` | Thêm `progress_target` (số câu đúng cần thiết) và `progress_stages` (mốc visual %). Broadcast delta `progress_percentage` và `stage_index` trong `RoomStateSnapshot`. | `modules/uni-protocol/.../game_message.proto`<br>`modules/uni-engine/.../room/RoomActor.java` |
-| **Điều kiện Thắng (`win_condition`):**<br>- `progress_completed`<br>- `first_to_finish`<br>- `most_points_when_time_up` | Modifiers trong `WinConditionEvaluator`. Khi điều kiện thỏa mãn, `RoomActor` đổi FSM sang `FINISHED` và dừng ván game. | `modules/uni-engine/.../scoring/WinConditionEvaluator.java` |
-| **Phạt tài nguyên chung (`shared_resource`):**<br>- `time`<br>- `lives` | Cấu hình `shared_resource_type` và `penalty_value`. Trả lời sai trừ trực tiếp `step_deadline_at` hoặc `remaining_lives`. | `modules/uni-engine/.../room/RoomState.java` |
-| **Gõ nháp chung nhóm (`UPDATE_DRAFT`):** | Event `UPDATE_DRAFT` với `team_id`. Client debounce 150ms. Engine chỉ broadcast cho 3 thành viên cùng nhóm. | `modules/uni-engine/.../room/RoomActor.java` |
-| **Tương thích `lms-worker`:** | Đẩy `TeamSubmitExerciseEvent`, `GroupDiscussionEvent`, `VoteGroupNameEvent` sang Kafka topic `game.events.v1`. | `modules/uni-engine/.../events/GameEventPublisher.java` |
+| **Chế độ chơi (Game Modes):**<br>- `cooperative`<br>- `team`<br>- `individual` | Enum `GameMode` (`SOLO`, `COOPERATIVE`, `TEAM`, `INDIVIDUAL`). Cấu hình `team_count` và `team_assignment` trong `RoomState`. | `modules/uni-protocol/.../game_message.proto`<br>`modules/uni-game-engine/.../definition/GameDefinition.java`<br>`modules/uni-game-engine/.../room/RoomState.java` |
+| **Mechanic `progress_meter`:**<br>- `simple_bar`<br>- `staged_visual` | Thêm `progress_target` (số câu đúng cần thiết) và `progress_stages` (mốc visual %). Broadcast delta `progress_percentage` và `stage_index` trong `RoomStateSnapshot`. | `modules/uni-protocol/.../game_message.proto`<br>`modules/uni-game-engine/.../room/RoomActor.java` |
+| **Điều kiện Thắng (`win_condition`):**<br>- `progress_completed`<br>- `first_to_finish`<br>- `most_points_when_time_up` | Modifiers trong `WinConditionEvaluator`. Khi điều kiện thỏa mãn, `RoomActor` đổi FSM sang `FINISHED` và dừng ván game. | `modules/uni-game-engine/.../scoring/WinConditionEvaluator.java` |
+| **Phạt tài nguyên chung (`shared_resource`):**<br>- `time`<br>- `lives` | Cấu hình `shared_resource_type` và `penalty_value`. Trả lời sai trừ trực tiếp `step_deadline_at` hoặc `remaining_lives`. | `modules/uni-game-engine/.../room/RoomState.java` |
+| **Gõ nháp chung nhóm (`UPDATE_DRAFT`):** | Event `UPDATE_DRAFT` với `team_id`. Client debounce 150ms. Engine chỉ broadcast cho 3 thành viên cùng nhóm. | `modules/uni-game-engine/.../room/RoomActor.java` |
+| **Tương thích `lms-worker`:** | Đẩy `TeamSubmitExerciseEvent`, `GroupDiscussionEvent`, `VoteGroupNameEvent` sang Kafka topic `game.events.v1`. | `modules/uni-game-engine/.../events/GameEventPublisher.java` |
 
 ---
 

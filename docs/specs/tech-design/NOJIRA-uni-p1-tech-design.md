@@ -180,9 +180,9 @@ trên:
 
 | Hợp đồng | Module / file | Task |
 |---|---|---|
-| G1 ticket | `modules/uni-gateway/.../auth/TicketAuthHandler.java` | T6 |
-| G2 delta | `modules/uni-engine/.../room/CoalescingFlush.java` | T3 |
-| G3 `UPDATE_DRAFT` | `modules/uni-protocol/src/main/proto/game_message.proto` · `modules/uni-gateway/.../net/RateLimitHandler.java` | T7 |
+| G1 ticket | `modules/uni-websocket-gateway/.../auth/TicketAuthHandler.java` | T6 |
+| G2 delta | `modules/uni-game-engine/.../room/CoalescingFlush.java` | T3 |
+| G3 `UPDATE_DRAFT` | `modules/uni-protocol/src/main/proto/game_message.proto` · `modules/uni-websocket-gateway/.../net/RateLimitHandler.java` | T7 |
 | Envelope (đã chốt) | `modules/uni-protocol/src/main/proto/game_message.proto` | T1 ✅ |
 
 Không có tầng Controller / Service / Repository. `rules/spring/architecture.mdc` giải thích vì

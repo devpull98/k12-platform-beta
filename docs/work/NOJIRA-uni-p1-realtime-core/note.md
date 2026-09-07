@@ -7,31 +7,31 @@
 ## Task 2 — RoomActor: FSM, server timestamp, dedupe, watchdog
 
 - **Trạng thái:** done (2026-09-06)
-- **Verification:** `mvn -pl :uni-engine test -Dtest=RoomActorTest` → 8/8 pass. `mvn -pl :uni-engine test` (toàn module, gồm `EngineApplicationTests`) → 9/9 pass, `-Dio.netty.leakDetection.level=paranoid` sạch.
+- **Verification:** `mvn -pl :uni-game-engine test -Dtest=RoomActorTest` → 8/8 pass. `mvn -pl :uni-game-engine test` (toàn module, gồm `EngineApplicationTests`) → 9/9 pass, `-Dio.netty.leakDetection.level=paranoid` sạch.
 - **Phạm vi đã làm:**
   - FSM `LOBBY → PLAYING → FINISHED`; `EndGame` kết thúc bằng `Behaviors.stopped()` (test: `should_stopActor_when_gameEndsAfterPlaying`).
   - `server_received_at` đóng dấu bằng `Clock` tiêm qua constructor, **trước** mọi validate/tra bảng trong `RoomState.submitAnswer`.
   - `response_time_ms = server_received_at − server_question_started_at`, test với `MutableClock` (test double) xác nhận đúng con số.
   - Từ chối `PAST_DEADLINE` khi `server_received_at > deadline + 500ms`, có test biên (đúng deadline+500 vẫn accept, +501 mới reject).
   - `LastSeenSequenceTable` trong `RoomState`: `sequence ≤ last_seen` → gửi lại đúng `GameMessage` ack cũ (object y hệt), không tính lại điểm.
-  - `client_timestamp_ms` **không** xuất hiện ở đâu trên đường chấm điểm — cấu trúc `SubmitAnswer` command tách field này khỏi mọi thứ `RoomState.submitAnswer` nhận vào; grep xác nhận `.clientTimestampMs()` không được gọi ở bất kỳ đâu trong `uni-engine`. Test `should_ignoreClientTimestampMs_when_computingScoreAndResponseTime` xác nhận forge giá trị này không đổi điểm/response time.
+  - `client_timestamp_ms` **không** xuất hiện ở đâu trên đường chấm điểm — cấu trúc `SubmitAnswer` command tách field này khỏi mọi thứ `RoomState.submitAnswer` nhận vào; grep xác nhận `.clientTimestampMs()` không được gọi ở bất kỳ đâu trong `uni-game-engine`. Test `should_ignoreClientTimestampMs_when_computingScoreAndResponseTime` xác nhận forge giá trị này không đổi điểm/response time.
   - Watchdog: đo `System.nanoTime()` quanh mỗi handler, ghi Micrometer `Timer` (`engine.room.actor.processing.time`), `log.warn` khi > 10ms, **không** cố ngắt actor (test dùng `ScoreCalculator` giả lập chậm 15ms).
 - **Cố ý chưa làm (ngoài phạm vi Task 2, không phải thiếu sót):**
   - ~~`ScoreCalculator` thật — dùng `PlaceholderScoreCalculator` (flat 100 điểm, đánh dấu rõ TEMPORARY) vì công thức điểm Product chưa chốt (tech-design.md §9.2 câu 1). Không được lặng lẽ trở thành default production.~~
     **Đã đóng 2026-09-06** — xem mục "ScoreCalculator thật" bên dưới.
   - Join room / `student_index` / broadcast / tick coalescing — thuộc Task 3, 8, 11, không phải Task 2.
 - **File đụng tới:**
-  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/room/RoomActor.java` (mới)
-  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/room/RoomState.java` (mới)
-  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/scoring/ScoreCalculator.java` (mới)
-  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/scoring/PlaceholderScoreCalculator.java` (mới, **đã xoá 2026-09-06** — xem bên dưới)
-  - `modules/uni-engine/src/test/java/com/uni/realtime/engine/room/RoomActorTest.java` (mới)
+  - `modules/uni-game-engine/src/main/java/com/uni/realtime/engine/room/RoomActor.java` (mới)
+  - `modules/uni-game-engine/src/main/java/com/uni/realtime/engine/room/RoomState.java` (mới)
+  - `modules/uni-game-engine/src/main/java/com/uni/realtime/engine/scoring/ScoreCalculator.java` (mới)
+  - `modules/uni-game-engine/src/main/java/com/uni/realtime/engine/scoring/PlaceholderScoreCalculator.java` (mới, **đã xoá 2026-09-06** — xem bên dưới)
+  - `modules/uni-game-engine/src/test/java/com/uni/realtime/engine/room/RoomActorTest.java` (mới)
 
 ## Task 4 — Internal Frame Channel: FrameCodec + FrameChannelServer (Engine)
 
 - **Trạng thái:** done (2026-09-06)
-- **Verification:** `mvn -pl :uni-engine test -Dtest=FrameCodecTest` → 4/4 pass (EmbeddedChannel,
-  không mạng thật). `mvn -pl :uni-engine test -Dtest=FrameChannelServerTest` → 1/1 pass (thêm
+- **Verification:** `mvn -pl :uni-game-engine test -Dtest=FrameCodecTest` → 4/4 pass (EmbeddedChannel,
+  không mạng thật). `mvn -pl :uni-game-engine test -Dtest=FrameChannelServerTest` → 1/1 pass (thêm
   ngoài yêu cầu của plan.md — client Netty thật nối qua socket ephemeral để chứng minh
   `FrameChannelServer` bind/nhận gói được, không chỉ đúng ở mức codec). Toàn module: 14/14 pass,
   `-Dio.netty.leakDetection.level=paranoid` sạch, không còn warning deprecation.
@@ -54,15 +54,15 @@
   - Phía Gateway (client kết nối tới Engine, route cache) — Task 5.
   - Test tích hợp nhiều phòng / nhiều pod thật — Task 13 (walking skeleton).
 - **File đụng tới:**
-  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/net/FrameCodec.java` (mới)
-  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/net/FrameChannelServer.java` (mới)
-  - `modules/uni-engine/src/test/java/com/uni/realtime/engine/net/FrameCodecTest.java` (mới)
-  - `modules/uni-engine/src/test/java/com/uni/realtime/engine/net/FrameChannelServerTest.java` (mới)
+  - `modules/uni-game-engine/src/main/java/com/uni/realtime/engine/net/FrameCodec.java` (mới)
+  - `modules/uni-game-engine/src/main/java/com/uni/realtime/engine/net/FrameChannelServer.java` (mới)
+  - `modules/uni-game-engine/src/test/java/com/uni/realtime/engine/net/FrameCodecTest.java` (mới)
+  - `modules/uni-game-engine/src/test/java/com/uni/realtime/engine/net/FrameChannelServerTest.java` (mới)
 
 ## Task 6 — Gateway: Netty pipeline + WS handshake + ticket auth (một phần)
 
 - **Trạng thái:** một phần xong (2026-09-06) — xem "Cố ý chưa làm" bên dưới, đây không phải task đóng hoàn toàn.
-- **Verification:** `mvn -pl :uni-gateway test -Dtest=GatewayPipelineTest` → 6/6 pass
+- **Verification:** `mvn -pl :uni-websocket-gateway test -Dtest=GatewayPipelineTest` → 6/6 pass
   (`EmbeddedChannel`, không socket thật — HTTP/WS handshake machinery của Netty không cần
   test lại, chỉ test các handler ứng dụng sau khi handshake xong). Toàn module: 7/7 pass,
   không leak, không deprecation warning.
@@ -84,7 +84,7 @@
     mới của Netty 4.2, không dùng `NioEventLoopGroup` đã deprecated).
 - **Cố ý CHƯA làm — không phải thiếu sót:**
   - **Thuật toán ký ticket thật (G1a) và dung sai lệch đồng hồ (G1c) — KHÔNG hiện thực.**
-    `TicketVerifier` chỉ là interface (`modules/uni-gateway/.../auth/TicketVerifier.java`),
+    `TicketVerifier` chỉ là interface (`modules/uni-websocket-gateway/.../auth/TicketVerifier.java`),
     **không có implementation nào trong main code**. Test dùng lambda fake verifier. Đây là
     ranh giới cố ý — tech-design.md nói rõ "không tự thiết kế, đi hỏi đội dịch vụ nền tảng".
     Bất kỳ ai định "tạm" viết một verifier giả trong main code để demo/staging đều đang vi phạm
@@ -94,23 +94,23 @@
   - Rate limiting thật (Task 7), fan-out/RoomRegistry (Task 8), route cache tới Engine (Task 5),
     backpressure (Task 9) — đều chưa đụng tới, đúng ranh giới Task 6.
 - **File đụng tới:**
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/auth/TicketVerifier.java` (mới)
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/auth/TicketClaims.java` (mới)
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/auth/TicketRejectedException.java` (mới)
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/auth/TicketAuthHandler.java` (mới)
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/ChannelAttributes.java` (mới)
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/GameMessageDecoder.java` (mới)
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/RateLimitHandler.java` (mới)
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/RoomRouteHandler.java` (mới)
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/GatewayPipeline.java` (mới)
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/GatewayBootstrap.java` (mới)
-  - `modules/uni-gateway/src/test/java/com/uni/realtime/gateway/net/GatewayPipelineTest.java` (mới)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/auth/TicketVerifier.java` (mới)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/auth/TicketClaims.java` (mới)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/auth/TicketRejectedException.java` (mới)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/auth/TicketAuthHandler.java` (mới)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/net/ChannelAttributes.java` (mới)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/net/GameMessageDecoder.java` (mới)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/net/RateLimitHandler.java` (mới)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/net/RoomRouteHandler.java` (mới)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/net/GatewayPipeline.java` (mới)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/net/GatewayBootstrap.java` (mới)
+  - `modules/uni-websocket-gateway/src/test/java/com/uni/realtime/gateway/net/GatewayPipelineTest.java` (mới)
 
 ## Task 5 — Gateway: FrameChannelClient + RouteCache (lazy-learned routing)
 
 - **Trạng thái:** done (2026-09-06)
-- **Verification:** `mvn -pl :uni-gateway test -Dtest=RouteCacheTest` → 5/5 pass (plain JUnit,
-  không Netty). `mvn -pl :uni-gateway test -Dtest=FrameChannelClientTest` → 3/3 pass (thêm
+- **Verification:** `mvn -pl :uni-websocket-gateway test -Dtest=RouteCacheTest` → 5/5 pass (plain JUnit,
+  không Netty). `mvn -pl :uni-websocket-gateway test -Dtest=FrameChannelClientTest` → 3/3 pass (thêm
   ngoài yêu cầu plan.md — 2 "fake Engine pod" thật trên socket loopback, chứng minh
   round-robin → learn → gửi thẳng → evict-khi-đứt-kết-nối hoạt động đúng cùng nhau).
   Toàn module 15/15, toàn reactor `mvn test` xanh, không leak, không deprecation warning.
@@ -137,20 +137,20 @@
   - Route cache chưa được nối vào `RoomRouteHandler` (Task 6) hay Gateway pipeline thật — việc
     "gắn dây" toàn bộ luồng end-to-end là Task 13 (walking skeleton).
 - **File đụng tới:**
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/routing/RouteCache.java` (mới)
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/routing/InternalFrameCodec.java` (mới)
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/routing/FrameChannelClient.java` (mới)
-  - `modules/uni-gateway/src/test/java/com/uni/realtime/gateway/routing/RouteCacheTest.java` (mới)
-  - `modules/uni-gateway/src/test/java/com/uni/realtime/gateway/routing/FrameChannelClientTest.java` (mới)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/routing/RouteCache.java` (mới)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/routing/InternalFrameCodec.java` (mới)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/routing/FrameChannelClient.java` (mới)
+  - `modules/uni-websocket-gateway/src/test/java/com/uni/realtime/gateway/routing/RouteCacheTest.java` (mới)
+  - `modules/uni-websocket-gateway/src/test/java/com/uni/realtime/gateway/routing/FrameChannelClientTest.java` (mới)
 
 ## Task 10 — Engine: RoomOwnership + đóng dấu owner_pod_id
 
 - **Trạng thái:** done (2026-09-06)
-- **Verification:** `mvn -pl :uni-engine test -Dtest=RoomOwnershipTest` → 5/5 pass (plain
-  JUnit — thuật toán thuần). `mvn -pl :uni-engine test -Dtest=RoomOwnershipHandlerTest` → 2/2
+- **Verification:** `mvn -pl :uni-game-engine test -Dtest=RoomOwnershipTest` → 5/5 pass (plain
+  JUnit — thuật toán thuần). `mvn -pl :uni-game-engine test -Dtest=RoomOwnershipHandlerTest` → 2/2
   pass (thêm ngoài yêu cầu, `EmbeddedChannel` — chứng minh handler thật forward đúng khi sở
   hữu và trả `NOT_OWNER` đúng khi không sở hữu, không chỉ đúng thuật toán độc lập).
-  `grep -rn "% N\|modulo" modules/uni-engine/src/main --include=*.java` chỉ khớp
+  `grep -rn "% N\|modulo" modules/uni-game-engine/src/main --include=*.java` chỉ khớp
   `ModuloRoomOwnership.java` — đúng yêu cầu plan.md ("không class nào khác biết tới phép % N").
   Toàn module 21/21, toàn reactor `mvn test` xanh.
 - **Phạm vi đã làm:**
@@ -173,20 +173,20 @@
   - Forward Engine-to-Engine khi không sở hữu — không cần vì §4.5 chỉ cần `NOT_OWNER` + Gateway
     tự định tuyến lại.
 - **File đụng tới:**
-  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/room/RoomOwnership.java` (mới)
-  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/room/ModuloRoomOwnership.java` (mới)
-  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/net/RoomOwnershipHandler.java` (mới)
-  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/net/FrameChannelServer.java` (sửa)
-  - `modules/uni-engine/src/test/java/com/uni/realtime/engine/room/RoomOwnershipTest.java` (mới)
-  - `modules/uni-engine/src/test/java/com/uni/realtime/engine/net/RoomOwnershipHandlerTest.java` (mới)
-  - `modules/uni-engine/src/test/java/com/uni/realtime/engine/net/FrameChannelServerTest.java` (sửa)
+  - `modules/uni-game-engine/src/main/java/com/uni/realtime/engine/room/RoomOwnership.java` (mới)
+  - `modules/uni-game-engine/src/main/java/com/uni/realtime/engine/room/ModuloRoomOwnership.java` (mới)
+  - `modules/uni-game-engine/src/main/java/com/uni/realtime/engine/net/RoomOwnershipHandler.java` (mới)
+  - `modules/uni-game-engine/src/main/java/com/uni/realtime/engine/net/FrameChannelServer.java` (sửa)
+  - `modules/uni-game-engine/src/test/java/com/uni/realtime/engine/room/RoomOwnershipTest.java` (mới)
+  - `modules/uni-game-engine/src/test/java/com/uni/realtime/engine/net/RoomOwnershipHandlerTest.java` (mới)
+  - `modules/uni-game-engine/src/test/java/com/uni/realtime/engine/net/FrameChannelServerTest.java` (sửa)
 
 ## Task 7 — Gateway: Rate limiting theo student_id (một phần)
 
 - **Trạng thái:** một phần xong (2026-09-06) — xem "Cố ý chưa làm" bên dưới.
-- **Verification:** `mvn -pl :uni-gateway test -Dtest=RateLimitHandlerTest` → 5/5 pass
+- **Verification:** `mvn -pl :uni-websocket-gateway test -Dtest=RateLimitHandlerTest` → 5/5 pass
   (`EmbeddedChannel`, `Clock.fixed` — không sleep thời gian thật, không flaky).
-  `mvn -pl :uni-gateway test -Dtest=TokenBucketTest` → 4/4 pass (logic thuần, `MutableClock`
+  `mvn -pl :uni-websocket-gateway test -Dtest=TokenBucketTest` → 4/4 pass (logic thuần, `MutableClock`
   test double giống style dùng ở `RoomActorTest`/`FrameChannelClientTest`). Toàn module 24/24,
   toàn reactor xanh.
 - **Phạm vi đã làm:**
@@ -217,15 +217,15 @@
   - "Tổng 15/15s" trong AC gốc: không hiện thực thành bucket thứ 4 — 3 cửa sổ 1s/10s/30s không
     gộp thành 1 cửa sổ chung có nghĩa; đọc là ước lượng thô, không phải cơ chế cần code.
 - **File đụng tới:**
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/TokenBucket.java` (mới)
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/RateLimitHandler.java` (thay hẳn placeholder)
-  - `modules/uni-gateway/src/test/java/com/uni/realtime/gateway/net/TokenBucketTest.java` (mới)
-  - `modules/uni-gateway/src/test/java/com/uni/realtime/gateway/net/RateLimitHandlerTest.java` (mới)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/net/TokenBucket.java` (mới)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/net/RateLimitHandler.java` (thay hẳn placeholder)
+  - `modules/uni-websocket-gateway/src/test/java/com/uni/realtime/gateway/net/TokenBucketTest.java` (mới)
+  - `modules/uni-websocket-gateway/src/test/java/com/uni/realtime/gateway/net/RateLimitHandlerTest.java` (mới)
 
 ## Task 8 — Gateway: RoomRegistry + Broadcaster (fan-out zero-copy)
 
 - **Trạng thái:** done (2026-09-06)
-- **Verification:** `mvn -pl :uni-gateway test -Dtest=FanoutTest` → 4/4 pass, 12 `EmbeddedChannel`
+- **Verification:** `mvn -pl :uni-websocket-gateway test -Dtest=FanoutTest` → 4/4 pass, 12 `EmbeddedChannel`
   đúng như plan.md bắt buộc. `RoomRegistryTest` → 5/5 pass. `GatewayPipelineTest` (thêm 2 case
   mới) → xác nhận add-on-join/remove-on-channelInactive qua pipeline thật, không chỉ qua
   `RoomRegistry` cô lập. Toàn module 35/35, toàn reactor xanh.
@@ -253,24 +253,24 @@
     Task 5) — dây nối end-to-end Engine→Gateway→client là Task 13.
   - `!isWritable()`/backpressure khi buffer đầy — Task 9.
 - **File đụng tới:**
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/fanout/RoomRegistry.java` (mới)
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/fanout/Broadcaster.java` (mới)
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/auth/TicketAuthHandler.java` (sửa)
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/RoomRouteHandler.java` (sửa)
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/GatewayPipeline.java` (sửa)
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/GatewayBootstrap.java` (sửa)
-  - `modules/uni-gateway/src/test/java/com/uni/realtime/gateway/fanout/RoomRegistryTest.java` (mới)
-  - `modules/uni-gateway/src/test/java/com/uni/realtime/gateway/fanout/FanoutTest.java` (mới)
-  - `modules/uni-gateway/src/test/java/com/uni/realtime/gateway/net/GatewayPipelineTest.java` (sửa)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/fanout/RoomRegistry.java` (mới)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/fanout/Broadcaster.java` (mới)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/auth/TicketAuthHandler.java` (sửa)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/net/RoomRouteHandler.java` (sửa)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/net/GatewayPipeline.java` (sửa)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/net/GatewayBootstrap.java` (sửa)
+  - `modules/uni-websocket-gateway/src/test/java/com/uni/realtime/gateway/fanout/RoomRegistryTest.java` (mới)
+  - `modules/uni-websocket-gateway/src/test/java/com/uni/realtime/gateway/fanout/FanoutTest.java` (mới)
+  - `modules/uni-websocket-gateway/src/test/java/com/uni/realtime/gateway/net/GatewayPipelineTest.java` (sửa)
 
 ## Task 9 — Backpressure một tầng (một phần)
 
 - **Trạng thái:** một phần xong (2026-09-06) — xem "Cố ý chưa làm" bên dưới.
-- **Verification:** `mvn -pl :uni-gateway,:uni-engine test -Dtest=BackpressureTest` → gateway
+- **Verification:** `mvn -pl :uni-websocket-gateway,:uni-game-engine test -Dtest=BackpressureTest` → gateway
   5/5 pass, engine 2/2 pass. Case bắt buộc "client chậm không kéo tụt client khác cùng phòng"
   pass. **Prove-it**: đảo ngược tạm điều kiện Critical/Best-effort trong `Broadcaster`, chạy lại
   → 3/5 test fail đúng như dự đoán (drop-thay-vì-close và ngược lại, cộng test "không ảnh hưởng
-  client khác"), rồi trả lại đúng logic → xanh lại. Toàn `uni-gateway` 40/40, toàn `uni-engine`
+  client khác"), rồi trả lại đúng logic → xanh lại. Toàn `uni-websocket-gateway` 40/40, toàn `uni-game-engine`
   23/23, toàn reactor xanh, không leak, không deprecation warning.
 - **Phạm vi đã làm:**
   - `BackpressureHandler` (gateway, mới): MỘT class dùng lại ở mọi hop — override
@@ -305,23 +305,23 @@
   - Việc nối toàn chuỗi thật (nếu cần đúng nghĩa đen của AC) là quyết định kiến trúc riêng hoặc
     thuộc Task 13.
 - **File đụng tới:**
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/BackpressureHandler.java` (mới)
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/fanout/Broadcaster.java` (sửa)
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/GatewayPipeline.java` (sửa)
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/GatewayBootstrap.java` (sửa)
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/routing/FrameChannelClient.java` (sửa)
-  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/net/FrameChannelServer.java` (sửa)
-  - `modules/uni-gateway/src/test/java/com/uni/realtime/gateway/net/BackpressureTest.java` (mới)
-  - `modules/uni-engine/src/test/java/com/uni/realtime/engine/net/BackpressureTest.java` (mới)
-  - `modules/uni-gateway/src/test/java/com/uni/realtime/gateway/fanout/FanoutTest.java` (sửa — thêm `DeliveryClass`)
-  - `modules/uni-gateway/src/test/java/com/uni/realtime/gateway/net/GatewayPipelineTest.java` (sửa)
-  - `modules/uni-gateway/src/test/java/com/uni/realtime/gateway/routing/FrameChannelClientTest.java` (sửa)
-  - `modules/uni-engine/src/test/java/com/uni/realtime/engine/net/FrameChannelServerTest.java` (sửa)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/net/BackpressureHandler.java` (mới)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/fanout/Broadcaster.java` (sửa)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/net/GatewayPipeline.java` (sửa)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/net/GatewayBootstrap.java` (sửa)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/routing/FrameChannelClient.java` (sửa)
+  - `modules/uni-game-engine/src/main/java/com/uni/realtime/engine/net/FrameChannelServer.java` (sửa)
+  - `modules/uni-websocket-gateway/src/test/java/com/uni/realtime/gateway/net/BackpressureTest.java` (mới)
+  - `modules/uni-game-engine/src/test/java/com/uni/realtime/engine/net/BackpressureTest.java` (mới)
+  - `modules/uni-websocket-gateway/src/test/java/com/uni/realtime/gateway/fanout/FanoutTest.java` (sửa — thêm `DeliveryClass`)
+  - `modules/uni-websocket-gateway/src/test/java/com/uni/realtime/gateway/net/GatewayPipelineTest.java` (sửa)
+  - `modules/uni-websocket-gateway/src/test/java/com/uni/realtime/gateway/routing/FrameChannelClientTest.java` (sửa)
+  - `modules/uni-game-engine/src/test/java/com/uni/realtime/engine/net/FrameChannelServerTest.java` (sửa)
 
 ## Task 11 — Engine: GameDefinition + DefinitionLoader
 
 - **Trạng thái:** done (2026-09-06)
-- **Verification:** `mvn -pl :uni-engine test -Dtest=DefinitionLoaderTest` → 8/8 pass.
+- **Verification:** `mvn -pl :uni-game-engine test -Dtest=DefinitionLoaderTest` → 8/8 pass.
   `ScoringFormulaTest` → 6/6 pass (thêm ngoài yêu cầu). **Prove-it**: tạm comment-out lời gọi
   `rejectCycles(...)` trong `DefinitionLoader.load()`, chạy lại → đúng 2/8 test (2 case chu
   trình) fail, không hơn không kém, rồi bật lại → xanh. Toàn module 37/37, toàn reactor xanh.
@@ -347,15 +347,15 @@
   - Không có tầng deserialize JSON/YAML cho definition "upload bởi người vận hành" — chưa có
     quyết định định dạng dây, tự bịa sẽ là phát minh hạ tầng ngoài phạm vi.
 - **File đụng tới:**
-  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/definition/TickMode.java` (mới)
-  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/definition/MissedStepPolicy.java` (mới)
-  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/definition/Step.java` (mới)
-  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/definition/ScoringFormula.java` (mới)
-  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/definition/GameDefinition.java` (mới)
-  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/definition/DefinitionRejectedException.java` (mới)
-  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/definition/DefinitionLoader.java` (mới)
-  - `modules/uni-engine/src/test/java/com/uni/realtime/engine/definition/DefinitionLoaderTest.java` (mới)
-  - `modules/uni-engine/src/test/java/com/uni/realtime/engine/definition/ScoringFormulaTest.java` (mới)
+  - `modules/uni-game-engine/src/main/java/com/uni/realtime/engine/definition/TickMode.java` (mới)
+  - `modules/uni-game-engine/src/main/java/com/uni/realtime/engine/definition/MissedStepPolicy.java` (mới)
+  - `modules/uni-game-engine/src/main/java/com/uni/realtime/engine/definition/Step.java` (mới)
+  - `modules/uni-game-engine/src/main/java/com/uni/realtime/engine/definition/ScoringFormula.java` (mới)
+  - `modules/uni-game-engine/src/main/java/com/uni/realtime/engine/definition/GameDefinition.java` (mới)
+  - `modules/uni-game-engine/src/main/java/com/uni/realtime/engine/definition/DefinitionRejectedException.java` (mới)
+  - `modules/uni-game-engine/src/main/java/com/uni/realtime/engine/definition/DefinitionLoader.java` (mới)
+  - `modules/uni-game-engine/src/test/java/com/uni/realtime/engine/definition/DefinitionLoaderTest.java` (mới)
+  - `modules/uni-game-engine/src/test/java/com/uni/realtime/engine/definition/ScoringFormulaTest.java` (mới)
 
 ## SPIKE — Pekko scheduler capacity (1.000 timer đồng thời)
 
@@ -374,21 +374,21 @@
   logic thật), đo trên máy dev mô phỏng 2 vCPU (không phải cgroup quota thật của K8s) — cả hai
   vẫn thuộc PH-1 (load test harness thật) để xác nhận lại ở quy mô/môi trường gần production hơn.
 - **File đụng tới:**
-  - `modules/uni-engine/src/test/java/com/uni/realtime/engine/spike/SchedulerCapacitySpike.java` (mới —
+  - `modules/uni-game-engine/src/test/java/com/uni/realtime/engine/spike/SchedulerCapacitySpike.java` (mới —
     có `main()`, tên không khớp pattern Surefire nên không chạy trong `mvn test` thường; xác
-    nhận 37/37 test `uni-engine` không đổi thời gian chạy sau khi thêm file này)
+    nhận 37/37 test `uni-game-engine` không đổi thời gian chạy sau khi thêm file này)
   - `docs/work/NOJIRA-uni-p1-realtime-core/spike-pekko-timer.md` (mới)
 
 ## Task 12 — Nền quan sát: EngineMetrics + GatewayMetrics
 
 - **Trạng thái:** done (2026-09-06) — verify **bằng app chạy thật**, không chỉ unit test.
-- **Verification:** `mvn -pl :uni-gateway spring-boot:run` + `curl localhost:8080/actuator/prometheus`
+- **Verification:** `mvn -pl :uni-websocket-gateway spring-boot:run` + `curl localhost:8080/actuator/prometheus`
   → thấy `channel_not_writable_total`, `fanout_latency_seconds{...}`, `handshake_rate_total`.
-  `mvn -pl :uni-engine spring-boot:run` + `curl localhost:8090/actuator/prometheus` → thấy
+  `mvn -pl :uni-game-engine spring-boot:run` + `curl localhost:8090/actuator/prometheus` → thấy
   `actor_mailbox_depth`, `actor_processing_latency_seconds{...}`, `channel_not_writable_total`.
   Cả hai process đã tắt sạch sau khi xác nhận (kiểm tra lại bằng curl health → connection
-  refused). `EngineMetricsTest` 5/5, `GatewayMetricsTest` 4/4. Toàn `uni-gateway` 46/46, toàn
-  `uni-engine` 42/42, toàn reactor xanh.
+  refused). `EngineMetricsTest` 5/5, `GatewayMetricsTest` 4/4. Toàn `uni-websocket-gateway` 46/46, toàn
+  `uni-game-engine` 42/42, toàn reactor xanh.
 - **Hai lỗ hổng phát hiện giữa chừng (chỉ lộ ra khi chạy app thật, không unit test nào bắt được):**
   1. **Đăng ký metric kiểu lazy (di sản Task 9)**: `BackpressureHandler` cũ tự gọi
      `MeterRegistry.register()` mỗi lần constructor chạy — tức mỗi khi có connection mới. Pod
@@ -423,20 +423,20 @@
     "truyền xuống actor" theo đúng nghĩa đen của AC chưa hoàn thành, chỉ mới nửa đường (đã ghi
     rõ, không tự nhận full).
 - **File đụng tới:**
-  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/metrics/EngineMetrics.java` (mới)
-  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/metrics/MetricsConfiguration.java` (mới)
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/metrics/GatewayMetrics.java` (mới)
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/metrics/MetricsConfiguration.java` (mới)
-  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/room/RoomActor.java` (sửa)
-  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/net/FrameChannelServer.java` (sửa)
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/BackpressureHandler.java` (sửa)
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/GatewayPipeline.java` (sửa)
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/GatewayBootstrap.java` (sửa)
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/ChannelAttributes.java` (sửa)
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/RoomRouteHandler.java` (sửa)
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/auth/TicketAuthHandler.java` (sửa)
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/routing/FrameChannelClient.java` (sửa)
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/fanout/Broadcaster.java` (sửa)
+  - `modules/uni-game-engine/src/main/java/com/uni/realtime/engine/metrics/EngineMetrics.java` (mới)
+  - `modules/uni-game-engine/src/main/java/com/uni/realtime/engine/metrics/MetricsConfiguration.java` (mới)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/metrics/GatewayMetrics.java` (mới)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/metrics/MetricsConfiguration.java` (mới)
+  - `modules/uni-game-engine/src/main/java/com/uni/realtime/engine/room/RoomActor.java` (sửa)
+  - `modules/uni-game-engine/src/main/java/com/uni/realtime/engine/net/FrameChannelServer.java` (sửa)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/net/BackpressureHandler.java` (sửa)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/net/GatewayPipeline.java` (sửa)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/net/GatewayBootstrap.java` (sửa)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/net/ChannelAttributes.java` (sửa)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/net/RoomRouteHandler.java` (sửa)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/auth/TicketAuthHandler.java` (sửa)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/routing/FrameChannelClient.java` (sửa)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/fanout/Broadcaster.java` (sửa)
   - Cùng các file test tương ứng (thêm mới `EngineMetricsTest`/`GatewayMetricsTest`, sửa
     `RoomActorTest`/`FrameChannelServerTest`/`BackpressureTest` (2 module)/`GatewayPipelineTest`/
     `FanoutTest`/`FrameChannelClientTest` theo chữ ký constructor mới).
@@ -447,12 +447,12 @@
 - **Bối cảnh:** Product chốt công thức điểm Quiz 2026-09-06 (system-architecture.md §2.5): trắc
   nghiệm 1-trong-4 đáp án, nhị phân đúng/sai — đúng = 100 điểm, sai = 0, không bonus theo tốc độ.
   Đóng nốt "Ghi chú còn treo" của Task 2 (`PlaceholderScoreCalculator`).
-- **Verification:** `mvn -pl :uni-engine test` (toàn module, target xoá sạch trước khi chạy) →
+- **Verification:** `mvn -pl :uni-game-engine test` (toàn module, target xoá sạch trước khi chạy) →
   46/46 pass, không leak, không deprecation warning. `mvn test` toàn reactor từ root → BUILD
-  SUCCESS (uni-protocol/uni-observability/uni-gateway/uni-engine đều xanh). Grep bắt buộc:
-  `grep -rn "client_timestamp_ms\|clientTimestampMs" modules/uni-engine/src/main --include=*.java`
+  SUCCESS (uni-protocol/uni-observability/uni-websocket-gateway/uni-game-engine đều xanh). Grep bắt buộc:
+  `grep -rn "client_timestamp_ms\|clientTimestampMs" modules/uni-game-engine/src/main --include=*.java`
   → chỉ khớp doc-comment + field truyền qua (không đụng đường chấm điểm);
-  `grep -rn "\.retain()" modules/uni-gateway/src/main --include=*.java` → rỗng.
+  `grep -rn "\.retain()" modules/uni-websocket-gateway/src/main --include=*.java` → rỗng.
 - **Phạm vi đã làm:**
   - `ScoreCalculator.award(...)` mở rộng nhận thêm `List<String> correctAnswerIds` (chữ ký cũ chỉ
     có `answerIds` + `responseTimeMs`, không đủ để biết đúng/sai).
@@ -479,14 +479,14 @@
 - **Cố ý chưa làm:** không có gì mới ngoài phạm vi Task 2/11 đã ghi trước đó (join room,
   broadcast, tick coalescing vẫn thuộc Task 3/8).
 - **File đụng tới:**
-  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/scoring/ScoreCalculator.java` (sửa)
-  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/scoring/PlaceholderScoreCalculator.java` (xoá)
-  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/scoring/FormulaScoreCalculator.java` (mới)
-  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/room/RoomState.java` (sửa)
-  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/room/RoomActor.java` (sửa)
-  - `modules/uni-engine/src/test/java/com/uni/realtime/engine/room/RoomActorTest.java` (sửa)
-  - `modules/uni-engine/src/test/java/com/uni/realtime/engine/scoring/FormulaScoreCalculatorTest.java` (mới)
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/GatewayPipeline.java` (sửa)
+  - `modules/uni-game-engine/src/main/java/com/uni/realtime/engine/scoring/ScoreCalculator.java` (sửa)
+  - `modules/uni-game-engine/src/main/java/com/uni/realtime/engine/scoring/PlaceholderScoreCalculator.java` (xoá)
+  - `modules/uni-game-engine/src/main/java/com/uni/realtime/engine/scoring/FormulaScoreCalculator.java` (mới)
+  - `modules/uni-game-engine/src/main/java/com/uni/realtime/engine/room/RoomState.java` (sửa)
+  - `modules/uni-game-engine/src/main/java/com/uni/realtime/engine/room/RoomActor.java` (sửa)
+  - `modules/uni-game-engine/src/test/java/com/uni/realtime/engine/room/RoomActorTest.java` (sửa)
+  - `modules/uni-game-engine/src/test/java/com/uni/realtime/engine/scoring/FormulaScoreCalculatorTest.java` (mới)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/net/GatewayPipeline.java` (sửa)
 
 ## Task 3 — Tick coalescing trong RoomActor (ADR-4)
 
@@ -500,7 +500,7 @@
     resync thật) chưa tồn tại.
   - Cả hai là quyết định kỹ thuật "quyết được trong đội" theo đúng phân loại của tech-design.md
     §9.1 (khác G1a — phải hỏi đội dịch vụ nền tảng), không phải câu hỏi Product/Business.
-- **Verification:** `mvn -pl :uni-engine test -Dtest=TickCoalescingTest` → 5/5 pass. Toàn module
+- **Verification:** `mvn -pl :uni-game-engine test -Dtest=TickCoalescingTest` → 5/5 pass. Toàn module
   51/51, toàn reactor `mvn clean install` xanh, không leak (`-Dio.netty.leakDetection.level=paranoid`
   bật sẵn qua Surefire toàn cục).
 - **Phạm vi đã làm:**
@@ -540,16 +540,16 @@
     có cách báo điều này cho Engine. `PlayerRecord.connected` tồn tại trong schema/roster nhưng
     chỉ được set `true` (lúc join), chưa bao giờ bị set `false`.
 - **File đụng tới:**
-  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/room/RoomState.java` (sửa — roster, dirty, flush, snapshot builders)
-  - `modules/uni-engine/src/main/java/com/uni/realtime/engine/room/RoomActor.java` (sửa — `JoinRoom`, `Flush` timer, `TickMode`, `broadcastTarget`)
-  - `modules/uni-engine/src/test/java/com/uni/realtime/engine/room/RoomActorTest.java` (sửa — constructor mới)
-  - `modules/uni-engine/src/test/java/com/uni/realtime/engine/room/TickCoalescingTest.java` (mới)
+  - `modules/uni-game-engine/src/main/java/com/uni/realtime/engine/room/RoomState.java` (sửa — roster, dirty, flush, snapshot builders)
+  - `modules/uni-game-engine/src/main/java/com/uni/realtime/engine/room/RoomActor.java` (sửa — `JoinRoom`, `Flush` timer, `TickMode`, `broadcastTarget`)
+  - `modules/uni-game-engine/src/test/java/com/uni/realtime/engine/room/RoomActorTest.java` (sửa — constructor mới)
+  - `modules/uni-game-engine/src/test/java/com/uni/realtime/engine/room/TickCoalescingTest.java` (mới)
   - `docs/specs/tech-design/NOJIRA-uni-p1-tech-design.md` (sửa — G2a/G2b đánh dấu đã chốt)
 
 ## Task 7 (tiếp) — L1 IP admission control (§5.6)
 
 - **Trạng thái:** done (2026-09-07) — Task 7 giờ **xong đầy đủ**, không còn "một phần".
-- **Verification:** `mvn -pl :uni-gateway test -Dtest=IpAdmissionControllerTest` 3/3 pass (logic
+- **Verification:** `mvn -pl :uni-websocket-gateway test -Dtest=IpAdmissionControllerTest` 3/3 pass (logic
   thuần, `MutableClock`) + `IpAdmissionHandlerTest` 3/3 pass (`EmbeddedChannel` với
   `remoteAddress0()` override để giả lập IP thật). `GatewayPipelineTest` vẫn 10/10 (thêm
   `IpAdmissionController` vào lời gọi `GatewayPipeline.addTo` + assert `IpAdmissionHandler` đứng
@@ -579,13 +579,13 @@
     `TicketAuthHandler` xử lý ticket bị từ chối (cũng chỉ log, không có counter riêng). Task 12
     đã chốt xong danh sách 5 metric cụ thể; thêm một metric mới ở đây sẽ là mở rộng phạm vi Task 12.
 - **File đụng tới:**
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/IpAdmissionController.java` (mới)
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/IpAdmissionHandler.java` (mới)
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/GatewayPipeline.java` (sửa — thêm handler đầu tiên)
-  - `modules/uni-gateway/src/main/java/com/uni/realtime/gateway/net/GatewayBootstrap.java` (sửa — thêm tham số)
-  - `modules/uni-gateway/src/test/java/com/uni/realtime/gateway/net/GatewayPipelineTest.java` (sửa)
-  - `modules/uni-gateway/src/test/java/com/uni/realtime/gateway/net/IpAdmissionControllerTest.java` (mới)
-  - `modules/uni-gateway/src/test/java/com/uni/realtime/gateway/net/IpAdmissionHandlerTest.java` (mới)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/net/IpAdmissionController.java` (mới)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/net/IpAdmissionHandler.java` (mới)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/net/GatewayPipeline.java` (sửa — thêm handler đầu tiên)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/net/GatewayBootstrap.java` (sửa — thêm tham số)
+  - `modules/uni-websocket-gateway/src/test/java/com/uni/realtime/gateway/net/GatewayPipelineTest.java` (sửa)
+  - `modules/uni-websocket-gateway/src/test/java/com/uni/realtime/gateway/net/IpAdmissionControllerTest.java` (mới)
+  - `modules/uni-websocket-gateway/src/test/java/com/uni/realtime/gateway/net/IpAdmissionHandlerTest.java` (mới)
 
 ## Task 13 — Walking skeleton end-to-end (một phần)
 
@@ -597,7 +597,7 @@
   không leak.
 - **Vấn đề build phát hiện giữa chừng:** `mvn clean install` từ root FAIL lúc mới thêm `uni-e2e`
   — `spring-boot-maven-plugin`'s `repackage` (không classifier) thay artifact chính của
-  `uni-gateway`/`uni-engine` bằng jar thực thi (class nằm dưới `BOOT-INF/classes`), khiến
+  `uni-websocket-gateway`/`uni-game-engine` bằng jar thực thi (class nằm dưới `BOOT-INF/classes`), khiến
   `uni-e2e` không resolve được class nào khi `install` (đụng `package`) chạy trước nó trong
   cùng reactor — dù `-pl :uni-e2e -am test-compile` (dừng trước `package`) vẫn ổn. Sửa: thêm
   `<classifier>exec</classifier>` vào cấu hình plugin ở cả hai `pom.xml`.

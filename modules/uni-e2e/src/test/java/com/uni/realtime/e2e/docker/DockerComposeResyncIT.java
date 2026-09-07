@@ -1,8 +1,8 @@
 package com.uni.realtime.e2e.docker;
 
 import com.uni.realtime.e2e.support.SimulatedStudentClient;
-import com.uni.realtime.gateway.auth.TicketClaims;
-import com.uni.realtime.gateway.auth.dev.DevTicketCodec;
+import com.uni.realtime.websocketgateway.auth.TicketClaims;
+import com.uni.realtime.websocketgateway.auth.dev.DevTicketCodec;
 import com.uni.realtime.protocol.MessageType;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;

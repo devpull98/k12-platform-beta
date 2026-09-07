@@ -15,7 +15,7 @@ parallel_safe: true
 
 > **Đường dẫn đã chốt (2026-09-05)**: code **thay thế tại chỗ trong repo hiện tại**, build bằng
 > **Maven**. Mọi module Maven nằm dưới `modules/` với prefix `uni-`:
-> `uni-protocol` / `uni-observability` / `uni-gateway` / `uni-engine`. Chọn module bằng
+> `uni-protocol` / `uni-observability` / `uni-websocket-gateway` / `uni-game-engine`. Chọn module bằng
 > `-pl :uni-<tên>` (theo artifactId) thay vì đường dẫn, nên lệnh chạy được từ root.
 > `uni-observability` không thuộc task nào — đó là nơi phần observability của project cũ
 > được port sang. Task 13 sẽ thêm `modules/uni-e2e`.
@@ -95,9 +95,9 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 
 - **Mode:** sequential after [T1] · parallel with [T4, T6]
 - **Mô tả:** Lõi game engine. Pekko Typed, đơn luồng, `Clock` tiêm vào. Gồm luôn watchdog đo-và-cảnh-báo.
-- **Kết quả:** `mvn -pl :uni-engine test -Dtest=RoomActorTest` 9/9 pass; `mvn -pl :uni-engine test`
+- **Kết quả:** `mvn -pl :uni-game-engine test -Dtest=RoomActorTest` 9/9 pass; `mvn -pl :uni-game-engine test`
   (toàn module) 46/46 pass, leak detection `paranoid` sạch. Chi tiết: `note.md`.
-- **File dự kiến:** `modules/uni-engine/src/main/java/.../room/RoomActor.java`, `.../room/RoomState.java`, `.../scoring/ScoreCalculator.java`
+- **File dự kiến:** `modules/uni-game-engine/src/main/java/.../room/RoomActor.java`, `.../room/RoomState.java`, `.../scoring/ScoreCalculator.java`
 - **Dependency:** Task 1
 - **Acceptance criteria:**
   - [x] FSM `LOBBY → PLAYING → FINISHED`; `FINISHED` kết thúc bằng `Behaviors.stopped()`
@@ -108,7 +108,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
   - [x] `LastSeenSequenceTable` (`student_id → last_seq`): `sequence ≤ last_seen` → **gửi lại ACK cũ**, không im lặng bỏ, không cộng điểm lần hai
   - [x] `Clock` là tham số constructor — **không** gọi `System.currentTimeMillis()` trực tiếp
   - [x] Watchdog: đo `System.nanoTime()` quanh `handle()`, ghi metric, `log.warn` khi > 10ms. **Không cố ngắt** (§10.5)
-- **Verification:** `mvn -pl :uni-engine test -Dtest=RoomActorTest` — dùng `BehaviorTestKit`, không mạng. Phải có case: gian lận `client_timestamp_ms` → điểm không đổi; gửi lại cùng `sequence` → điểm không đổi + ACK cũ trả lại.
+- **Verification:** `mvn -pl :uni-game-engine test -Dtest=RoomActorTest` — dùng `BehaviorTestKit`, không mạng. Phải có case: gian lận `client_timestamp_ms` → điểm không đổi; gửi lại cùng `sequence` → điểm không đổi + ACK cũ trả lại.
 - **Cập nhật 2026-09-06 (sau khi Product chốt công thức, system-architecture.md §2.5):**
   `PlaceholderScoreCalculator` đã bị xoá, thay bằng `FormulaScoreCalculator` (bọc
   `ScoringFormula` — cây biểu thức đóng của Task 11 — thay vì một class chấm điểm đứng riêng,
@@ -117,7 +117,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
   độ. `ScoreCalculator.award(...)` mở rộng nhận thêm `correctAnswerIds`, nối qua
   `RoomState.startQuestion(...)` (3 tham số) và `RoomActor.StartQuestion` (3 field). Test mới:
   `FormulaScoreCalculatorTest` (3 case) + `RoomActorTest.should_award0_when_answerDoesNotMatchTheCorrectChoice`.
-  `mvn -pl :uni-engine test` 46/46 pass. Không còn "Ghi chú còn treo" nào cho Task 2.
+  `mvn -pl :uni-game-engine test` 46/46 pass. Không còn "Ghi chú còn treo" nào cho Task 2.
 - **Rollback nếu fail:** revert commit; T3/T11 chưa bắt đầu nên không kéo theo gì.
 
 ---
@@ -134,9 +134,9 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
   Chi tiết đầy đủ: `spike-pekko-timer.md`.
 - **Nếu không đạt:** đổi thiết kế sang **một flush wheel gom lô ở tầng pod** (một timer duy nhất quét danh sách phòng dirty) thay vì timer mỗi actor. Ghi lại quyết định vào v3.0 §6.2.
 - **Output:** ghi theo `templates/spike-template.md`, đặt tại `docs/work/NOJIRA-uni-p1-realtime-core/spike-pekko-timer.md`
-- **Harness:** `modules/uni-engine/src/test/java/.../spike/SchedulerCapacitySpike.java` — có
+- **Harness:** `modules/uni-game-engine/src/test/java/.../spike/SchedulerCapacitySpike.java` — có
   `main()`, tên KHÔNG khớp pattern `*Test`/`*Tests` của Surefire nên không chạy trong `mvn test`
-  bình thường (đã xác nhận: 37/37 test uni-engine không đổi thời gian chạy). Chạy tay theo
+  bình thường (đã xác nhận: 37/37 test uni-game-engine không đổi thời gian chạy). Chạy tay theo
   hướng dẫn trong javadoc của file.
 
 ---
@@ -145,7 +145,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 
 - **Mode:** sequential after [T2, SPIKE]
 - **Mô tả:** 200ms là **trần tần suất**, không phải nhịp phát (ADR-4). Cách hiện thực phụ thuộc kết quả SPIKE.
-- **Kết quả:** `mvn -pl :uni-engine test -Dtest=TickCoalescingTest` 5/5 pass (`ActorTestKit` +
+- **Kết quả:** `mvn -pl :uni-game-engine test -Dtest=TickCoalescingTest` 5/5 pass (`ActorTestKit` +
   `ManualTime` thật — timer thật sự chạy, không phải `BehaviorTestKit`). Toàn module 51/51,
   toàn reactor `mvn clean install` xanh. **Prove-it**: tạm đổi `buildDeltaSnapshot()` sang duyệt
   `players.keySet()` thay vì `dirtyStudentIds` — xác nhận đúng 1 test Red
@@ -156,7 +156,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
     của đúng những học sinh đổi kể từ lần flush trước; vắng mặt = không đổi), không đụng `.proto`.
   - **G2a:** `N = 10` — cứ 10 lần flush thì gửi 1 full snapshot thay vì delta (lưới an toàn cho
     một delta best-effort bị drop dưới backpressure, vì PH-3 client resync chưa tồn tại).
-- **File dự kiến:** `modules/uni-engine/src/main/java/.../room/RoomActor.java` (mở rộng), `.../room/CoalescingFlush.java`
+- **File dự kiến:** `modules/uni-game-engine/src/main/java/.../room/RoomActor.java` (mở rộng), `.../room/CoalescingFlush.java`
 - **Dependency:** Task 2, SPIKE
 - **Acceptance criteria:**
   - [x] **Phòng im lặng phát 0 gói** — test riêng `should_broadcastZeroPackets_when_roomStaysSilentAfterInitialActivity`
@@ -175,7 +175,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
   - [x] **GĐ1 chỉ hiện thực đường `COALESCE`**. `tick_mode: FIXED` vẫn nằm trong schema
         (`DefinitionLoader` đã từ chối từ Task 11) — `RoomActor.create` thêm một lớp fail-fast
         thứ hai phòng trường hợp gọi thẳng bỏ qua loader
-- **Verification:** `mvn -pl :uni-engine test -Dtest=TickCoalescingTest` với `ManualTime` của Pekko. Case bắt buộc: 5 giây không có input → **đếm đúng 0 gói outbound**.
+- **Verification:** `mvn -pl :uni-game-engine test -Dtest=TickCoalescingTest` với `ManualTime` của Pekko. Case bắt buộc: 5 giây không có input → **đếm đúng 0 gói outbound**.
 - **Ghi chú quan trọng:**
   - **RoomActor trước Task 3 hoàn toàn không có khái niệm roster/join** (note.md Task 2 đã ghi rõ:
     "Join room / student_index / broadcast / tick coalescing — thuộc Task 3"). Vì delta cần
@@ -197,18 +197,18 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 
 - **Mode:** sequential after [T1] · parallel with [T2, T6]
 - **Mô tả:** TCP dài hạn + length-prefixed Protobuf (ADR-1). Dùng handler có sẵn của Netty, **không tự viết parser**.
-- **Kết quả:** `mvn -pl :uni-engine test -Dtest=FrameCodecTest` 4/4 pass (EmbeddedChannel);
-  `mvn -pl :uni-engine test -Dtest=FrameChannelServerTest` 1/1 pass (socket thật, port ephemeral —
+- **Kết quả:** `mvn -pl :uni-game-engine test -Dtest=FrameCodecTest` 4/4 pass (EmbeddedChannel);
+  `mvn -pl :uni-game-engine test -Dtest=FrameChannelServerTest` 1/1 pass (socket thật, port ephemeral —
   bonus so với yêu cầu, chứng minh bootstrap thật sự bindable). Toàn module 14/14, leak detection
   `paranoid` sạch. Chi tiết: `note.md`.
-- **File dự kiến:** `modules/uni-engine/src/main/java/.../net/FrameChannelServer.java`, `.../net/FrameCodec.java`
+- **File dự kiến:** `modules/uni-game-engine/src/main/java/.../net/FrameChannelServer.java`, `.../net/FrameCodec.java`
 - **Dependency:** Task 1
 - **Acceptance criteria:**
   - [x] `LengthFieldPrepender(4)` + `LengthFieldBasedFrameDecoder(1MB, 0, 4, 0, 4)`
   - [x] **Một connection dùng chung cho mọi phòng** giữa mỗi cặp (GW pod, Engine pod) — multiplex bằng `room_id`, không phải một connection mỗi phòng
   - [x] Gói bị chia thành nhiều mảnh TCP vẫn ráp đúng
   - [x] Gói vượt `maxFrameLength` → đóng connection + log, không OOM
-- **Verification:** `mvn -pl :uni-engine test -Dtest=FrameCodecTest` dùng `EmbeddedChannel`, **bắt buộc có case ghi từng byte một** để chứng minh framing đúng khi phân mảnh.
+- **Verification:** `mvn -pl :uni-game-engine test -Dtest=FrameCodecTest` dùng `EmbeddedChannel`, **bắt buộc có case ghi từng byte một** để chứng minh framing đúng khi phân mảnh.
 - **Ghi chú:** protobuf encode/decode viết tay bằng `GameMessage.parseFrom`/`toByteArray` thay vì
   `netty-codec-protobuf` (có sẵn transitively nhưng cần prototype reflection) — đơn giản hơn và
   vẫn đúng tinh thần "không tự viết parser" (phần framing vẫn 100% Netty). Netty 4.2.17 đã
@@ -224,11 +224,11 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 
 - **Mode:** sequential after [T1, T4]
 - **Mô tả:** **PH-2** — Gateway học vị trí phòng từ `owner_pod_id` do Engine đóng dấu, không tự tính hash. Đây là lý do Giai đoạn 2 sẽ không phải sửa Gateway.
-- **Kết quả:** `mvn -pl :uni-gateway test -Dtest=RouteCacheTest` 5/5 pass (plain JUnit, logic thuần).
-  `mvn -pl :uni-gateway test -Dtest=FrameChannelClientTest` 3/3 pass (socket thật, 2 fake Engine
+- **Kết quả:** `mvn -pl :uni-websocket-gateway test -Dtest=RouteCacheTest` 5/5 pass (plain JUnit, logic thuần).
+  `mvn -pl :uni-websocket-gateway test -Dtest=FrameChannelClientTest` 3/3 pass (socket thật, 2 fake Engine
   pod trên loopback — ngoài yêu cầu Verification, chứng minh round-robin/learn/evict thật hoạt
   động cùng nhau, không chỉ đúng ở mức map). Toàn module 15/15, toàn reactor xanh. Chi tiết: `note.md`.
-- **File dự kiến:** `modules/uni-gateway/src/main/java/.../routing/FrameChannelClient.java`, `.../routing/RouteCache.java`
+- **File dự kiến:** `modules/uni-websocket-gateway/src/main/java/.../routing/FrameChannelClient.java`, `.../routing/RouteCache.java`
 - **Dependency:** Task 1, Task 4
 - **Acceptance criteria:**
   - [x] Gateway giữ connection tới **tất cả** Engine pod
@@ -237,9 +237,9 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
   - [x] Connection tới một Engine pod đứt → **xoá mọi entry cache trỏ tới pod đó**
   - [x] Cache **không có TTL** — entry sai tự sửa ở lần dùng kế tiếp (§8.2)
   - [x] `RouteCache` **không biết gì về `room_id % N`** — quy tắc sở hữu nằm hoàn toàn bên Engine
-- **Verification:** `mvn -pl :uni-gateway test -Dtest=RouteCacheTest`. Case bắt buộc: sau khi pod A đứt, không entry nào còn trỏ tới A; gói kế tiếp quay lại round-robin.
-- **Ghi chú:** Cần một `InternalFrameCodec` riêng ở `uni-gateway` (không tái dùng `FrameCodec`
-  package-private của `uni-engine` — hai service triển khai độc lập, chỉ dùng chung schema
+- **Verification:** `mvn -pl :uni-websocket-gateway test -Dtest=RouteCacheTest`. Case bắt buộc: sau khi pod A đứt, không entry nào còn trỏ tới A; gói kế tiếp quay lại round-robin.
+- **Ghi chú:** Cần một `InternalFrameCodec` riêng ở `uni-websocket-gateway` (không tái dùng `FrameCodec`
+  package-private của `uni-game-engine` — hai service triển khai độc lập, chỉ dùng chung schema
   `uni-protocol`, không dùng chung code Netty). `FrameChannelClient` nhận `EventLoopGroup` từ
   bên ngoài (dùng chung với `GatewayBootstrap`), không tự tạo group riêng — giữ đúng bất biến
   "EventLoop cố định = cores × 2" của Task 6 cho toàn bộ pod, không nhân đôi số thread.
@@ -251,9 +251,9 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 
 - **Mode:** sequential after [T1] · parallel with [T2, T4]
 - **Mô tả:** Biên WebSocket. Spring Boot chỉ lo bootstrap/actuator, đường đi gói tin là Netty thuần (quyết định A1).
-- **Kết quả:** `mvn -pl :uni-gateway test -Dtest=GatewayPipelineTest` 6/6 pass (`EmbeddedChannel`),
+- **Kết quả:** `mvn -pl :uni-websocket-gateway test -Dtest=GatewayPipelineTest` 6/6 pass (`EmbeddedChannel`),
   toàn module 7/7, không leak, không deprecation warning. Chi tiết: `note.md`.
-- **File dự kiến:** `modules/uni-gateway/src/main/java/.../net/GatewayBootstrap.java`, `.../auth/TicketAuthHandler.java`, `.../net/RoomRouteHandler.java`
+- **File dự kiến:** `modules/uni-websocket-gateway/src/main/java/.../net/GatewayBootstrap.java`, `.../auth/TicketAuthHandler.java`, `.../net/RoomRouteHandler.java`
 - **Dependency:** Task 1
 - **Acceptance criteria:**
   - [x] Pipeline đúng thứ tự: `HttpServerCodec → HttpObjectAggregator(50KB) → WebSocketServerProtocolHandler → TicketAuthHandler → RateLimitHandler → ProtobufDecoder → RoomRouteHandler`
@@ -273,7 +273,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
         không có LB/ingress nào trong đó (Gateway nhận traffic trực tiếp) — AC này thực chất nói
         về **manifest triển khai thật** (K8s ingress hoặc LB trước Gateway), thứ vẫn chưa tồn tại
         ở bất kỳ đâu trong repo. Vẫn để `[ ]`.
-- **Verification:** `mvn -pl :uni-gateway test -Dtest=GatewayPipelineTest`. Case bắt buộc: gói có `room_id` giả mạo → channel bị đóng.
+- **Verification:** `mvn -pl :uni-websocket-gateway test -Dtest=GatewayPipelineTest`. Case bắt buộc: gói có `room_id` giả mạo → channel bị đóng.
 - **Ghi chú quan trọng — thuật toán ký ticket KHÔNG được hiện thực ở đây:** tech-design.md
   G1a/G1c (thuật toán ký, phân phối khoá, dung sai lệch đồng hồ) **vẫn chưa chốt** — phải hỏi
   đội dịch vụ nền tảng, không tự bịa. `TicketAuthHandler` vì vậy nhận một `TicketVerifier`
@@ -292,13 +292,13 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 
 - **Mode:** sequential after [T6] · parallel with [T8]
 - **Mô tả:** Khoá theo `student_id`, **không** khoá theo IP làm tầng chính — trường học đi sau NAT dùng chung một IP (§10.1).
-- **Kết quả:** `mvn -pl :uni-gateway test -Dtest=RateLimitHandlerTest` 5/5 pass (`EmbeddedChannel`,
+- **Kết quả:** `mvn -pl :uni-websocket-gateway test -Dtest=RateLimitHandlerTest` 5/5 pass (`EmbeddedChannel`,
   `Clock` cố định) + `TokenBucketTest` 4/4 pass (logic thuần) + `IpAdmissionControllerTest` 3/3
   pass (logic thuần) + `IpAdmissionHandlerTest` 3/3 pass (`EmbeddedChannel` với remote address
   giả lập được). Toàn module 52/52, toàn reactor `mvn clean install` xanh. **Prove-it**: tạm bỏ
   qua verdict của `IpAdmissionController` trong `IpAdmissionHandler` — xác nhận đúng 1 test Red
   trước khi trả lại Green.
-- **File dự kiến:** `modules/uni-gateway/src/main/java/.../net/RateLimitHandler.java`
+- **File dự kiến:** `modules/uni-websocket-gateway/src/main/java/.../net/RateLimitHandler.java`
 - **Dependency:** Task 6
 - **Acceptance criteria:**
   - [x] Bucket riêng theo loại: `SUBMIT_ANSWER` 3/refill 1s · `UPDATE_DRAFT` 10/refill 10s · `HEARTBEAT` 2/refill 1 mỗi 30s
@@ -313,7 +313,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
         `SUBMIT_ANSWER` — xem ghi chú về `UPDATE_DRAFT`/`HEARTBEAT`). Riêng L1 (IP) là control ở
         tầng handshake, không phải per-message — vượt ngưỡng L1 **đóng channel** (đúng bản chất
         "chống DDoS thô", khác hẳn ngữ nghĩa `RATE_LIMIT_EXCEEDED` của các bucket per-message)
-- **Verification:** `mvn -pl :uni-gateway test -Dtest=RateLimitTest`. Case bắt buộc: **500 client sau cùng một IP đều kết nối được** — đây là kịch bản khách hàng thật.
+- **Verification:** `mvn -pl :uni-websocket-gateway test -Dtest=RateLimitTest`. Case bắt buộc: **500 client sau cùng một IP đều kết nối được** — đây là kịch bản khách hàng thật.
   (Tên file test thật là `RateLimitHandlerTest`, khớp class `RateLimitHandler` — `RateLimitTest`
   trong plan có vẻ là tên rút gọn.) Với L1, case tương đương là `IpAdmissionControllerTest`
   (4.000 lần admit cùng 1 IP đều `true`) — 500 < 4.000 nên không mâu thuẫn với case gốc.
@@ -357,14 +357,14 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 
 - **Mode:** sequential after [T6] · parallel with [T7]
 - **Mô tả:** `Map<room_id, Set<Channel>>` trong từng pod, broadcast bằng `retainedDuplicate()`. **Đây là task dễ sai nhất trong GĐ1.**
-- **Kết quả:** `mvn -pl :uni-gateway test -Dtest=FanoutTest` 4/4 pass — **đã chủ động đổi tạm
+- **Kết quả:** `mvn -pl :uni-websocket-gateway test -Dtest=FanoutTest` 4/4 pass — **đã chủ động đổi tạm
   sang `.retain()` để xác nhận test thật sự Red** (client thứ 2 nhận mảng byte rỗng), rồi
   trả lại `.retainedDuplicate()` để Green — không chỉ tin code đúng vì test pass ngay lần đầu.
   `RoomRegistryTest` 5/5 pass. Nối dây thật vào `TicketAuthHandler`/`RoomRouteHandler`/
   `GatewayPipeline`/`GatewayBootstrap` — `GatewayPipelineTest` thêm 2 case xác nhận add-on-join
   và remove-on-channelInactive qua đúng pipeline thật. Toàn module 35/35, toàn reactor xanh,
   `-Dio.netty.leakDetection.level=paranoid` sạch (đã bật sẵn toàn cục qua Surefire).
-- **File dự kiến:** `modules/uni-gateway/src/main/java/.../fanout/RoomRegistry.java`, `.../fanout/Broadcaster.java`
+- **File dự kiến:** `modules/uni-websocket-gateway/src/main/java/.../fanout/RoomRegistry.java`, `.../fanout/Broadcaster.java`
 - **Dependency:** Task 6
 - **Acceptance criteria:**
   - [x] Dùng **`retainedDuplicate()`**, tuyệt đối không `retain()`
@@ -373,7 +373,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
   - [x] `channelInactive` gỡ Channel khỏi **mọi** set ngay lập tức
   - [x] Engine gửi **một gói cho mỗi GW pod**, Gateway mới nhân bản (quyết định B1) — thoả mãn
         theo đúng hình dạng `Broadcaster.broadcast(roomId, mộtFrame)`, không cần code thêm gì
-- **Verification:** `mvn -pl :uni-gateway test -Dtest=FanoutTest` với **12 `EmbeddedChannel`** — kiểm **từng client nhận đủ số byte**, không chỉ client đầu. Chạy kèm `-Dio.netty.leakDetection.level=paranoid`, log leak phải sạch.
+- **Verification:** `mvn -pl :uni-websocket-gateway test -Dtest=FanoutTest` với **12 `EmbeddedChannel`** — kiểm **từng client nhận đủ số byte**, không chỉ client đầu. Chạy kèm `-Dio.netty.leakDetection.level=paranoid`, log leak phải sạch.
 - **Ghi chú:** `TicketAuthHandler` (Task 6) đăng ký channel vào `RoomRegistry` ngay khi bind
   `ChannelAttributes` (đây là chỗ duy nhất biết `room_id`), nhưng nó tự gỡ khỏi pipeline sau
   đó — nên việc gỡ đăng ký (`channelInactive`) đặt ở `RoomRouteHandler` (handler duy nhất còn
@@ -394,13 +394,13 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 
 - **Mode:** sequential after [T5, T8]
 - **Mô tả:** Một cơ chế backpressure duy nhất chạy suốt từ mailbox actor về tới socket client (§10.2). Đây là lợi ích chính của ADR-1 — làm hỏng nó là mất lý do bỏ gRPC.
-- **Kết quả:** `mvn -pl :uni-gateway,:uni-engine test -Dtest=BackpressureTest` — gateway 5/5 pass,
+- **Kết quả:** `mvn -pl :uni-websocket-gateway,:uni-game-engine test -Dtest=BackpressureTest` — gateway 5/5 pass,
   engine 2/2 pass. Case bắt buộc "client chậm không kéo tụt client khác cùng phòng" pass
   (`should_notAffectOtherClientsInTheSameRoom_when_oneClientIsSlow`) — **đã chủ động đảo ngược
   logic Critical/Best-effort để xác nhận 3 test liên quan thật sự Red trước khi tin Green**,
-  đúng tinh thần prove-it đã dùng ở Task 8. Toàn `uni-gateway` 40/40, toàn `uni-engine` 23/23,
+  đúng tinh thần prove-it đã dùng ở Task 8. Toàn `uni-websocket-gateway` 40/40, toàn `uni-game-engine` 23/23,
   toàn reactor xanh, không leak, không deprecation warning.
-- **File dự kiến:** `modules/uni-gateway/src/main/java/.../net/BackpressureHandler.java`, `modules/uni-engine/src/main/java/.../net/FrameChannelServer.java` (sửa)
+- **File dự kiến:** `modules/uni-websocket-gateway/src/main/java/.../net/BackpressureHandler.java`, `modules/uni-game-engine/src/main/java/.../net/FrameChannelServer.java` (sửa)
 - **Dependency:** Task 5, Task 8
 - **Acceptance criteria:**
   - [ ] Chuỗi đúng: mailbox đầy → Engine ngừng đọc Frame Channel → TCP window đóng → GW thấy `!isWritable()` → `autoRead(false)` trên WS client — **chỉ hiện thực từng khúc, chưa nối trọn chuỗi**, xem ghi chú
@@ -412,7 +412,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
         ghi-ngay-hoặc-bỏ trong đúng 1 vòng lặp, không có cấu trúc tích luỹ nào để "sửa sau rất đắt"
   - [x] Metric `channel_not_writable_total` được phát ra — trong `BackpressureHandler` (gateway)
         và `FrameChannelServer.BackpressureHandler` (engine, nested)
-- **Verification:** `mvn -pl :uni-gateway,:uni-engine test -Dtest=BackpressureTest` — client chậm không kéo tụt client khác cùng phòng.
+- **Verification:** `mvn -pl :uni-websocket-gateway,:uni-game-engine test -Dtest=BackpressureTest` — client chậm không kéo tụt client khác cùng phòng.
 - **Ghi chú quan trọng — vì sao "một phần xong":** đã hiện thực **`BackpressureHandler`** làm
   MỘT cơ chế duy nhất (writability của chính channel đó → toggle `autoRead` của chính nó),
   áp dụng nhất quán ở **cả 3 hop**: WS client (Gateway), GW→Engine (`FrameChannelClient`), và
@@ -439,11 +439,11 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 
 - **Mode:** sequential after [T4]
 - **Mô tả:** `room_id % N` **bên trong Engine**, cô lập trong đúng một class để Giai đoạn 2 chỉ thay class này bằng ShardRegion (quyết định B2).
-- **Kết quả:** `mvn -pl :uni-engine test -Dtest=RoomOwnershipTest` 5/5 pass (plain JUnit, logic
+- **Kết quả:** `mvn -pl :uni-game-engine test -Dtest=RoomOwnershipTest` 5/5 pass (plain JUnit, logic
   thuần) + `RoomOwnershipHandlerTest` 2/2 pass (`EmbeddedChannel`, thêm ngoài yêu cầu — chứng
   minh handler thật sự forward/đóng dấu NOT_OWNER đúng, không chỉ đúng thuật toán). Grep bắt
   buộc đã chạy, chỉ khớp `ModuloRoomOwnership`. Toàn module 21/21, toàn reactor xanh.
-- **File dự kiến:** `modules/uni-engine/src/main/java/.../room/RoomOwnership.java`, `.../net/FrameChannelServer.java` (sửa)
+- **File dự kiến:** `modules/uni-game-engine/src/main/java/.../room/RoomOwnership.java`, `.../net/FrameChannelServer.java` (sửa)
 - **Dependency:** Task 4
 - **Acceptance criteria:**
   - [x] Quy tắc sở hữu nằm sau **một interface duy nhất** (`RoomOwnership`), có đúng một implementation `ModuloRoomOwnership`
@@ -452,7 +452,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
         (chọn trả `NOT_OWNER` — đúng cơ chế §4.5 đã tài liệu hoá; không hiện thực forward
         Engine-to-Engine vì không nằm trong bất kỳ task nào)
   - [x] **Không class nào ngoài `RoomOwnership` biết tới phép `% N`** (grep được)
-- **Verification:** `mvn -pl :uni-engine test -Dtest=RoomOwnershipTest` + `grep -rn "% N\|modulo" modules/uni-engine/src/main --include=*.java` chỉ trả về `ModuloRoomOwnership`.
+- **Verification:** `mvn -pl :uni-game-engine test -Dtest=RoomOwnershipTest` + `grep -rn "% N\|modulo" modules/uni-game-engine/src/main --include=*.java` chỉ trả về `ModuloRoomOwnership`.
 - **Ghi chú:** `FrameChannelServer` đổi constructor để nhận thêm `RoomOwnership` (đã sửa
   `FrameChannelServerTest` theo — dùng `ModuloRoomOwnership` 1-pod cho kịch bản "sở hữu mọi
   phòng" của test cũ). Logic ownership + NOT_OWNER tách thành `RoomOwnershipHandler` riêng
@@ -465,11 +465,11 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 
 - **Mode:** sequential after [T2] · parallel with [T3]
 - **Mô tả:** Đủ để chơi trọn một ván quiz. Kèm rào chắn runtime tối thiểu (§10.5).
-- **Kết quả:** `mvn -pl :uni-engine test -Dtest=DefinitionLoaderTest` 8/8 pass +
+- **Kết quả:** `mvn -pl :uni-game-engine test -Dtest=DefinitionLoaderTest` 8/8 pass +
   `ScoringFormulaTest` 6/6 pass (thêm ngoài yêu cầu — chứng minh tập toán tử giới hạn tính
   đúng, không chỉ đúng cấu trúc dữ liệu). **Prove-it**: tạm vô hiệu hoá `rejectCycles(...)`,
   xác nhận đúng 2/8 test chu trình fail, rồi bật lại. Toàn module 37/37, toàn reactor xanh.
-- **File dự kiến:** `modules/uni-engine/src/main/java/.../definition/GameDefinition.java`, `.../definition/DefinitionLoader.java`
+- **File dự kiến:** `modules/uni-game-engine/src/main/java/.../definition/GameDefinition.java`, `.../definition/DefinitionLoader.java`
 - **Dependency:** Task 2
 - **Acceptance criteria:**
   - [x] Định nghĩa được: danh sách step, thời lượng mỗi step, `tick_mode`, công thức điểm
@@ -479,7 +479,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
   - [x] `missed_step_policy` **có mặt trong schema** với mặc định `ZERO`, dù luồng late join chưa làm ở GĐ1
   - [x] `tick_mode` chấp nhận `COALESCE` | `FIXED` trong schema, nhưng loader **từ chối `FIXED`
         lúc nạp** ở GĐ1 (chưa có implementation — xem Task 3, quyết định #4)
-- **Verification:** `mvn -pl :uni-engine test -Dtest=DefinitionLoaderTest` — definition có chu trình bị từ chối **lúc nạp**, không phải lúc chạy.
+- **Verification:** `mvn -pl :uni-game-engine test -Dtest=DefinitionLoaderTest` — definition có chu trình bị từ chối **lúc nạp**, không phải lúc chạy.
 - **Ghi chú:**
   - `ScoringFormula` là cây biểu thức `sealed interface` đóng (7 record: `Constant`,
     `IsCorrect`, `ResponseTimeMs`, `Add`, `Subtract`, `Multiply`, `Divide`, `Min`, `Max`) —
@@ -503,14 +503,14 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 
 - **Mode:** parallel — gộp bất cứ lúc nào sau T1
 - **Mô tả:** Các metric của §15.1 áp dụng được ở GĐ1. Không chờ tới cuối mới gắn.
-- **Kết quả:** Đã CHẠY THẬT cả hai app (`mvn -pl :uni-gateway spring-boot:run` /
-  `mvn -pl :uni-engine spring-boot:run`) và `curl` `/actuator/prometheus` thật — không chỉ tin
+- **Kết quả:** Đã CHẠY THẬT cả hai app (`mvn -pl :uni-websocket-gateway spring-boot:run` /
+  `mvn -pl :uni-game-engine spring-boot:run`) và `curl` `/actuator/prometheus` thật — không chỉ tin
   unit test. Cả 5 metric xuất hiện đúng ngay từ lúc khởi động, giá trị 0 (chưa có traffic thật):
   `actor_processing_latency_seconds{...}`, `actor_mailbox_depth 0.0`,
   `channel_not_writable_total 0.0` (engine), `fanout_latency_seconds{...}`,
   `handshake_rate_total 0.0`, `channel_not_writable_total 0.0` (gateway). Đã tắt cả hai process
   sau khi xác nhận. 88/88 test (46 gateway + 42 engine) pass, toàn reactor xanh.
-- **File dự kiến:** `modules/uni-engine/src/main/java/.../metrics/EngineMetrics.java`, `modules/uni-gateway/src/main/java/.../metrics/GatewayMetrics.java`
+- **File dự kiến:** `modules/uni-game-engine/src/main/java/.../metrics/EngineMetrics.java`, `modules/uni-websocket-gateway/src/main/java/.../metrics/GatewayMetrics.java`
 - **Dependency:** Task 1
 - **Acceptance criteria:**
   - [x] Engine: `actor_processing_latency` (p99), `actor_mailbox_depth` (p99)
@@ -611,16 +611,16 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
   phủ 1 trong 3 sub-AC còn treo ở trên (route cache đa pod); 2 sub-AC còn lại (kill pod, 2 GW)
   vẫn treo, xem chi tiết ngay trên.
 - **Ghi chú quan trọng — kiến trúc mới phải xây (Task 2/9 đều đã ghi rõ đây là việc của Task 13):**
-  - **`RoomSupervisor`** (`modules/uni-engine/.../room/RoomSupervisor.java`, mới): actor duy nhất
+  - **`RoomSupervisor`** (`modules/uni-game-engine/.../room/RoomSupervisor.java`, mới): actor duy nhất
     mỗi Engine pod, spawn `RoomActor` lười theo `room_id` lúc `JOIN_ROOM` đầu tiên, dịch
     `GameMessage` thành đúng `RoomActor.Command`, và học tập hợp connection nào đang theo dõi
     phòng nào (từ `JOIN_ROOM`) để fan-out broadcast tới đúng tập đó — không phải một target cố
     định như Task 3 giả định tạm.
-  - **`ChannelReplyActor`** (`modules/uni-engine/.../net/ChannelReplyActor.java`, mới): điểm
+  - **`ChannelReplyActor`** (`modules/uni-game-engine/.../net/ChannelReplyActor.java`, mới): điểm
     DUY NHẤT đóng dấu `InternalHeader{owner_pod_id, delivery_class}` trước khi ghi ra
     `Channel` — `RoomActor`/`RoomState` (Task 2/3) không hề biết pod id hay cách phân loại
     delivery class, đúng như thiết kế transport-agnostic ban đầu.
-  - **`EngineResponseRouter`** (`modules/uni-gateway/.../net/EngineResponseRouter.java`, mới):
+  - **`EngineResponseRouter`** (`modules/uni-websocket-gateway/.../net/EngineResponseRouter.java`, mới):
     nửa còn lại ở Gateway — `ANSWER_ACK` đi thẳng một học sinh (tìm channel theo `student_id`
     trong `RoomRegistry` của đúng phòng), mọi thứ khác qua `Broadcaster` (đã có từ Task 8),
     `NOT_OWNER` bị bỏ qua (không có payload, §8.2 chỉ sửa route cho lần sau), và `internal`
@@ -630,7 +630,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
     cần biết gì về tracing"). Nhân tiện áp **cùng ranh giới tin cậy cho `student_id`** như
     `room_id` đã có từ Task 6 (§10.6) — envelope's `student_id` trước đây KHÔNG bị ép về giá trị
     đã xác thực, một lỗ hổng nhỏ chưa ai phát hiện tới giờ vì chưa có gì tiêu thụ message đó.
-  - **`EngineSender`** (`modules/uni-gateway/.../routing/EngineSender.java`, mới): interface tách
+  - **`EngineSender`** (`modules/uni-websocket-gateway/.../routing/EngineSender.java`, mới): interface tách
     khỏi `FrameChannelClient` cụ thể, đúng khuôn `TicketVerifier` — để test `RoomRouteHandler`
     không cần mở real socket.
   - **`RouteCache.evictPod`** đổi `void` → trả `Set<String>` room bị ảnh hưởng;
@@ -661,7 +661,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 - **Ghi chú — build (`spring-boot-maven-plugin` phá reactor):** `mvn clean install` từ root ban
   đầu FAIL khi thêm `uni-e2e` — mọi `import com.uni.realtime.{gateway,engine}.*` báo "package
   does not exist", dù `mvn -pl :uni-e2e -am test` chạy tốt. Nguyên nhân: `repackage` (không có
-  `<classifier>`) thay artifact chính của `uni-gateway`/`uni-engine` bằng jar thực thi (class nằm
+  `<classifier>`) thay artifact chính của `uni-websocket-gateway`/`uni-game-engine` bằng jar thực thi (class nằm
   dưới `BOOT-INF/classes`), và khi `install` (không phải `test-compile`) chạy tới `package` cho
   hai module đó TRƯỚC LƯỢT `uni-e2e`, reactor resolve theo artifact ĐÃ BỊ THAY, không phải
   `target/classes` nữa. Sửa bằng thêm `<classifier>exec</classifier>` vào cấu hình
@@ -706,7 +706,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
   frame đó thay vì trả lời `NOT_OWNER` bịa chủ phòng. `DistributedRoomLeaseStore` (Lettuce, 2 key
   `room:owner:{id}`/`room:epoch:{id}`, Lua script cho renew atomic) — **CHƯA verify được với
   Redis thật** (không có Redis/Docker trong môi trường viết code này, giống hệt caveat của
-  `TicketVerifier`). Thêm dependency `io.lettuce:lettuce-core` vào `uni-engine/pom.xml` (version
+  `TicketVerifier`). Thêm dependency `io.lettuce:lettuce-core` vào `uni-game-engine/pom.xml` (version
   quản lý transitively qua BOM Spring Boot). Test mới: `LeaseBasedRoomOwnershipTest` (11 case,
   logic thuần + fake `RoomLeaseStore`) + 2 case mới trong `RoomOwnershipHandlerTest`
   (drop-khi-chưa-biết-owner, `ensureAcquired` được gọi trước khi check). `mvn clean install`
@@ -804,7 +804,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
   tán thay đổi ring, chính là bài toán Pekko Cluster Sharding đã giải sẵn (có SBR, có kiểm chứng
   thực tế). Tự làm lại bằng tay rủi ro cao hơn dùng Redis (đã có `SETNX` atomic sẵn) hoặc dùng
   thẳng Sharding. Không triển khai Consistent Hashing ở GĐ1.
-- **File dự kiến:** `modules/uni-engine/src/main/java/.../room/LeaseBasedRoomOwnership.java`
+- **File dự kiến:** `modules/uni-game-engine/src/main/java/.../room/LeaseBasedRoomOwnership.java`
   (mới, implement `RoomOwnership`), `.../persistence/DistributedRoomSnapshotStore.java` (mới),
   `RoomSupervisor.java`/`RoomActor.java` (sửa: renew lease định kỳ, nạp snapshot khi giành được lease)
 - **Dependency:** Task 13 (cần `RoomSupervisor`/`RoomActor` đã nối dây thật)
@@ -937,7 +937,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
   Hướng đúng: thêm một tín hiệu riêng, gửi **sau** khi Task 14 xác nhận ghi Redis thành công, báo
   cho client biết seq nào mới thật sự an toàn để xoá khỏi RingBuffer.
 - **File dự kiến:** `modules/uni-protocol/src/main/proto/game_message.proto` (thêm message/field
-  mới — hình dạng cụ thể **chưa chốt**, xem Acceptance criteria), `modules/uni-engine/.../room/RoomActor.java`
+  mới — hình dạng cụ thể **chưa chốt**, xem Acceptance criteria), `modules/uni-game-engine/.../room/RoomActor.java`
   (gửi tín hiệu mới sau khi `DistributedRoomSnapshotStore` của Task 14 xác nhận ghi xong)
 - **Dependency:** Task 14 (cần sự kiện "ghi Redis xong" làm trigger); PH-3 (client phải đổi điều
   kiện discard — nằm ngoài phạm vi GĐ1 server nhưng bắt buộc phối hợp trước khi công bố SLA)
@@ -961,7 +961,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
         một chỉnh sửa tay khác ghi nhầm `COMMITTED_SEQ` là Critical — hỏi lại người dùng, xác nhận
         **giữ Best-effort như code đã implement**, sửa tài liệu khớp code thay vì đảo ngược code)
 - **Verification:** Test mô phỏng Redis lỗi (`DistributedRoomSnapshotStore` trả lỗi) → xác nhận
-  `COMMITTED_SEQ` không được gửi cho lượt đó. Test tích hợp (`uni-engine` hoặc `uni-e2e`) xác nhận
+  `COMMITTED_SEQ` không được gửi cho lượt đó. Test tích hợp (`uni-game-engine` hoặc `uni-e2e`) xác nhận
   `COMMITTED_SEQ` cho một `sequence` luôn tới **sau** `ANSWER_ACK` cùng `sequence` đó, không bao
   giờ tới trước hoặc thay thế nó.
 - **Ghi chú:** Đây là thay đổi hợp đồng giao thức, ảnh hưởng cả PH-3 (client) — không tự quyết
@@ -994,7 +994,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
   thêm một số thứ tự **do server gắn**, tăng dần mỗi lần phòng flush, để PH-3 có cơ sở thiết kế
   cơ chế phát hiện gap cho broadcast.
 - **File dự kiến:** `modules/uni-protocol/src/main/proto/game_message.proto` (thêm field
-  `broadcast_seq` vào `RoomStateSnapshot`), `modules/uni-engine/.../room/RoomState.java` (bộ đếm
+  `broadcast_seq` vào `RoomStateSnapshot`), `modules/uni-game-engine/.../room/RoomState.java` (bộ đếm
   tăng dần mỗi lần `flush()`/`joinRoom()` phát ra một bản ghi)
 - **Dependency:** Task 3 (cần luồng coalescing flush đã tồn tại để gắn số thứ tự vào đúng chỗ)
 - **Acceptance criteria:**
@@ -1007,7 +1007,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
         `ANSWER_ACK` (không phải `ROOM_STATE_SNAPSHOT`) — **chưa làm riêng case "bỏ N gói liên
         tiếp rồi kiểm tra client tính được khoảng cách"** vì đó là logic phía client (PH-3), Task
         này chỉ đảm bảo server phát đúng dãy số liên tục để client làm việc đó
-- **Verification:** `mvn -pl :uni-engine test -Dtest=TickCoalescingTest` mở rộng — case mới xác
+- **Verification:** `mvn -pl :uni-game-engine test -Dtest=TickCoalescingTest` mở rộng — case mới xác
   nhận `broadcast_seq` tăng đúng thứ tự qua nhiều lần flush liên tiếp và không reset giữa full
   snapshot với delta.
 - **Ghi chú:** Đây là điều kiện cần, không phải đủ, cho RESYNC broadcast — PH-3 vẫn phải tự thiết
@@ -1051,7 +1051,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
   tình cờ (điểm khởi tạo mặc định = 0), không phải policy `ZERO` được thực thi có chủ đích. Nếu
   cấu hình `SKIP` hoặc `ALLOW_LATE`, engine vẫn luôn hành xử như `ZERO`. Task này nối
   `GameDefinition.missedStepPolicy` vào logic chuyển câu thật.
-- **File dự kiến:** `modules/uni-engine/src/main/java/.../room/RoomActor.java`,
+- **File dự kiến:** `modules/uni-game-engine/src/main/java/.../room/RoomActor.java`,
   `.../room/RoomState.java` (đọc `missedStepPolicy` lúc chuyển sang câu kế tiếp/kết thúc game)
 - **Dependency:** Task 11 (`GameDefinition`/`MissedStepPolicy` đã có trong schema)
 - **Acceptance criteria:**
@@ -1064,8 +1064,8 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
         tiên (chưa có nhánh nào để test qua)
   - [x] Test xác nhận: definition khai `missed_step_policy: SKIP` hoặc `ALLOW_LATE` → bị
         `DefinitionLoader` từ chối lúc nạp, không lọt tới `RoomActor`
-- **Verification:** `mvn -pl :uni-engine test -Dtest=DefinitionLoaderTest` (case mới: reject
-  `SKIP`/`ALLOW_LATE`) + `mvn -pl :uni-engine test -Dtest=RoomActorTest` (case mới: không trả lời
+- **Verification:** `mvn -pl :uni-game-engine test -Dtest=DefinitionLoaderTest` (case mới: reject
+  `SKIP`/`ALLOW_LATE`) + `mvn -pl :uni-game-engine test -Dtest=RoomActorTest` (case mới: không trả lời
   trước deadline → 0 điểm qua đúng nhánh `missedStepPolicy`, không phải qua giá trị mặc định tình
   cờ).
 - **Ghi chú:** Không mở rộng sang hiện thực `SKIP`/`ALLOW_LATE` thật ở GĐ1 — `_context.md` §7.5
@@ -1087,7 +1087,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
   `acks=1`, **chưa verify Kafka thật** — không có broker trong môi trường này, cùng caveat
   `DistributedRoomLeaseStore`). `kafka-clients` hoá ra **đã có sẵn transitively** qua
   `uni-observability` (dùng bởi `KafkaLogAppender` có từ trước) — khai báo tường minh thêm trong
-  `uni-engine/pom.xml` vì code dùng trực tiếp, không chỉ kế thừa.
+  `uni-game-engine/pom.xml` vì code dùng trực tiếp, không chỉ kế thừa.
 
   Test: 4 case trong `GameEventPublisherTest` — đặc biệt `should_returnImmediately_evenWhenTheSinkIsStuck`
   (sink treo vĩnh viễn qua `CountDownLatch`, đo thời gian `publish()` phải < 500ms) và
@@ -1133,8 +1133,8 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
   đường xử lý đồng bộ của `RoomActor`/Netty EventLoop là anti-pattern (đã giải thích chi tiết
   trong hội thoại review kiến trúc 2026-09-07). Task này hiện thực đúng 3 lớp cách ly mà §9.3 đã
   yêu cầu, trước khi `RoomActor` lần đầu chạm Kafka thật.
-- **File dự kiến:** `modules/uni-engine/pom.xml` (thêm dependency `kafka-clients` — chưa có),
-  `modules/uni-engine/src/main/java/.../events/GameEventPublisher.java` (mới, hàng đợi bounded +
+- **File dự kiến:** `modules/uni-game-engine/pom.xml` (thêm dependency `kafka-clients` — chưa có),
+  `modules/uni-game-engine/src/main/java/.../events/GameEventPublisher.java` (mới, hàng đợi bounded +
   thread tiêu thụ riêng), `.../room/RoomActor.java` (sửa: gọi `enqueue(...)` non-blocking thay vì
   gọi Kafka API trực tiếp)
 - **Dependency:** Task 13 (cần `RoomActor`/`RoomSupervisor` đã nối dây thật để có sự kiện thật mà
@@ -1153,7 +1153,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
         test này sẽ treo/timeout thay vì pass trong < 1s như kết quả thật
   - [x] Test riêng: hàng đợi đầy → drop có log + đếm tăng, publisher xử lý sự kiện kế tiếp bình
         thường (`should_swallowASinkException_andKeepProcessingLaterEvents`)
-- **Verification:** `mvn -pl :uni-engine test -Dtest=GameEventPublisherTest` (logic hàng đợi
+- **Verification:** `mvn -pl :uni-game-engine test -Dtest=GameEventPublisherTest` (logic hàng đợi
   thuần, không cần Kafka thật) + test tích hợp dùng fake/mock producer chặn `send()` để chứng
   minh `RoomActor` không bị kéo theo — đúng tinh thần prove-it đã dùng ở Task 8/9 (chủ động gây
   lỗi trước khi tin code đúng).
@@ -1175,7 +1175,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 - **Mode:** parallel — thuần tài liệu vận hành, không phụ thuộc/chặn task code nào
 - **Mô tả:** **Đây không phải bug sửa được bằng code trong GĐ1.** `ModuloRoomOwnership`
   (`room_id % N`) dùng danh sách pod **tĩnh** (`ENGINE_POD_COUNT`/`ENGINE_POD_ID`, cố định lúc
-  khởi động — xem `application.yml` của `uni-engine`), cô lập có chủ đích sau interface
+  khởi động — xem `application.yml` của `uni-game-engine`), cô lập có chủ đích sau interface
   `RoomOwnership` (ADR-007) đúng để GĐ2 thay bằng Cluster Sharding. Việc "sửa" thật là chuyển
   sang Redis Lease hoặc Cluster Sharding — nằm ngoài phạm vi GĐ1 theo chính `_context.md`. Rủi ro
   cụ thể bạn nêu (scale Engine giữa ca thi đấu làm vỡ hash) **đã được ghi nhận sẵn** ở
@@ -1214,7 +1214,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
   vụ (không phải giả lập rỗng).
 - **Kết quả:**
   - **G1a/G1c (dev-only, KHÔNG bao giờ dùng ở staging/production):**
-    `modules/uni-gateway/src/main/java/.../auth/dev/DevTicketCodec.java` (HMAC-SHA256, ký/verify
+    `modules/uni-websocket-gateway/src/main/java/.../auth/dev/DevTicketCodec.java` (HMAC-SHA256, ký/verify
     ticket dev cục bộ, không liên quan gì tới thuật toán ký thật mà platform team sẽ chốt),
     `DevTicketReplayGuard.java` (in-memory, single-pod, KHÔNG phải cơ chế chống replay thật —
     xem javadoc), `DevTicketVerifier.java` (bean `TicketVerifier` đầu tiên từng tồn tại trong
@@ -1222,7 +1222,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
     ký bean này tự động mở `GatewayNetworkLifecycle` (vốn `@ConditionalOnBean(TicketVerifier.class)`)
     — đúng như javadoc của lớp đó đã hứa "chỉ cần thêm 1 bean".
   - **Bug tiềm ẩn phát hiện khi bean `TicketVerifier` đầu tiên xuất hiện:** `application.yml` của
-    `uni-gateway` định nghĩa `uni.engine.pods` (ngang cấp `uni.gateway`), nhưng
+    `uni-websocket-gateway` định nghĩa `uni.engine.pods` (ngang cấp `uni.gateway`), nhưng
     `GatewayNetworkLifecycle` đọc `@Value("${uni.gateway.engine.pods}")` — sai đường dẫn, chưa bao
     giờ lộ ra vì `GatewayNetworkLifecycle` chưa từng được khởi tạo. Đã sửa: lồng `engine.pods` vào
     đúng `uni.gateway.engine.pods`.
@@ -1238,7 +1238,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
     `WalkingSkeletonTest`'s `WsTestClient` cũ (đã xoá, thay bằng lớp dùng chung này): RingBuffer
     10 phần tử, `sequence` client-side tăng dần, `simulateDisconnectAndReconnect` gửi `RESYNC`
     thật. `joinRoomWithRetry` — xem "Phát hiện quan trọng" bên dưới.
-  - **Dockerfiles + compose:** `modules/uni-gateway/Dockerfile`, `modules/uni-engine/Dockerfile`
+  - **Dockerfiles + compose:** `modules/uni-websocket-gateway/Dockerfile`, `modules/uni-game-engine/Dockerfile`
     (runtime-only, COPY jar `-exec` đã build sẵn trên host, không build Maven trong Docker) +
     `docker-compose.dev.yml` ở root (project name riêng `uni-realtime-dev`, 1 gateway + 2 engine
     pod thật + Redis 7 + Kafka KRaft đơn broker, healthcheck TCP `/dev/tcp` trên port 9100 vì
@@ -1248,7 +1248,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
     không chạy trong `mvn clean install` thường) join 2 phòng băm về 2 pod khác nhau, disconnect +
     RESYNC thật qua mạng Docker thật — **PASS**. `redis-cli KEYS "*"` xác nhận `room:owner:*`,
     `room:epoch:*`, `room:snap:*` — **lần đầu `DistributedRoomLeaseStore`/`DistributedRoomSnapshotStore` chạm
-    Redis thật**. `KafkaGameEventSinkDockerIT` (mới, `uni-engine`) xác nhận `KafkaGameEventSink`
+    Redis thật**. `KafkaGameEventSinkDockerIT` (mới, `uni-game-engine`) xác nhận `KafkaGameEventSink`
     gửi được tới Kafka thật — **lần đầu chạm Kafka thật**.
   - **Phát hiện quan trọng #1 (đã có giải pháp, KHÔNG sửa code sản phẩm):** JOIN_ROOM đầu tiên của
     một phòng mới có thể rơi vào sai pod (gateway đoán round-robin khi chưa học route, §4.5 bước
@@ -1285,15 +1285,15 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
     RESYNC" bằng hạ tầng Docker thật — phần đó do `RoomActorResyncTest` (in-process) đảm nhiệm.
   - Vẫn không có K8s manifest nào — ngoài phạm vi "test cục bộ".
 - **File mới/sửa chính:** xem "Kết quả" ở trên; danh sách đầy đủ:
-  `docker-compose.dev.yml`, `modules/uni-gateway/Dockerfile`, `modules/uni-engine/Dockerfile`,
-  `modules/uni-gateway/src/main/java/.../auth/dev/{DevTicketCodec,DevTicketReplayGuard,DevTicketVerifier}.java`,
-  `modules/uni-gateway/src/main/resources/{application.yml,application-dev-docker.yml}`,
-  `modules/uni-engine/src/main/java/.../room/{RoomActor,RoomState,RoomSupervisor}.java`,
-  `modules/uni-engine/src/main/java/.../persistence/KafkaGameEventSink.java`,
+  `docker-compose.dev.yml`, `modules/uni-websocket-gateway/Dockerfile`, `modules/uni-game-engine/Dockerfile`,
+  `modules/uni-websocket-gateway/src/main/java/.../auth/dev/{DevTicketCodec,DevTicketReplayGuard,DevTicketVerifier}.java`,
+  `modules/uni-websocket-gateway/src/main/resources/{application.yml,application-dev-docker.yml}`,
+  `modules/uni-game-engine/src/main/java/.../room/{RoomActor,RoomState,RoomSupervisor}.java`,
+  `modules/uni-game-engine/src/main/java/.../persistence/KafkaGameEventSink.java`,
   `modules/uni-e2e/src/test/java/.../support/SimulatedStudentClient.java` (mới),
   `modules/uni-e2e/src/test/java/.../{WalkingSkeletonTest,RoomActorResyncTest}.java`,
   `modules/uni-e2e/src/test/java/.../docker/DockerComposeResyncIT.java` (mới),
-  `modules/uni-engine/src/test/java/.../persistence/KafkaGameEventSinkDockerIT.java` (mới).
+  `modules/uni-game-engine/src/test/java/.../persistence/KafkaGameEventSinkDockerIT.java` (mới).
 - **Verification:** xem "Kết quả" — mọi bước đều CHẠY THẬT (build jar → docker compose up →
   actuator health → 2 Docker IT chạy pass → `redis-cli`/Kafka consumer xác nhận dữ liệu thật),
   không dừng ở mức viết code/đọc bằng mắt.
@@ -1311,8 +1311,8 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
       119 cũ đã lỗi thời từ trước Task 14; 2 test tích hợp Docker của Task 20 tách riêng, không
       tính vào con số này vì không chạy trong build thường)
 - [x] Test suite chạy với `-Dio.netty.leakDetection.level=paranoid`, **không có leak**
-- [x] `grep -rn "client_timestamp_ms" modules/uni-engine/src/main --include=*.java` → **không hit nào trong đường chấm điểm** (tái xác nhận 2026-09-07)
-- [x] `grep -rn "\.retain()" modules/uni-gateway/src/main --include=*.java` → **không hit nào trong vòng fan-out** (tái xác nhận 2026-09-07)
+- [x] `grep -rn "client_timestamp_ms" modules/uni-game-engine/src/main --include=*.java` → **không hit nào trong đường chấm điểm** (tái xác nhận 2026-09-07)
+- [x] `grep -rn "\.retain()" modules/uni-websocket-gateway/src/main --include=*.java` → **không hit nào trong vòng fan-out** (tái xác nhận 2026-09-07)
 - [x] Không có TODO/FIXME chưa resolve trong code mới
 - [x] SPIKE đã có kết luận và T3 khớp với kết luận đó
 - [ ] `_context.md` cập nhật `dev_selftest` và `phase` — vẫn `phase: dev`, `dev_selftest: pending`

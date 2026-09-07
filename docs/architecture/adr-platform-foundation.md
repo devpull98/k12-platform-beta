@@ -30,7 +30,7 @@ has ever gotten a single service onto Java 17+ / Spring Boot 3.x, because:
 
 **This repo already has the same latent defect.** Root `pom.xml` declares
 `<parent>spring-boot-starter-parent:4.1.1</parent>` and `<properties><java.version>25</java.version>`
-directly. Every module (`uni-protocol`, `uni-observability`, `uni-gateway`, `uni-engine`,
+directly. Every module (`uni-protocol`, `uni-observability`, `uni-websocket-gateway`, `uni-game-engine`,
 `uni-e2e`) has `com.uni:uni-realtime` (this root) as its own `<parent>`, so all five inherit Boot
 4.1.1 / Java 25 transitively through that one link. It hasn't bitten yet only because every
 module in the reactor today happens to want the same stack. It will bite the moment a k12 service
@@ -51,7 +51,7 @@ Concretely:
 - Root `pom.xml`: no `<parent>` on `org.springframework.boot:spring-boot-starter-parent`. No
   root-level `<properties><java.version>`. Stays `packaging=pom`, keeps the module list and the
   BOM imports that are genuinely about *this* product (protobuf, pekko, internal artifacts).
-- `uni-gateway` and `uni-engine` (the two `@SpringBootApplication` deployables): each declares its
+- `uni-websocket-gateway` and `uni-game-engine` (the two `@SpringBootApplication` deployables): each declares its
   own `<properties><java.version>25</java.version>`, imports `spring-boot-dependencies:4.1.1` in
   its own `<dependencyManagement>`, and explicitly configures `spring-boot-maven-plugin` (no
   longer inherited from the starter parent's plugin management).
@@ -62,7 +62,7 @@ Concretely:
 - A future migrated k12 service arriving in this reactor does the same thing with **its own**
   Boot version (2.7.x, 3.x, whatever it actually needs at the time it moves) — it never has to
   touch this repo's root POM or any other module's POM to do so, and nothing it does can force a
-  version change on `uni-gateway`/`uni-engine`.
+  version change on `uni-websocket-gateway`/`uni-game-engine`.
 
 ## Package/module layout convention for future migrated services
 
@@ -74,7 +74,7 @@ meant to host many independently-versioned services, the layering happens **insi
 own package tree**, one module per bounded context (or per deployable), e.g. a future
 `modules/k12-cms/` would have
 `com.educa.k12cms.{domain,application,infrastructure,interfaces}` internally, exactly like
-`uni-engine`'s own packages are organized by concern today. This keeps the two concerns properly
+`uni-game-engine`'s own packages are organized by concern today. This keeps the two concerns properly
 separated: **module boundary = independent build/version boundary**, **package layout inside a
 module = DDD layering**. Conflating them (one giant module, internally layered, like
 `chore/init-skeleton` did) is what makes independent version upgrades impossible in the first
@@ -83,8 +83,8 @@ place — see the k12 finding above.
 ## Consequences
 
 - **Gained:** a future k12 service can be dropped into this reactor's module list on whatever
-  Boot/Java version it currently runs, with zero changes to root or to `uni-gateway`/`uni-engine`.
-  Upgrading `uni-engine` to a newer Boot/Java later is similarly a one-module, one-file change.
+  Boot/Java version it currently runs, with zero changes to root or to `uni-websocket-gateway`/`uni-game-engine`.
+  Upgrading `uni-game-engine` to a newer Boot/Java later is similarly a one-module, one-file change.
 - **Cost:** `spring-boot-maven-plugin` and other build-behavior defaults that
   `spring-boot-starter-parent` used to supply for free (resource filtering, plugin version
   pinning, etc.) must now be declared explicitly per Boot-based module. This is intentional —

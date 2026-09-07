@@ -25,7 +25,7 @@ scrape_configs:
       - targets: ["host.docker.internal:8080"]
         labels:
           service_type: springboot
-          application: uni-gateway
+          application: uni-websocket-gateway
 
   - job_name: gateway-2
     metrics_path: /actuator/prometheus
@@ -33,7 +33,7 @@ scrape_configs:
       - targets: ["host.docker.internal:8081"]
         labels:
           service_type: springboot
-          application: uni-gateway-2
+          application: uni-websocket-gateway-2
 
   - job_name: engine-1
     metrics_path: /actuator/prometheus
@@ -41,7 +41,7 @@ scrape_configs:
       - targets: ["host.docker.internal:8090"]
         labels:
           service_type: springboot
-          application: uni-engine
+          application: uni-game-engine
 
   - job_name: engine-2
     metrics_path: /actuator/prometheus
@@ -49,7 +49,7 @@ scrape_configs:
       - targets: ["host.docker.internal:8091"]
         labels:
           service_type: springboot
-          application: uni-engine-2
+          application: uni-game-engine-2
 
   # No mysql / redis / kafka / mongodb / node jobs: those exporters lived in the root
   # docker-compose.yml, which Phase 1 does not have (no datastore on the hot path).

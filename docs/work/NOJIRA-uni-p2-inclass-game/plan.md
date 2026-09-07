@@ -45,34 +45,34 @@ Giai đoạn 2 bổ sung các chế độ chơi tương tác nhóm và tập th�
 
 ### Task 21: Nâng cấp `GameDefinition` & `RoomState` cho Cooperative Mode
 - **Mô tả:** Cấu hình `progress_target`, `progress_stages` trong `GameDefinition`. `RoomState` theo dõi tổng điểm/câu đúng cả phòng.
-- **File:** `modules/uni-engine/.../definition/GameDefinition.java`, `modules/uni-engine/.../room/RoomState.java`
+- **File:** `modules/uni-game-engine/.../definition/GameDefinition.java`, `modules/uni-game-engine/.../room/RoomState.java`
 - **Acceptance Criteria:**
   - [ ] Tính toán `% = (tổng_câu_đúng / progress_target) * 100` khi có `SubmitAnswer` hợp lệ
   - [ ] Tự động chuyển `stage_index` visual khi đạt mốc % tương ứng
 
 ### Task 22: Triển khai Chế độ Chia Nhóm (`Team` Mode) & Scoped Draft Sync
 - **Mô tả:** Quản lý danh sách đội nhóm trong `RoomState`. Xử lý sự kiện `UPDATE_DRAFT` và broadcast scoped trong nhóm.
-- **File:** `modules/uni-engine/.../room/RoomActor.java`, `modules/uni-engine/.../room/TeamState.java`
+- **File:** `modules/uni-game-engine/.../room/RoomActor.java`, `modules/uni-game-engine/.../room/TeamState.java`
 - **Acceptance Criteria:**
   - [ ] Gửi `UPDATE_DRAFT` chỉ tới 3 thành viên còn lại trong cùng `team_id`
   - [ ] Tính điểm dồn nhóm (`sum_all`) hoặc điểm trung bình nhóm (`average`) chuẩn xác
 
 ### Task 23: Triển khai FSM Win Condition Evaluator & Shared Resource Penalty
 - **Mô tả:** Đánh giá điều kiện thắng (`progress_completed`, `first_to_finish`, `most_points_when_time_up`) và xử lý phạt tài nguyên chung (trừ `time` hoặc `lives`).
-- **File:** `modules/uni-engine/.../scoring/WinConditionEvaluator.java`, `modules/uni-engine/.../scoring/PenaltyCalculator.java`
+- **File:** `modules/uni-game-engine/.../scoring/WinConditionEvaluator.java`, `modules/uni-game-engine/.../scoring/PenaltyCalculator.java`
 - **Acceptance Criteria:**
   - [ ] Khi thỏa mãn `win_condition`, FSM đổi trạng thái `FINISHED` lập tức
   - [ ] Trả lời sai bị trừ đúng số thời gian/mạng cấu hình trong `shared_resource`
 
 ### Task 24: Tích hợp Kafka Event Publisher với `lms-worker`
 - **Mô tả:** Phát `TeamSubmitExerciseEvent`, `GroupDiscussionEvent`, `VoteGroupNameEvent` sang Kafka topic `game.events.v1`.
-- **File:** `modules/uni-engine/.../events/GameEventPublisher.java`
+- **File:** `modules/uni-game-engine/.../events/GameEventPublisher.java`
 - **Acceptance Criteria:**
   - [ ] Payload JSON/Protobuf đúng contract mà `SubmitExerciseListener` và `ActiveGroupDiscussionListener` của `lms-worker` mong đợi
 
 ### Task 25: Unit Tests & RoomActor FSM Tests
 - **Mô tả:** Viết Unit Test phủ 100% logic tính tiến trình, phân nhóm, và phạt tài nguyên.
-- **File:** `modules/uni-engine/src/test/java/.../room/CooperativeRoomActorTest.java`, `TeamRoomActorTest.java`
+- **File:** `modules/uni-game-engine/src/test/java/.../room/CooperativeRoomActorTest.java`, `TeamRoomActorTest.java`
 
 ### Task 26: Xây dựng E2E Cucumber Tests (`uni-e2e`)
 - **Mô tả:** Khởi chạy 12 client WebSocket giả lập kiểm thử 3 kịch bản BDD thực chiến.

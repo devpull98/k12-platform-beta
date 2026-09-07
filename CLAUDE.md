@@ -66,14 +66,14 @@ inconsistency.
 ```
 mvn clean install                            # build everything + run tests
 mvn -pl :uni-protocol test                   # protobuf round-trip
-mvn -pl :uni-engine test -Dtest=RoomActorTest
-mvn -pl :uni-gateway spring-boot:run         # gateway: actuator 8080, WebSocket 9000
-mvn -pl :uni-engine spring-boot:run          # engine:  actuator 8090, frame channel 9100
-mvn -pl :uni-gateway spring-boot:run -Dspring-boot.run.arguments=--server.port=8081  # 2nd instance
+mvn -pl :uni-game-engine test -Dtest=RoomActorTest
+mvn -pl :uni-websocket-gateway spring-boot:run         # gateway: actuator 8080, WebSocket 9000
+mvn -pl :uni-game-engine spring-boot:run          # engine:  actuator 8090, frame channel 9100
+mvn -pl :uni-websocket-gateway spring-boot:run -Dspring-boot.run.arguments=--server.port=8081  # 2nd instance
 cd observability && docker compose up -d     # Grafana on :3000
 ```
 
-Select modules by artifactId (`-pl :uni-engine`), not by path — the selector then works from
+Select modules by artifactId (`-pl :uni-game-engine`), not by path — the selector then works from
 the repo root regardless of where the module directory sits.
 
 Surefire already passes `-Dio.netty.leakDetection.level=paranoid` for every module — a
@@ -87,18 +87,18 @@ Every Maven module lives under `modules/` with a `uni-` prefix. Everything else 
 root is not a module: `docs/`, `observability/` (the Grafana compose stack), `scripts/`.
 
 ```
-modules/uni-protocol/        game_message.proto + generated Java. Depended on by BOTH
-                             services — never copy the .proto into a second module.
-modules/uni-observability/   Plumbing shared by both services: Prometheus/OTLP wiring, JSON
-                             logging, Kafka log appender (prod profile only), Alertmanager
-                             webhook relay. Inherited from the removed project.
-modules/uni-gateway/         WebSocket edge: handshake, ticket auth, rate limiting, room
-                             registry, zero-copy fan-out, backpressure, learned routing.
-modules/uni-engine/          Game engine: RoomActor FSM, scoring, dedupe, tick coalescing,
-                             room ownership, internal frame channel server.
+modules/uni-protocol/            game_message.proto + generated Java. Depended on by BOTH
+                                  services — never copy the .proto into a second module.
+modules/uni-observability/       Plumbing shared by both services: Prometheus/OTLP wiring, JSON
+                                  logging, Kafka log appender (prod profile only), Alertmanager
+                                  webhook relay. Inherited from the removed project.
+modules/uni-websocket-gateway/   WebSocket edge: handshake, ticket auth, rate limiting, room
+                                  registry, zero-copy fan-out, backpressure, learned routing.
+modules/uni-game-engine/         Game engine: RoomActor FSM, scoring, dedupe, tick coalescing,
+                                  room ownership, internal frame channel server.
 ```
 
-Only `uni-gateway` and `uni-engine` are deployable; the other two are libraries.
+Only `uni-websocket-gateway` and `uni-game-engine` are deployable; the other two are libraries.
 
 Both services scan `com.uni.realtime` so `uni-observability`'s beans are picked up.
 Narrowing that scan silently disables alerting while everything still starts.

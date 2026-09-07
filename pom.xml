@@ -14,8 +14,8 @@
     <modules>
         <module>modules/uni-protocol</module>
         <module>modules/uni-observability</module>
-        <module>modules/uni-gateway</module>
-        <module>modules/uni-engine</module>
+        <module>modules/uni-websocket-gateway</module>
+        <module>modules/uni-game-engine</module>
         <module>modules/uni-e2e</module>
     </modules>
 
@@ -64,12 +64,12 @@
             </dependency>
             <dependency>
                 <groupId>com.uni</groupId>
-                <artifactId>uni-gateway</artifactId>
+                <artifactId>uni-websocket-gateway</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
                 <groupId>com.uni</groupId>
-                <artifactId>uni-engine</artifactId>
+                <artifactId>uni-game-engine</artifactId>
                 <version>${project.version}</version>
             </dependency>
         </dependencies>

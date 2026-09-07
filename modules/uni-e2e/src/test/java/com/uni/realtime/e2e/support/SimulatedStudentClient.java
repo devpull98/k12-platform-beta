@@ -1,6 +1,6 @@
 package com.uni.realtime.e2e.support;
 
-import com.uni.realtime.gateway.net.GatewayPipeline;
+import com.uni.realtime.websocketgateway.net.GatewayPipeline;
 import com.uni.realtime.protocol.GameMessage;
 import com.uni.realtime.protocol.JoinRoom;
 import com.uni.realtime.protocol.MessageType;

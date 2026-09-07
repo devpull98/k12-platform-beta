@@ -1,0 +1,11 @@
+# Local-Docker-only profile (docker-compose.dev.yml sets SPRING_PROFILES_ACTIVE=dev-docker).
+# NEVER activate this profile in staging/production -- see com.uni.realtime.websocketgateway.auth.dev
+# package javadoc. This file only supplies a default dev secret so the stack boots with zero
+# extra configuration; docker-compose.dev.yml still passes GATEWAY_DEV_TICKET_SECRET explicitly
+# so the value is never silently implicit.
+uni:
+  gateway:
+    dev-ticket:
+      enabled: true
+      # Must stay textually identical to DevTicketCodec.DEFAULT_DEV_SECRET.
+      hmac-secret: ${GATEWAY_DEV_TICKET_SECRET:uni-realtime-local-docker-dev-secret-do-not-use-elsewhere}

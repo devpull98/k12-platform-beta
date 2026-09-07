@@ -33,11 +33,11 @@
         </dependency>
         <dependency>
             <groupId>com.uni</groupId>
-            <artifactId>uni-gateway</artifactId>
+            <artifactId>uni-websocket-gateway</artifactId>
         </dependency>
         <dependency>
             <groupId>com.uni</groupId>
-            <artifactId>uni-engine</artifactId>
+            <artifactId>uni-game-engine</artifactId>
         </dependency>
         <!-- TestProbe: drives RoomSupervisor.GetRoomActor to start a question directly (no
              wire message exists for it yet, see this module's WalkingSkeletonTest javadoc). -->

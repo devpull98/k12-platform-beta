@@ -58,15 +58,15 @@
 | 4 | Game nào cần `tick_mode: FIXED`? | **Không — GĐ1 chỉ có quiz, COALESCE là đủ** | Task 3 chỉ hiện thực đường COALESCE. `FIXED` **vẫn có trong schema** Game Definition (Task 11) nhưng chưa có implementation — nạp definition có `tick_mode: FIXED` phải **fail nhanh lúc nạp** |
 
 > Đường dẫn trong `plan.md` tính tương đối so với root repo hiện tại. Module Maven nằm dưới
-> `modules/` với prefix `uni-`: `uni-protocol` / `uni-observability` / `uni-gateway` /
-> `uni-engine`. Ngoài 3 module plan giả định, **`uni-observability`** là module thứ tư giữ phần
+> `modules/` với prefix `uni-`: `uni-protocol` / `uni-observability` / `uni-websocket-gateway` /
+> `uni-game-engine`. Ngoài 3 module plan giả định, **`uni-observability`** là module thứ tư giữ phần
 > observability kế thừa — không nằm trong task nào của GĐ1.
 
 ## Quyết định đã chốt (2026-09-06) — Product/Business trả lời 3/5 câu ở system-architecture.md §7.5
 
 | # | Câu hỏi | Quyết định | Hệ quả |
 |---|---|---|---|
-| 1 | Công thức điểm Quiz GĐ1 (Product) | Trắc nghiệm 1/4 đáp án, đúng = 100đ, sai = 0đ, không bonus tốc độ | **Đã hiện thực 2026-09-06**: `FormulaScoreCalculator.binaryChoice()` (T2, bọc `ScoringFormula` của T11) thay `PlaceholderScoreCalculator` (đã xoá). 46/46 test `uni-engine` pass. Chi tiết: [system-architecture.md §2.5](../../architecture/system-architecture.md#25-game-definition--guardrails) |
+| 1 | Công thức điểm Quiz GĐ1 (Product) | Trắc nghiệm 1/4 đáp án, đúng = 100đ, sai = 0đ, không bonus tốc độ | **Đã hiện thực 2026-09-06**: `FormulaScoreCalculator.binaryChoice()` (T2, bọc `ScoringFormula` của T11) thay `PlaceholderScoreCalculator` (đã xoá). 46/46 test `uni-game-engine` pass. Chi tiết: [system-architecture.md §2.5](../../architecture/system-architecture.md#25-game-definition--guardrails) |
 | 2 | Hệ thống chạy bao nhiêu giờ/ngày (Business) | Chạy **cả ngày**; ca điểm/thi đấu chỉ 18h50–21h30 | Rủi ro "chỉ chạy 4–6 tiếng/ngày" ở ADR-002 **không xảy ra** — giữ nguyên Pekko Cluster Sharding luôn-bật, không cần đảo ngược |
 | 3 | Quy mô trường lớn nhất sau 1 NAT IP (Business) | Ước lượng **4.000** (theo quy mô phiên/lớp lớn nhất thực tế đang chạy — không phải số đo IP trực tiếp) | Ngưỡng L1 rate-limit theo IP nâng từ 300 → **4.000 handshake/phút**. Cần PH-1 xác nhận lại bằng số đo thật. **Chưa có code** — L1 admission control vẫn chưa có điểm gắn trong repo (xem Task 7) |
 | — | (Ngoài 5 câu ở §7.5) Trần `HttpObjectAggregator` ở Gateway | Nâng **8KB → 50KB** — trần chung mọi gói WS, tách biệt với ràng buộc cứng `RoomStateSnapshot < 5KB` (giữ nguyên) | **Đã sửa code 2026-09-06**: `GatewayPipeline.MAX_HTTP_AGGREGATED_CONTENT_BYTES` = 50KB |
@@ -161,12 +161,12 @@ progress: "T1, T2, T4, T5, T10 xong. T6 MOT PHAN xong (GatewayPipeline + WS hand
   ChannelAttributes + room_id trust boundary - 7/7 test); TicketVerifier van la interface
   KHONG CO implementation that vi G1a/G1c chua chot - khong duoc tu bien verifier gia dua len
   staging/production. T5 = RouteCache (lazy-learned, khong TTL) + FrameChannelClient (round-robin
-  -> hoc tu owner_pod_id -> gui thang, evict khi pod dut ket noi) - 15/15 test o uni-gateway.
+  -> hoc tu owner_pod_id -> gui thang, evict khi pod dut ket noi) - 15/15 test o uni-websocket-gateway.
   T10 = RoomOwnership/ModuloRoomOwnership (Math.floorMod, khong dung % truc tiep) + 
   RoomOwnershipHandler (tra NOT_OWNER dung dinh dang de FrameChannelClient cua T5 hoc duoc) -
-  21/21 test o uni-engine, grep '% N|modulo' chi khop dung 1 file. T7 MOT PHAN xong: TokenBucket
+  21/21 test o uni-game-engine, grep '% N|modulo' chi khop dung 1 file. T7 MOT PHAN xong: TokenBucket
   (fixed-window) + RateLimitHandler that (SUBMIT_ANSWER 3/1s, UPDATE_DRAFT 10/10s, HEARTBEAT
-  2/30s, khoa theo student_id qua 1-instance-per-connection) - 24/24 test o uni-gateway; L1
+  2/30s, khoa theo student_id qua 1-instance-per-connection) - 24/24 test o uni-websocket-gateway; L1
   IP admission control (300 handshake/phut) CHUA lam vi chua co diem gan trong repo. T8 xong:
   RoomRegistry (Map room_id -> Set Channel, ConcurrentHashMap) + Broadcaster
   (retainedDuplicate() - da prove-it bang cach doi tam sang retain() de xac nhan FanoutTest
@@ -176,14 +176,14 @@ progress: "T1, T2, T4, T5, T10 xong. T6 MOT PHAN xong (GatewayPipeline + WS hand
   Counter channel_not_writable_total) ap dung dong nhat o ca 3 hop (WS client, GW->Engine,
   Engine accepted channel), WRITE_BUFFER_WATER_MARK 32/64KB; Broadcaster mo rong DeliveryClass
   (!isWritable + BEST_EFFORT -> drop, CRITICAL -> close, da prove-it bang cach dao logic) -
-  40/40 test o uni-gateway, 23/23 o uni-engine, toan reactor xanh. CHUA noi duoc chuoi cu the
+  40/40 test o uni-websocket-gateway, 23/23 o uni-game-engine, toan reactor xanh. CHUA noi duoc chuoi cu the
   "mailbox RoomActor day -> Engine tu dung doc dung ket noi" vi 1 connection multiplex nhieu
   phong (ADR-001) nen khong map 1-1 duoc - gioi han kien truc that, khong phai thieu sot.
   ScoreCalculator dung PlaceholderScoreCalculator tam vi cong thuc diem Product chua chot
   (§9.2 cau 1). T11 xong: GameDefinition + Step (co nextStepIds tao graph) + ScoringFormula
   (sealed interface dong, 7 toan tu, khong eval/script) + DefinitionLoader (tu choi luc nap:
   rong, tick_mode FIXED, maxTransitions<=0, startStepId/nextStepIds khong ton tai, chu trong
-  DFS 3 mau) - 37/37 test o uni-engine, da prove-it bang cach vo hieu hoa rejectCycles.
+  DFS 3 mau) - 37/37 test o uni-game-engine, da prove-it bang cach vo hieu hoa rejectCycles.
   SPIKE Pekko scheduler DAT: 1000 actor, single-shot timer tu hen lai moi chu ky 200ms,
   -XX:ActiveProcessorCount=2, 2 lan chay doc lap deu p99 lech 36-37ms (<50ms) va CPU dinh
   5-6% (<30%) - quyet dinh GO, giu nguyen thiet ke ADR-4. Bao cao: spike-pekko-timer.md.
@@ -214,9 +214,9 @@ progress: "T1, T2, T4, T5, T10 xong. T6 MOT PHAN xong (GatewayPipeline + WS hand
   tham so) va RoomActor.StartQuestion (3 field). Test moi: FormulaScoreCalculatorTest (3 case)
   + RoomActorTest.should_award0_when_answerDoesNotMatchTheCorrectChoice. Cung sua luon
   GatewayPipeline.MAX_HTTP_AGGREGATED_CONTENT_BYTES 8KB->50KB (khop quyet dinh cung ngay, tranh
-  code lech tai lieu). mvn -pl :uni-engine test: 46/46 pass. mvn test toan reactor tu root:
+  code lech tai lieu). mvn -pl :uni-game-engine test: 46/46 pass. mvn test toan reactor tu root:
   BUILD SUCCESS ca 4 module. Grep bat buoc sach: client_timestamp_ms chi o doc-comment/field
-  telemetry, .retain() rong o uni-gateway/src/main. Khong con 'Ghi chu con treo' nao cho Task 2.
+  telemetry, .retain() rong o uni-websocket-gateway/src/main. Khong con 'Ghi chu con treo' nao cho Task 2.
   Con treo thuc su: missed_step_policy mac dinh (Product), ngan sach ha tang (Business),
   G1a/G1c/G2a/G2b/G3 (ky thuat), nguong L1 IP 4000 moi o tai lieu chua co code.
   2026-09-07: T3 (tick coalescing, ADR-4) xong. Truoc khi code phai chot 2 quyet dinh ky thuat
@@ -233,7 +233,7 @@ progress: "T1, T2, T4, T5, T10 xong. T6 MOT PHAN xong (GatewayPipeline + WS hand
   case) dung ActorTestKit + ManualTime THAT cua Pekko (khong phai BehaviorTestKit nhu
   RoomActorTest) vi co che can kiem la timer that su chay. Prove-it: tam doi buildDeltaSnapshot()
   sang duyet players.keySet() thay vi dirtyStudentIds - xac nhan dung 1/5 test Red truoc khi tra
-  lai Green. mvn -pl :uni-engine test: 51/51 pass. mvn clean install toan reactor: BUILD SUCCESS.
+  lai Green. mvn -pl :uni-game-engine test: 51/51 pass. mvn clean install toan reactor: BUILD SUCCESS.
   Grep bat buoc van sach (client_timestamp_ms, .retain(), % N|modulo). Chua lam (thuoc Task 13,
   khong phai thieu sot T3): noi broadcastTarget voi FrameChannelServer/kenh noi bo that; thuc su
   phat QUESTION_STARTED/GAME_OVER/TEACHER_COMMAND/CONNECTION_DEGRADED/StudentJoined ra ngoai
@@ -249,8 +249,8 @@ progress: "T1, T2, T4, T5, T10 xong. T6 MOT PHAN xong (GatewayPipeline + WS hand
   IpAdmissionControllerTest (3 case, logic thuan) + IpAdmissionHandlerTest (3 case, EmbeddedChannel
   voi remoteAddress0() override de gia lap IP that vi EmbeddedChannel mac dinh khong tra ve
   InetSocketAddress). Prove-it: tam bo qua verdict cua controller trong handler - xac nhan dung
-  1/3 test Red truoc khi tra lai Green. mvn -pl :uni-gateway test: 52/52 pass. mvn clean install
-  toan reactor: BUILD SUCCESS (uni-engine 51/51 khong doi). Grep bat buoc van sach. KHONG lam L2
+  1/3 test Red truoc khi tra lai Green. mvn -pl :uni-websocket-gateway test: 52/52 pass. mvn clean install
+  toan reactor: BUILD SUCCESS (uni-game-engine 51/51 khong doi). Grep bat buoc van sach. KHONG lam L2
   (khoa theo student_id, 10 handshake/phut) hay L3 (admission control toan pod, §6.5) - ca hai
   co trong system-architecture.md §5.6 nhung khong nam trong AC goc cua plan.md Task 7, mo rong
   se la tu them pham vi. Khong them metric Prometheus rieng cho luot tu choi L1 (chi log.warn,
@@ -281,7 +281,7 @@ progress: "T1, T2, T4, T5, T10 xong. T6 MOT PHAN xong (GatewayPipeline + WS hand
   qua Netty WebSocketClientHandshaker, khong EmbeddedChannel nao) - join+full snapshot, submit+
   AnswerAck+delta ca 2 client, im lang -> 0 goi, replay cung sequence -> khong doi. Phat hien va
   sua giua chung: spring-boot-maven-plugin repackage (khong classifier) thay artifact chinh cua
-  uni-gateway/uni-engine bang jar thuc thi (class duoi BOOT-INF/classes), lam mvn clean install
+  uni-websocket-gateway/uni-game-engine bang jar thuc thi (class duoi BOOT-INF/classes), lam mvn clean install
   TU ROOT fail voi 'package khong ton tai' cho MOI class (dung -pl :uni-e2e -am test-compile thi
   khong sao vi dung truoc phase package) - sua bang them <classifier>exec</classifier> vao ca
   hai pom.xml. mvn clean install toan reactor tu root: BUILD SUCCESS, 119 test (4 protocol + 59

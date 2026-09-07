@@ -63,7 +63,7 @@ services:
   engine-0:
     build:
       context: .
-      dockerfile: modules/uni-engine/Dockerfile
+      dockerfile: modules/uni-game-engine/Dockerfile
     environment:
       SERVER_PORT: "8090"
       ENGINE_FRAME_PORT: "9100"
@@ -93,7 +93,7 @@ services:
   engine-1:
     build:
       context: .
-      dockerfile: modules/uni-engine/Dockerfile
+      dockerfile: modules/uni-game-engine/Dockerfile
     environment:
       SERVER_PORT: "8090"
       ENGINE_FRAME_PORT: "9100"
@@ -118,7 +118,7 @@ services:
   gateway:
     build:
       context: .
-      dockerfile: modules/uni-gateway/Dockerfile
+      dockerfile: modules/uni-websocket-gateway/Dockerfile
     environment:
       SERVER_PORT: "8080"
       GATEWAY_WS_PORT: "9000"
