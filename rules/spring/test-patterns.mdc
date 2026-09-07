@@ -1,0 +1,54 @@
+---
+name: test-patterns
+scope: spring
+---
+
+# Purpose
+Test convention cho uni-realtime. Không có HTTP layer, không có JPA, không có Kafka trên hot path →
+`@WebMvcTest` / `@DataJpaTest` / `@EmbeddedKafka` không dùng ở repo này.
+
+# Stack context
+- Java 25, JUnit 5 + Mockito (`@ExtendWith(MockitoExtension.class)`), Maven Surefire.
+- Netty: `EmbeddedChannel` để test pipeline/handler.
+- Pekko: `ActorTestKit` để test RoomActor.
+- Surefire đã truyền `-Dio.netty.leakDetection.level=paranoid` cho mọi module — leak trong test fan-out
+  là **build failure**, không phải dòng log để lướt qua.
+
+# Chọn đúng loại test
+
+| Cần test gì | Cách làm | Load gì |
+|---|---|---|
+| Netty handler / pipeline | `EmbeddedChannel` | Không load Spring |
+| RoomActor FSM, scoring, dedupe | Pekko `ActorTestKit` + `Clock` cố định | Không load Spring |
+| Protobuf round-trip | plain JUnit 5 | Không load Spring |
+| Logic thuần (RoomOwnership, coalescing) | plain JUnit 5 | Không load Spring |
+| Actuator / wiring observability | `@SpringBootTest` | Toàn bộ context |
+
+# Required
+- Test chấm điểm phải inject `Clock` cố định (`Clock.fixed`) — dùng đồng hồ thật thì kết quả không
+  xác định được, và rule §9.4 mất chỗ để kiểm chứng.
+- Test fan-out phải có **≥ 2 client** (plan quy định 12). Test một client vẫn pass khi code dùng sai
+  `retain()` — đó chính là lỗi cần bắt.
+- Đóng `EmbeddedChannel` / release buffer trong test; leak detector đang ở mức paranoid.
+- Test đường suy biến: mất engine pod → assert socket client **vẫn mở** và nhận `CONNECTION_DEGRADED`.
+- Test `room_id` lệch giữa payload và channel attribute → assert channel bị đóng.
+- Test phòng im lặng → assert **0 packet** phát ra.
+
+# Test naming convention
+```
+should_{expected_behavior}_when_{condition}
+```
+Ví dụ: `should_closeChannel_when_payloadRoomIdMismatchesHandshake`
+
+# Mock chỉ ở boundary
+- Mock: `Clock`, kênh frame nội bộ, `RoomOwnership`.
+- KHÔNG mock: RoomActor (dùng `ActorTestKit` thật), pipeline Netty (dùng `EmbeddedChannel` thật).
+
+# Chạy test
+```
+mvn clean install                            # build + test toàn bộ
+mvn -pl :uni-protocol test                   # protobuf round-trip
+mvn -pl :uni-engine test -Dtest=RoomActorTest
+```
+Chọn module bằng artifactId (`-pl :uni-engine`), không bằng path — chạy được từ repo root bất kể
+thư mục module nằm đâu.

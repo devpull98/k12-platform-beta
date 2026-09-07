@@ -1,0 +1,51 @@
+# project-context.yaml — Khai báo per-project cho uniclass-workflow kit.
+# Sinh bởi skill `onboarding` (2026-09-06). Kit đọc file này khi session bắt đầu.
+
+# Boot bằng Spring Boot 4.1.1 nên stack rules dùng nhánh `spring`.
+# LƯU Ý: Spring KHÔNG nằm trên packet path — nó chỉ boot process và serve /actuator/*.
+# Hot path là Netty (edge + frame channel) + Pekko typed actors + Protobuf.
+# Vì vậy rules/spring/ ở repo này KHÔNG phải convention Spring MVC/JPA mặc định của kit;
+# xem rules/spring/architecture.mdc.
+stack: spring
+
+qc_stack: none              # Không có frontend web để drive. QC = JUnit5 + EmbeddedChannel + Pekko ActorTestKit.
+default_role: ""            # auto-detect theo task
+test_runner: junit5         # Maven Surefire; đã bật -Dio.netty.leakDetection.level=paranoid
+
+# --- Domain routing ---
+domains:
+  - gateway                 # modules/uni-gateway — biên WebSocket
+  - engine                  # modules/uni-engine  — RoomActor FSM
+  - protocol                # modules/uni-protocol — game_message.proto (dùng chung 2 hop)
+  - observability           # modules/uni-observability — Prometheus/OTLP/JSON log/alert relay
+
+# --- Infrastructure ---
+# Giai đoạn 1 KHÔNG có datastore trên hot path — không MySQL, không Redis, không Kafka.
+# (Kafka log appender chỉ bật ở profile prod, nằm ngoài packet path.)
+# db: []
+# messaging: []
+
+# --- Stack overrides cho governance scripts ---
+# Module Maven nằm dưới modules/uni-*/src/main/java, không phải src/main ở root,
+# nên phải khai báo tường minh — mặc định `spring` của kit sẽ không khớp.
+source_dirs: [modules]
+code_extensions: [java]
+exclude_dirs: [generated-sources, proto-gen]
+
+# --- Đường dẫn artifact ---
+paths:
+  work_dir: docs/work                 # entry point: docs/work/<KEY>-<slug>/_context.md
+  module_specs: docs/specs/modules
+  bdd_specs: docs/specs/bdd
+  tech_design: docs/specs/tech-design
+  test_plans: docs/test-plans
+  bug_reports: docs/work
+  progress_logs: docs/work
+  principles: docs/principles.md
+  trace_dir: docs/trace
+
+# --- Governance ---
+governance:
+  sdd_gate: true
+  trace_gate: true
+  stack_gate: true

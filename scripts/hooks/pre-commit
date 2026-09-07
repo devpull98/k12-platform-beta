@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Git hook: pre-commit
+# Chạy các kiểm tra tĩnh và ngăn chặn commit trực tiếp lên các nhánh bảo vệ (master/main/test).
+#
+# Cài đặt:
+#   bash scripts/hooks/install-hooks.sh
+
+set -euo pipefail
+
+ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo ".")
+cd "$ROOT"
+
+if [[ "${GOVERNANCE_SKIP:-}" == "1" ]]; then
+  exit 0
+fi
+
+echo "=== Git Pre-Commit Check ==="
+
+# 1. Chốt chặn bảo vệ nhánh: Cấm commit trực tiếp lên master, main, test
+BRANCH_NAME=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")
+PROTECTED_BRANCHES="^(master|main|test)$"
+
+if [[ "$BRANCH_NAME" =~ $PROTECTED_BRANCHES ]]; then
+  echo "❌ ERROR: CẤM COMMIT TRỰC TIẾP LÊN NHÁNH BẢO VỆ ($BRANCH_NAME)!"
+  echo "   Quy trình bắt buộc:"
+  echo "   1. Checkout sang nhánh tính năng mới (ví dụ: git checkout -b feature/UC-ID)"
+  echo "   2. Thực hiện code và commit trên nhánh tính năng đó."
+  echo "   3. Tạo Pull Request (PR) để kiểm duyệt trước khi merge vào $BRANCH_NAME."
+  exit 1
+fi
+
+# 2. Chạy kiểm tra Stack Rules
+if [[ -f scripts/validate-stack.sh ]]; then
+  if ! bash scripts/validate-stack.sh; then
+    echo "❌ ERROR: Stack rules validation failed."
+    echo "   Vui lòng chuẩn bị rules stack của dự án trước khi commit."
+    exit 1
+  fi
+fi
+
+exit 0

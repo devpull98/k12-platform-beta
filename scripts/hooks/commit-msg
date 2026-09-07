@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Git hook: commit-msg
+# Kiểm duyệt specs và tag traceability dựa trên commit message chuẩn bị tạo.
+# Hỗ trợ tự động bypass nếu commit message là WIP hoặc có track marker.
+#
+# Cài đặt:
+#   bash scripts/hooks/install-hooks.sh
+
+set -euo pipefail
+
+ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo ".")
+cd "$ROOT"
+
+if [[ "${GOVERNANCE_SKIP:-}" == "1" ]]; then
+  exit 0
+fi
+
+MSG_FILE="$1"
+MSG_CONTENT=$(cat "$MSG_FILE")
+
+echo "=== Git Commit-Msg Quality Gate ==="
+
+# 1. Đọc commit message để phát hiện track markers
+if echo "$MSG_CONTENT" | grep -qiE '\[(fast-track|hotfix|skip-sdd|wip)\]|^(wip|WIP):'; then
+  echo "Track marker or WIP keyword detected in commit message. Bypassing strict SDD and Trace gates."
+  exit 0
+fi
+
+# 2. Phát hiện qua tên branch
+BRANCH_NAME=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")
+if [[ "$BRANCH_NAME" =~ ^(hotfix|fast)/ ]]; then
+  echo "Track marker detected in branch name ($BRANCH_NAME) — Bypassing strict SDD and Trace gates."
+  exit 0
+fi
+
+# 3. Chạy kiểm tra SDD Gate (Mã nguồn vs Spec)
+if [[ -f scripts/validate-sdd-gate.sh ]]; then
+  # Truyền biến môi trường FAST_TRACK=1 tạm thời để bypass kiểm tra nội bộ của script nếu cần thiết
+  # Tuy nhiên, do ta đã lọc file test và add wip check vào validate-sdd-gate.sh, ta cứ chạy bình thường.
+  if ! bash scripts/validate-sdd-gate.sh; then
+    echo "❌ ERROR: SDD Gate Validation Failed!"
+    echo "   Bạn đang thay đổi source code mà chưa cập nhật hoặc tạo file Spec/BDD/Plan tương ứng."
+    echo "   Yêu cầu: Viết specs trước khi code."
+    echo "   "
+    echo "   💡 CÁC CỬA THOÁT HIỂM (Bypass):"
+    echo "   - Nếu là commit nháp, đặt commit message bắt đầu bằng 'wip:' hoặc 'WIP:'"
+    echo "   - Hoặc thêm tag '[wip]' / '[fast-track]' trong commit message."
+    echo "   - Hoặc đặt tên branch bắt đầu bằng 'fast/' hoặc 'hotfix/'."
+    exit 1
+  fi
+fi
+
+# 4. Chạy kiểm tra Trace Validation
+if [[ -f scripts/validate-trace.sh ]]; then
+  if ! bash scripts/validate-trace.sh; then
+    echo "❌ ERROR: Traceability Validation Failed!"
+    echo "   Phát hiện kịch bản kiểm thử (BDD Scenario) bị thiếu code hoặc thiếu test coverage tương ứng."
+    echo "   Vui lòng hoàn thiện tag @trace.implements và @trace.verifies trước khi commit."
+    exit 1
+  fi
+fi
+
+echo "✓ Commit message and specs verified successfully."
+exit 0

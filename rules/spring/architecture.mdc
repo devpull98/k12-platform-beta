@@ -1,0 +1,52 @@
+---
+name: architecture
+scope: spring
+---
+
+# Purpose
+Kiến trúc tầng cho uni-realtime. `stack: spring` chỉ vì process boot bằng Spring Boot 4.1.1 —
+**Spring không nằm trên packet path**. Convention Spring MVC/JPA mặc định của kit KHÔNG áp dụng ở
+đây (không Controller, không Repository, không Entity, không `@Transactional`). Nguồn sự thật:
+`docs/specs/tech-design/EdTech_Game_Realtime_Architecture_v3.0.md` — đọc đúng mục mà work package
+chỉ định, không đọc cả 1528 dòng.
+
+# Stack context
+- Java 25, Maven multi-module. Mọi module nằm dưới `modules/` với tiền tố `uni-`.
+- Spring Boot 4.1.1 chỉ boot process và serve `/actuator/*`.
+- Netty: biên WebSocket (gateway) + kênh frame nội bộ (cả hai phía), pipeline tự dựng.
+- Apache Pekko 1.1.3 typed actors: mỗi phòng một actor đơn luồng, sở hữu state của phòng đó.
+- Protobuf 4.29.3: một schema duy nhất (`modules/uni-protocol/`) cho cả hop WebSocket lẫn hop nội bộ (ADR-1).
+- Giai đoạn 1 KHÔNG có datastore trên hot path — không MySQL, không Redis, không Kafka.
+
+# Required
+- Trạng thái phòng chỉ do RoomActor của phòng đó sở hữu; mọi thay đổi đi qua message tới actor.
+- Thời gian trả lời = `server_received_at − server_question_started_at`, cả hai do engine đóng dấu
+  qua **`Clock` được inject** (§9.4).
+- Fan-out dùng `retainedDuplicate()` (§10.3).
+- `room_id` lấy từ channel attribute gắn lúc handshake (§10.6).
+- Backpressure một cơ chế xuyên suốt: mailbox actor → engine ngừng đọc → cửa sổ TCP → gateway thấy
+  `!isWritable()` → `autoRead(false)` trên socket client (§10.2).
+- Quyền sở hữu phòng chỉ nằm sau `RoomOwnership` (quyết định B2).
+- Gateway học vị trí phòng từ `InternalHeader.owner_pod_id` trên response (§8.2).
+- Mất engine pod → gửi `CONNECTION_DEGRADED` và **giữ socket client mở** (§9.7).
+- Cả hai service scan `com.uni.realtime` để bean của `uni-observability` được nạp.
+
+# Forbidden
+- Dùng `client_timestamp_ms` ở bất kỳ đâu trên đường chấm điểm (§9.4) — client wall clock, giả mạo được.
+- Gọi `System.currentTimeMillis()` inline trên đường chấm điểm thay vì `Clock` đã inject.
+- `retain()` thay cho `retainedDuplicate()` khi fan-out — client thứ hai trở đi nhận 0 byte.
+- Lấy `room_id` từ payload; payload có `room_id` lệch là **security event → đóng channel**.
+- Thêm queue tầng ứng dụng bất kỳ giữa mailbox và socket.
+- `% N` (định tuyến phòng) xuất hiện ngoài `RoomOwnership`.
+- Gateway tự tính phòng nằm ở pod nào.
+- Gọi DB/Redis/HTTP bên trong Netty EventLoop (§13.2); `synchronized` bọc quanh blocking I/O.
+- Broadcast khi phòng im lặng — 200ms là trần tần suất, không phải nhịp tick (ADR-4, §6.2).
+  `ANSWER_ACK`, `GAME_OVER`, `QUESTION_STARTED`, `TEACHER_COMMAND`, `CONNECTION_DEGRADED` bỏ qua coalescing.
+- Copy `game_message.proto` sang module thứ hai.
+- Thu hẹp component scan khỏi `com.uni.realtime` — alerting tắt im lặng mà app vẫn khởi động.
+
+# Examples
+- modules/uni-gateway/src/main/java/... — handshake, ticket auth, rate limit, room registry, fan-out
+- modules/uni-engine/src/main/java/...  — RoomActor FSM, scoring, dedupe, tick coalescing, RoomOwnership
+- modules/uni-protocol/src/main/proto/game_message.proto — schema dùng chung, sinh code một lần
+- modules/uni-observability/src/main/java/... — Prometheus/OTLP, JSON logging, alert relay

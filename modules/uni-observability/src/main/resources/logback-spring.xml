@@ -42,23 +42,25 @@
   <root level="INFO">
     <appender-ref ref="CONSOLE"/>
     <appender-ref ref="FILE"/>
-    <springProfile name="prod">
-      <appender-ref ref="ASYNC_KAFKA"/>
-    </springProfile>
   </root>
+
+  <springProfile name="prod">
+    <root level="INFO">
+      <appender-ref ref="ASYNC_KAFKA"/>
+    </root>
+  </springProfile>
 
   <logger name="org.springframework" level="WARN"/>
 
-  <!-- profile dev: bật SQL + domain DEBUG -->
+  <!-- profile dev: bật domain DEBUG -->
   <springProfile name="dev">
-    <logger name="org.hibernate.SQL" level="DEBUG"/>
-    <logger name="org.hibernate.orm.jdbc.bind" level="TRACE"/>
     <logger name="com.uni.realtime" level="DEBUG"/>
+    <logger name="io.netty" level="INFO"/>
+    <logger name="org.apache.pekko" level="INFO"/>
   </springProfile>
 
   <!-- profile prod: tắt hết noise -->
   <springProfile name="prod">
-    <logger name="org.hibernate.SQL" level="WARN"/>
     <logger name="com.uni.realtime" level="INFO"/>
   </springProfile>
 </configuration>

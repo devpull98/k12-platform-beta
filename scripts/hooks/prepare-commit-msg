@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Git hook: prepare-commit-msg
+# Loại bỏ AI attribution spam từ commit message (Claude Code, GitHub Copilot, ...).
+# Enforce commit message format theo project-context.yaml.
+#
+# Cài đặt:
+#   cp scripts/hooks/prepare-commit-msg .git/hooks/prepare-commit-msg
+#   chmod +x .git/hooks/prepare-commit-msg
+#
+# Hoặc dùng install hook:
+#   bash scripts/hooks/install-hooks.sh
+
+COMMIT_MSG_FILE="$1"
+COMMIT_SOURCE="${2:-}"   # message | template | merge | squash | commit
+[[ -z "$COMMIT_MSG_FILE" ]] && exit 0
+
+# Không can thiệp khi merge / squash / amend với message sẵn
+[[ "$COMMIT_SOURCE" == "merge" ]] && exit 0
+[[ "$COMMIT_SOURCE" == "squash" ]] && exit 0
+
+# ── 1. Strip AI attribution lines ─────────────────────────────────────────────
+# Loại bỏ các dòng kiểu:
+#   🤖 Generated with [Claude Code](...)
+#   Co-Authored-By: Claude ... <noreply@anthropic.com>
+#   Co-Authored-By: GitHub Copilot
+#   Generated with Claude Code
+#   Co-authored-by: claude-code[bot]
+tmpfile=$(mktemp)
+grep -viE \
+  '(co-?authored?-?by:.*claude|co-?authored?-?by:.*copilot|co-?authored?-?by:.*\[bot\]|generated with \[?claude|🤖 generated|noreply@anthropic\.com|github-actions\[bot\])' \
+  "$COMMIT_MSG_FILE" > "$tmpfile" || true
+
+# Xóa trailing blank lines được tạo ra sau khi strip
+awk '/^[[:space:]]*$/{blank++; next} {for(i=0;i<blank;i++) print ""; blank=0; print}' \
+  "$tmpfile" > "$COMMIT_MSG_FILE" || true
+rm -f "$tmpfile"
+
+# ── 2. Skip nếu đang amend hoặc message đã có nội dung từ -m flag ─────────────
+[[ "$COMMIT_SOURCE" == "commit" ]] && exit 0
+
+# ── 3. Kiểm tra format nếu message không rỗng ─────────────────────────────────
+# Lấy dòng đầu tiên không phải comment
+first_line=$(grep -v '^#' "$COMMIT_MSG_FILE" | grep -v '^[[:space:]]*$' | head -1 || true)
+[[ -z "$first_line" ]] && exit 0   # empty message → để git báo lỗi tự nhiên
+
+# Conventional commit pattern: type(scope): subject
+# Types cho phép trong project
+ALLOWED_TYPES="feat|fix|refactor|test|docs|chore|style|perf|ci|build|revert|optimize|wip"
+MARKER_PATTERN='\[(fast-track|hotfix|skip-sdd)\]'
+
+if ! echo "$first_line" | grep -qE "^(${ALLOWED_TYPES})(\(.+\))?!?:[[:space:]].+" \
+   && ! echo "$first_line" | grep -qiE "$MARKER_PATTERN" \
+   && ! echo "$first_line" | grep -qE "^(Merge|Revert|WIP)" ; then
+  echo ""
+  echo "⚠ commit-msg format warning: dòng tiêu đề không theo conventional commit."
+  echo "  Mong đợi: type(scope): subject"
+  echo "  Ví dụ:    feat(lms): add grade export endpoint"
+  echo "  Types:    $ALLOWED_TYPES"
+  echo "  (Hook tiếp tục — đây là warning, không phải lỗi chặn)"
+  echo ""
+fi
+
+exit 0
