@@ -1,0 +1,2575 @@
+{
+  "__inputs": [],
+  "__requires": [],
+  "annotations": {
+    "list": []
+  },
+  "description": "K12 backend (spring-ticket-ddd cluster Prometheus datasource): HTTP rate, p95 latency, JVM, circuit breakers, rate limiters, HikariCP, MongoDB, Redis, Kafka - per service via $application dropdown",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 100,
+      "title": "HTTP & I/O Overview",
+      "type": "row"
+    },
+    {
+      "title": "Rate",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 0,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 10
+          },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(http_server_requests_seconds_count{application=\"$application\"}[$__rate_interval]))",
+          "legendFormat": "HTTP",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      }
+    },
+    {
+      "title": "Errors",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 6,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 10
+          },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(http_server_requests_seconds_count{application=\"$application\", status=~\"5..\"}[$__rate_interval])) or vector(0)",
+          "legendFormat": "HTTP - 5xx",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      }
+    },
+    {
+      "title": "Duration",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 12,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 10
+          },
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(http_server_requests_seconds_sum{application=\"$application\", uri!~\".*actuator.*|.*health.*|.*ping.*|.*liveness.*|.*readiness.*\"}[$__rate_interval])) / sum(rate(http_server_requests_seconds_count{application=\"$application\", uri!~\".*actuator.*|.*health.*|.*ping.*|.*liveness.*|.*readiness.*\"}[$__rate_interval])) * 1000",
+          "legendFormat": "HTTP - AVG",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          },
+          "editorMode": "code",
+          "expr": "max(http_server_requests_seconds_max{application=\"$application\", uri!~\".*actuator.*|.*health.*|.*ping.*|.*liveness.*|.*readiness.*\"}) * 1000",
+          "legendFormat": "HTTP - MAX",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      }
+    },
+    {
+      "title": "Utilisation",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 18,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 10
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(tomcat_threads_busy_threads{application=\"$application\"})",
+          "legendFormat": "TOMCAT - BSY",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        },
+        {
+          "expr": "sum(tomcat_threads_current_threads{application=\"$application\"})",
+          "legendFormat": "TOMCAT - CUR",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        },
+        {
+          "expr": "sum(tomcat_threads_config_max_threads{application=\"$application\"})",
+          "legendFormat": "TOMCAT - MAX",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 8
+      },
+      "id": 1,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(http_server_requests_seconds_count{application=\"$application\"}[$__rate_interval])) by (status)",
+          "legendFormat": "status={{status}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "HTTP Request Rate (Total by Status)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "description": "Top 10 busiest endpoints by request rate. A table (not a line chart) so this stays readable no matter how many routes the app grows to — topk caps it at 10 rows regardless of endpoint count.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "reqps"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "RPS"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 8
+      },
+      "id": 50,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "RPS",
+            "desc": true
+          }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "topk(10, sum(rate(http_server_requests_seconds_count{application=\"$application\", uri!~\".*actuator.*|.*health.*|.*ping.*|.*liveness.*|.*readiness.*\"}[$__rate_interval])) by (method, uri, status))",
+          "format": "table",
+          "instant": true,
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "application": true,
+              "job": true,
+              "instance": true
+            }
+          }
+        }
+      ],
+      "title": "HTTP Request Rate — Top 10 Endpoints",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 8
+      },
+      "id": 2,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{application=\"$application\", uri!~\".*actuator.*|.*health.*|.*ping.*|.*liveness.*|.*readiness.*\"}[$__rate_interval])) by (le, uri))",
+          "legendFormat": "p95 {{uri}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket{application=\"$application\", uri!~\".*actuator.*|.*health.*|.*ping.*|.*liveness.*|.*readiness.*\"}[$__rate_interval])) by (le, uri))",
+          "legendFormat": "p99 {{uri}}",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "HTTP p95 / p99 Latency",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 34
+      },
+      "id": 101,
+      "title": "JVM",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 35
+      },
+      "id": 3,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "jvm_memory_used_bytes{application=\"$application\",area=\"heap\"}",
+          "legendFormat": "heap used {{instance}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        },
+        {
+          "expr": "jvm_memory_max_bytes{application=\"$application\",area=\"heap\"}",
+          "legendFormat": "heap max {{instance}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "JVM Heap",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 35
+      },
+      "id": 4,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "jvm_threads_live_threads{application=\"$application\"}",
+          "legendFormat": "live {{instance}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        },
+        {
+          "expr": "jvm_threads_daemon_threads{application=\"$application\"}",
+          "legendFormat": "daemon {{instance}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        },
+        {
+          "expr": "jvm_threads_peak_threads{application=\"$application\"}",
+          "legendFormat": "peak {{instance}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "JVM Threads",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 57
+      },
+      "id": 5,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(jvm_gc_pause_seconds_sum{application=\"$application\"}[$__rate_interval]) / rate(jvm_gc_pause_seconds_count{application=\"$application\"}[$__rate_interval])",
+          "legendFormat": "avg GC pause {{action}} {{cause}} {{instance}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "GC Pause (avg)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "percentunit",
+          "max": 1,
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 35
+      },
+      "id": 11,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "process_cpu_usage{application=\"$application\"}",
+          "legendFormat": "process CPU {{instance}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        },
+        {
+          "expr": "system_cpu_usage{application=\"$application\"}",
+          "legendFormat": "system CPU {{instance}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "CPU Usage",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 42
+      },
+      "id": 12,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "container_memory_rss{namespace=\"k12\",pod=~\"^$application-.*\",container!=\"\",container!=\"POD\"}",
+          "legendFormat": "RSS {{pod}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        },
+        {
+          "expr": "jvm_memory_used_bytes{application=\"$application\",area=\"heap\"}",
+          "legendFormat": "heap used {{instance}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        },
+        {
+          "expr": "jvm_memory_used_bytes{application=\"$application\",area=\"nonheap\"}",
+          "legendFormat": "non-heap used {{instance}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "Memory: RSS / Heap / Non-heap",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 49
+      },
+      "id": 13,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "process_files_open_files{application=\"$application\"}",
+          "legendFormat": "open files {{instance}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        },
+        {
+          "expr": "process_files_max_files{application=\"$application\"}",
+          "legendFormat": "max files {{instance}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "Open File Descriptors",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 42
+      },
+      "id": 20,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "jvm_classes_loaded_classes{application=\"$application\"}",
+          "legendFormat": "loaded {{instance}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        },
+        {
+          "expr": "jvm_classes_unloaded_classes_total{application=\"$application\"}",
+          "legendFormat": "unloaded total {{instance}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "JVM Classes",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 42
+      },
+      "id": 21,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "jvm_memory_used_bytes{application=\"$application\",area=\"nonheap\"}",
+          "legendFormat": "{{id}} {{instance}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "JVM Non-Heap (Metaspace / Code Cache)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 49
+      },
+      "id": 22,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "jvm_threads_states_threads{application=\"$application\"}",
+          "legendFormat": "{{state}} {{instance}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "JVM Thread States",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 64
+      },
+      "id": 23,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "jvm_gc_memory_allocated_bytes_total{application=\"$application\"}",
+          "legendFormat": "allocated {{instance}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        },
+        {
+          "expr": "jvm_gc_memory_promoted_bytes_total{application=\"$application\"}",
+          "legendFormat": "promoted to old gen {{instance}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "GC Memory Allocated / Promoted",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 57
+      },
+      "id": 24,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(jvm_gc_pause_seconds_count{application=\"$application\"}[$__rate_interval])",
+          "legendFormat": "GC count/s {{action}} {{cause}} {{instance}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "GC Count / sec",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 118
+      },
+      "id": 102,
+      "title": "Resilience4j",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 119
+      },
+      "id": 6,
+      "options": {
+        "legend": {
+          "calcs": [
+            "last"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "resilience4j_circuitbreaker_state{application=\"$application\"}",
+          "legendFormat": "{{name}} state",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        },
+        {
+          "expr": "rate(resilience4j_circuitbreaker_calls_seconds_count{application=\"$application\",kind=\"failed\"}[$__rate_interval])",
+          "legendFormat": "{{name}} failure rate",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "Circuit Breaker",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 119
+      },
+      "id": 7,
+      "options": {
+        "legend": {
+          "calcs": [
+            "last"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "resilience4j_ratelimiter_available_permissions{application=\"$application\"}",
+          "legendFormat": "{{name}} available",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        },
+        {
+          "expr": "resilience4j_ratelimiter_waiting_threads{application=\"$application\"}",
+          "legendFormat": "{{name}} waiting",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "Rate Limiter",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 79
+      },
+      "id": 103,
+      "title": "HikariCP (DB Connection Pool)",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 80
+      },
+      "id": 8,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "hikaricp_connections_active{application=\"$application\"}",
+          "legendFormat": "active {{instance}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        },
+        {
+          "expr": "hikaricp_connections_idle{application=\"$application\"}",
+          "legendFormat": "idle {{instance}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        },
+        {
+          "expr": "hikaricp_connections_max{application=\"$application\"}",
+          "legendFormat": "max {{instance}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        },
+        {
+          "expr": "hikaricp_connections_pending{application=\"$application\"}",
+          "legendFormat": "pending {{instance}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "HikariCP Connections",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 80
+      },
+      "id": 9,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(hikaricp_connections_acquire_seconds_bucket{application=\"$application\"}[$__rate_interval])) by (le, pool))",
+          "legendFormat": "p95 acquire {{pool}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "HikariCP Acquire p95",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 87
+      },
+      "id": 105,
+      "title": "MongoDB Client",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 88
+      },
+      "id": 30,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "mongodb_driver_pool_size{application=\"$application\"}",
+          "legendFormat": "pool size",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        },
+        {
+          "expr": "mongodb_driver_pool_checkedout{application=\"$application\"}",
+          "legendFormat": "checked out",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        },
+        {
+          "expr": "mongodb_driver_pool_waitqueuesize{application=\"$application\"}",
+          "legendFormat": "wait queue",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "MongoDB Driver Pool",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 88
+      },
+      "id": 31,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(mongodb_driver_pool_checkoutfailed_total{application=\"$application\"}[$__rate_interval])",
+          "legendFormat": "checkout failed",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "MongoDB Checkout Failures (rate)",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 95
+      },
+      "id": 106,
+      "title": "Redis Client",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 96
+      },
+      "id": 32,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(lettuce_seconds_sum{application=\"$application\"}[$__rate_interval])) by (db_operation) / sum(rate(lettuce_seconds_count{application=\"$application\"}[$__rate_interval])) by (db_operation)",
+          "legendFormat": "{{db_operation}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "Redis Avg Command Latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 96
+      },
+      "id": 33,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(lettuce_seconds_count{application=\"$application\"}[$__rate_interval]))",
+          "legendFormat": "commands/s",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        },
+        {
+          "expr": "sum(rate(lettuce_seconds_count{application=\"$application\", error!=\"none\"}[$__rate_interval])) or sum(rate(lettuce_seconds_count{application=\"$application\"}[$__rate_interval])) * 0",
+          "legendFormat": "errors/s",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "Redis Command Rate & Errors",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 103
+      },
+      "id": 107,
+      "title": "Kafka Client",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 104
+      },
+      "id": 34,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "kafka_consumer_fetch_manager_records_lag{application=\"$application\"}",
+          "legendFormat": "{{topic}}-{{partition}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "Kafka Consumer Lag",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 104
+      },
+      "id": 35,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(kafka_producer_record_error_total{application=\"$application\"}[$__rate_interval]))",
+          "legendFormat": "producer errors/s",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        },
+        {
+          "expr": "sum(rate(kafka_consumer_coordinator_failed_rebalance_total{application=\"$application\"}[$__rate_interval]))",
+          "legendFormat": "failed rebalances/s",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "Kafka Producer Errors & Rebalances",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "description": "Records/sec và bytes/sec consumer thực sự đang tiêu thụ — bổ sung cho Consumer Lag (biết lag CAO là do consumer chậm hay do producer đẩy nhanh hơn).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "records/sec"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "reqps"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "bytes/sec"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "Bps"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 111
+      },
+      "id": 36,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(kafka_consumer_fetch_manager_records_consumed_total{application=\"$application\"}[$__rate_interval]))",
+          "legendFormat": "records/sec",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        },
+        {
+          "expr": "sum(rate(kafka_consumer_fetch_manager_bytes_consumed_total{application=\"$application\"}[$__rate_interval]))",
+          "legendFormat": "bytes/sec",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "Kafka Consumer Throughput",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "description": "Producer records/sec theo topic + tỷ lệ buffer còn trống (buffer cạn dần về 0 là dấu hiệu sớm của backpressure/broker chậm, trước khi record_error tăng).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "buffer available ratio"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "max",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "send"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "reqps"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 111
+      },
+      "id": 37,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(kafka_producer_record_send_total{application=\"$application\"}[$__rate_interval])) by (topic)",
+          "legendFormat": "{{topic}} send/sec",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        },
+        {
+          "expr": "kafka_producer_buffer_available_bytes{application=\"$application\"} / kafka_producer_buffer_total_bytes{application=\"$application\"}",
+          "legendFormat": "{{instance}} buffer available ratio",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "Kafka Producer Throughput & Buffer",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 126
+      },
+      "id": 108,
+      "title": "Availability",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "description": "Up/down over time for the selected instance — limited by Prometheus retention (7d).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "lineWidth": 0,
+            "fillOpacity": 100,
+            "spanNulls": false
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "DOWN",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "UP",
+                  "color": "green"
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 127
+      },
+      "id": 51,
+      "options": {
+        "mergeValues": true,
+        "showValue": "auto",
+        "alignValue": "left",
+        "rowHeight": 0.85,
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "single"
+        }
+      },
+      "targets": [
+        {
+          "expr": "up{job=~\"^$application.*\"}",
+          "legendFormat": "{{pod}} ({{instance}})",
+          "range": true,
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "Up/Down History",
+      "type": "state-timeline"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 15
+      },
+      "id": 200,
+      "title": "Container (cAdvisor)",
+      "type": "row"
+    },
+    {
+      "title": "Total Container Working Set Memory",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 16
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum(container_memory_working_set_bytes{namespace=\"k12\",pod=~\"^$application-.*\",container!=\"\",container!=\"POD\"}) or sum(container_memory_working_set_bytes{name=~\".*$application.*\"}) or sum(process_resident_memory_bytes{application=\"$application\"})",
+          "legendFormat": "Total Working Set",
+          "range": true,
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      }
+    },
+    {
+      "title": "Total Process Resident Memory / RSS",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 16
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum(container_memory_rss{namespace=\"k12\",pod=~\"^$application-.*\",container!=\"\",container!=\"POD\"}) or sum(container_memory_rss{name=~\".*$application.*\"}) or sum(process_resident_memory_bytes{application=\"$application\"})",
+          "legendFormat": "Total RSS",
+          "range": true,
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      }
+    },
+    {
+      "title": "Total Direct Buffer Memory Used",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 16
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum(jvm_buffer_memory_used_bytes{application=\"$application\",id=\"direct\"})",
+          "legendFormat": "Total Direct Used",
+          "range": true,
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      }
+    },
+    {
+      "title": "Total Direct Buffer Count",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 16
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum(jvm_buffer_count_buffers{application=\"$application\",id=\"direct\"})",
+          "legendFormat": "Total Direct Count",
+          "range": true,
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "description": "NIO buffer pool (direct + mapped) — direct dùng cho Netty/socketio, mapped hiếm khi non-zero trừ khi app mmap file trực tiếp.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 72
+      },
+      "id": 201,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "jvm_buffer_memory_used_bytes{application=\"$application\",id=\"direct\"}",
+          "legendFormat": "direct used {{instance}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        },
+        {
+          "expr": "sum(jvm_buffer_memory_used_bytes{application=\"$application\",id=\"direct\"})",
+          "legendFormat": "Total Direct Buffer Used",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        },
+        {
+          "expr": "jvm_buffer_total_capacity_bytes{application=\"$application\",id=\"direct\"}",
+          "legendFormat": "direct capacity {{instance}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        },
+        {
+          "expr": "jvm_buffer_memory_used_bytes{application=\"$application\",id=\"mapped\"}",
+          "legendFormat": "mapped used {{instance}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        },
+        {
+          "expr": "jvm_buffer_total_capacity_bytes{application=\"$application\",id=\"mapped\"}",
+          "legendFormat": "mapped capacity {{instance}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "Buffer Pool Memory (Used / Capacity)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "description": "Từ kubelet/cAdvisor (job=kubelet), KHÔNG phải app metrics — namespace k12, pod khớp tên $application. Loại trừ container rỗng/POD (pause container) để tránh double-count.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 20
+      },
+      "id": 202,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "container_memory_working_set_bytes{namespace=\"k12\",pod=~\"^$application-.*\",container!=\"\",container!=\"POD\"}",
+          "legendFormat": "{{pod}} working_set",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        },
+        {
+          "expr": "sum(container_memory_working_set_bytes{namespace=\"k12\",pod=~\"^$application-.*\",container!=\"\",container!=\"POD\"})",
+          "legendFormat": "Total Container Working Set Memory",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        },
+        {
+          "expr": "container_memory_rss{namespace=\"k12\",pod=~\"^$application-.*\",container!=\"\",container!=\"POD\"}",
+          "legendFormat": "{{pod}} rss",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        },
+        {
+          "expr": "sum(container_memory_rss{namespace=\"k12\",pod=~\"^$application-.*\",container!=\"\",container!=\"POD\"})",
+          "legendFormat": "Total Process Resident Memory / RSS",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "Container Memory (Working Set / RSS)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "description": "cAdvisor container_fs_* — đọc/ghi đĩa của container (mượn qua containerd cgroup, không phải app metrics).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "Bps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 27
+      },
+      "id": 203,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(container_fs_reads_bytes_total{namespace=\"k12\",pod=~\"^$application-.*\",container!=\"\",container!=\"POD\"}[$__rate_interval]))",
+          "legendFormat": "read",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        },
+        {
+          "expr": "sum(rate(container_fs_writes_bytes_total{namespace=\"k12\",pod=~\"^$application-.*\",container!=\"\",container!=\"POD\"}[$__rate_interval]))",
+          "legendFormat": "write",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "Container Filesystem I/O (rate)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "description": "cAdvisor container_network_* — gắn trên pause container vì nó sở hữu netns của pod (bình thường, không lọc container).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "Bps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 20
+      },
+      "id": 204,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(container_network_receive_bytes_total{namespace=\"k12\",pod=~\"^$application-.*\"}[$__rate_interval]))",
+          "legendFormat": "rx",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        },
+        {
+          "expr": "sum(rate(container_network_transmit_bytes_total{namespace=\"k12\",pod=~\"^$application-.*\"}[$__rate_interval]))",
+          "legendFormat": "tx",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "Container Network I/O (rate)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "description": "Số lượng buffer đang mở theo loại (direct/mapped) — tăng liên tục không giảm là dấu hiệu leak.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 72
+      },
+      "id": 205,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "jvm_buffer_count_buffers{application=\"$application\",id=\"direct\"}",
+          "legendFormat": "direct count {{instance}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        },
+        {
+          "expr": "sum(jvm_buffer_count_buffers{application=\"$application\",id=\"direct\"})",
+          "legendFormat": "Total Direct Buffer Count",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        },
+        {
+          "expr": "jvm_buffer_count_buffers{application=\"$application\",id=\"mapped\"}",
+          "legendFormat": "mapped count {{instance}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "Buffer Pool Count",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "description": "Old-gen heap còn sống ngay sau full GC (live) vs giới hạn ước tính (max) — live tiến sát max liên tục là dấu hiệu heap pressure thật, không phải noise của minor GC.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 64
+      },
+      "id": 206,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "jvm_gc_live_data_size_bytes{application=\"$application\"}",
+          "legendFormat": "live {{instance}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        },
+        {
+          "expr": "jvm_gc_max_data_size_bytes{application=\"$application\"}",
+          "legendFormat": "max {{instance}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "GC Live / Max Data Size",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "description": "% thời gian process dừng để GC — Micrometer tự tính theo cửa sổ trượt. Ngưỡng cảnh báo thường >10-15% kéo dài.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 10
+              },
+              {
+                "color": "red",
+                "value": 20
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 57
+      },
+      "id": 207,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "jvm_gc_overhead_percent{application=\"$application\"}",
+          "legendFormat": "{{instance}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "GC Overhead %",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 56
+      },
+      "id": 300,
+      "title": "Garbage Collection",
+      "type": "row"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 71
+      },
+      "id": 301,
+      "title": "Buffer Pools",
+      "type": "row"
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": [
+    "k12",
+    "spring-boot",
+    "jvm"
+  ],
+  "templating": {
+    "list": [
+      {
+        "current": {},
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus-k12"
+        },
+        "definition": "label_values(jvm_memory_used_bytes, application)",
+        "hide": 0,
+        "includeAll": false,
+        "name": "application",
+        "options": [],
+        "query": {
+          "query": "label_values(jvm_memory_used_bytes, application)",
+          "refId": "A"
+        },
+        "refresh": 1,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "K12 Backend - Service Detail",
+  "uid": "k12-service-overview",
+  "version": 1
+}

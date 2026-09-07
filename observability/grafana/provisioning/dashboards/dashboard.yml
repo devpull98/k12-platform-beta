@@ -1,15 +1,6 @@
 apiVersion: 1
 
 providers:
-  - name: app
-    orgId: 1
-    folder: Application
-    type: file
-    disableDeletion: false
-    updateIntervalSeconds: 30
-    options:
-      path: /var/lib/grafana/dashboards/app
-
   - name: mysql
     orgId: 1
     folder: MySQL
@@ -54,3 +45,12 @@ providers:
     updateIntervalSeconds: 30
     options:
       path: /var/lib/grafana/dashboards/test-services
+
+  - name: k12
+    orgId: 1
+    folder: K12 Backend
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards/k12

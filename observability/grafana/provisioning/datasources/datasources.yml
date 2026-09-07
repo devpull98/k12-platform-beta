@@ -8,6 +8,13 @@ datasources:
     access: proxy
     isDefault: true
 
+  - name: Prometheus-K12-Cluster
+    type: prometheus
+    uid: prometheus-k12
+    url: http://172.16.6.51:9090
+    access: proxy
+    isDefault: false
+
   - name: Loki
     type: loki
     uid: loki
