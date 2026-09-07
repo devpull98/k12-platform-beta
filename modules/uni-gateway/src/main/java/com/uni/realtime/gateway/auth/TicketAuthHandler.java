@@ -69,7 +69,7 @@ public final class TicketAuthHandler extends SimpleChannelInboundHandler<BinaryW
         }
 
         ChannelAttributes.bind(ctx.channel(), claims, UUID.randomUUID().toString());
-        roomRegistry.add(claims.roomId(), ctx.channel());
+        roomRegistry.add(claims.roomId(), claims.studentId(), ctx.channel());
         gatewayMetrics.recordHandshake();
         ctx.pipeline().remove(this);
         ctx.fireChannelRead(message);

@@ -9,8 +9,6 @@ import com.uni.realtime.protocol.MessageType;
 import com.uni.realtime.protocol.RoutingStatus;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
-import io.netty.channel.Channel;
-import io.netty.handler.codec.http.websocketx.BinaryWebSocketFrame;
 
 import java.util.Set;
 
@@ -39,6 +37,13 @@ public final class EngineResponseRouter {
             return;
         }
 
+        DeliveryClass deliveryClass = message.getInternal().getDeliveryClass();
+        // toBuilder()/build()/toByteArray() allocate (Task 13 review flagged this as GC churn),
+        // but exactly once per Engine response, not once per client: Broadcaster fans the same
+        // encoded frame out to every channel in the room via retainedDuplicate() (zero-copy),
+        // so this cost is already amortized across the room's size, not multiplied by it.
+        // Avoiding it entirely would mean hand-rolling protobuf field removal instead of using
+        // the immutable-message API -- not worth it to strip one field.
         GameMessage forClient = message.toBuilder().clearInternal().build();
         ByteBuf frame = Unpooled.wrappedBuffer(forClient.toByteArray());
 
@@ -47,9 +52,9 @@ public final class EngineResponseRouter {
         // -- everything else (coalescing flushes, GameOver, ...) is a genuine room broadcast and
         // carries no student_id at all.
         if (!message.getStudentId().isEmpty()) {
-            sendToOneStudent(message.getRoomId(), message.getStudentId(), frame);
+            sendToOneStudent(message.getRoomId(), message.getStudentId(), frame, deliveryClass);
         } else {
-            broadcaster.broadcast(message.getRoomId(), frame, message.getInternal().getDeliveryClass());
+            broadcaster.broadcast(message.getRoomId(), frame, deliveryClass);
         }
     }
 
@@ -76,17 +81,15 @@ public final class EngineResponseRouter {
         }
     }
 
-    /** ANSWER_ACK is personal (§5.4) -- {@link Broadcaster}'s whole-room fan-out is the wrong tool for it. */
-    private void sendToOneStudent(String roomId, String studentId, ByteBuf frame) {
-        try {
-            for (Channel channel : roomRegistry.channelsIn(roomId)) {
-                if (studentId.equals(channel.attr(ChannelAttributes.STUDENT_ID).get())) {
-                    channel.writeAndFlush(new BinaryWebSocketFrame(frame.retainedDuplicate()));
-                    return;
-                }
-            }
-        } finally {
-            frame.release();
-        }
+    /**
+     * ANSWER_ACK (and a join's personal snapshot) is addressed to one student (§5.4) --
+     * {@link Broadcaster#broadcast}'s whole-room fan-out is the wrong tool for it, but
+     * {@link Broadcaster#sendToOne} still applies the identical backpressure rule.
+     * {@link RoomRegistry#channelFor} is O(1) -- this used to scan every channel in the room
+     * per lookup, on the hottest path in the system (every SUBMIT_ANSWER).
+     */
+    private void sendToOneStudent(String roomId, String studentId, ByteBuf frame, DeliveryClass deliveryClass) {
+        roomRegistry.channelFor(roomId, studentId)
+                .ifPresentOrElse(channel -> broadcaster.sendToOne(channel, frame, deliveryClass), frame::release);
     }
 }

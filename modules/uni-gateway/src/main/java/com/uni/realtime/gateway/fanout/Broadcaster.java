@@ -62,4 +62,31 @@ public final class Broadcaster {
             gatewayMetrics.fanoutLatencyTimer().record(System.nanoTime() - startNanos, TimeUnit.NANOSECONDS);
         }
     }
+
+    /**
+     * The single-recipient counterpart to {@link #broadcast} (Task 13 review): {@code
+     * ANSWER_ACK} and a join's personal snapshot reply go to exactly one channel, but must obey
+     * the identical §5.4 backpressure rule -- without this, a personal Critical message would
+     * write straight past a backed-up channel's watermark instead of closing it, the one thing
+     * every other hop in the system is careful never to do (§10.2, "one backpressure mechanism,
+     * end to end").
+     *
+     * @param frame the already-encoded payload, consumed (not duplicated, since there is only
+     *              one recipient): ownership transfers to the write, or this method releases it
+     *              itself on every path that does not write.
+     */
+    public void sendToOne(Channel channel, ByteBuf frame, DeliveryClass deliveryClass) {
+        if (!channel.isActive()) {
+            frame.release();
+            return;
+        }
+        if (!channel.isWritable()) {
+            if (deliveryClass == DeliveryClass.CRITICAL) {
+                channel.close();
+            }
+            frame.release();
+            return;
+        }
+        channel.writeAndFlush(new BinaryWebSocketFrame(frame));
+    }
 }

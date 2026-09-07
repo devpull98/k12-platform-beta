@@ -62,4 +62,32 @@ class RoomRegistryTest {
         assertThat(registry.channelsIn("room-1")).isEmpty();
         neverAdded.finishAndReleaseAll();
     }
+
+    @Test
+    void should_findChannelByStudentId_when_addedWithTheIndexedOverload() {
+        EmbeddedChannel alice = new EmbeddedChannel();
+        EmbeddedChannel bob = new EmbeddedChannel();
+        registry.add("room-1", "student-alice", alice);
+        registry.add("room-1", "student-bob", bob);
+
+        assertThat(registry.channelFor("room-1", "student-bob")).contains(bob);
+        alice.finishAndReleaseAll();
+        bob.finishAndReleaseAll();
+    }
+
+    @Test
+    void should_returnEmpty_when_noChannelIndexedForThatStudent() {
+        assertThat(registry.channelFor("room-1", "student-nobody")).isEmpty();
+    }
+
+    @Test
+    void should_removeFromStudentIndexToo_when_channelRemoved() {
+        EmbeddedChannel alice = new EmbeddedChannel();
+        registry.add("room-1", "student-alice", alice);
+
+        registry.remove(alice);
+
+        assertThat(registry.channelFor("room-1", "student-alice")).isEmpty();
+        alice.finishAndReleaseAll();
+    }
 }

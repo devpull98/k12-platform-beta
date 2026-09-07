@@ -9,11 +9,12 @@ import java.time.Duration;
  * gradual trickle rate -- a window is simpler to reason about and to test deterministically
  * with an injected {@link Clock}.
  *
- * <p>{@link #tryConsume()} is {@code synchronized}: {@code RateLimitHandler} only ever touches
- * one instance from one channel's event-loop thread, but {@code IpAdmissionController} (§5.6
- * L1) shares a single instance per IP across every connection from that IP, which can land on
- * different worker threads concurrently -- exactly the burst this bucket exists to catch.
- * Without the lock, concurrent callers race on the unguarded {@code available--}.
+ * <p>Deliberately NOT synchronized here: {@code RateLimitHandler} touches one instance per
+ * connection from that one channel's event-loop thread only, and that path runs on every
+ * SUBMIT_ANSWER -- the hottest message type in the system. {@code IpAdmissionController} (§5.6
+ * L1) is the one caller that genuinely shares a single instance per IP across concurrent
+ * connections/threads; it synchronizes on its own instance at the call site instead, so the
+ * lock only costs anything where sharing actually happens.
  */
 final class TokenBucket {
 
@@ -32,7 +33,7 @@ final class TokenBucket {
         this.windowStartMillis = clock.millis();
     }
 
-    synchronized boolean tryConsume() {
+    boolean tryConsume() {
         long now = clock.millis();
         if (now - windowStartMillis >= refillPeriodMillis) {
             available = capacity;

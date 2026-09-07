@@ -266,7 +266,39 @@ progress: "T1, T2, T4, T5, T10 xong. T6 MOT PHAN xong (GatewayPipeline + WS hand
   CONNECTION_DEGRADED - doi sang DeliveryClass.BEST_EFFORT. Ca 4 fix deu co test moi + prove-it
   (tam revert fix, xac nhan dung test lien quan Red, roi tra lai Green). mvn clean install toan
   reactor: BUILD SUCCESS. 2 phat hien con lai (linear scan sendToOneStudent, ConcurrentHashMap
-  thua trong RoomSupervisor) la toi uu/tham my, CHUA sua - nguoi dung chi yeu cau fix 1-4."
+  thua trong RoomSupervisor) la toi uu/tham my, CHUA sua - nguoi dung chi yeu cau fix 1-4.
+  2026-09-07 (review pass 2): nguoi dung tu doc code, neu them 11 van de (#7 va #8 trung 2 phat
+  hien chua sua o round truoc). Da xu ly: (1) NPE tai IpAdmissionHandler.remoteIp -
+  InetSocketAddress.getAddress() tra null khi chua resolve - them null-check. Prove-it lan dau
+  SAI: assert isOpen() khong bat duoc loi vi EmbeddedChannel khong dong channel khi exception
+  chua xu ly, chi ghi nhan lai - phai goi channel.checkException() moi lo dung NPE, day la bai
+  hoc rut ra giua chung. (3) RoomSupervisor thieu watch ChannelReplyActor - them
+  watchWith(replyActor, ReplyActorTerminated) dung chung ham forgetConnection voi
+  onChannelClosed. (4) sendToOneStudent hoan toan khong kiem isWritable()/isActive() - vi pham
+  'mot co che backpressure duy nhat' (§10.2) - them Broadcaster.sendToOne(channel, frame,
+  deliveryClass) ap dung quy tac drop/close giong broadcast(). (7) linear scan sendToOneStudent -
+  RoomRegistry them overload add(roomId, studentId, channel) + channelFor() O(1),
+  TicketAuthHandler doi sang dung. (8) ConcurrentHashMap thua trong RoomSupervisor - doi ca 3
+  map sang HashMap thuong (single-actor-thread, khong can concurrent). (10) synchronized
+  TokenBucket - THU HEP lai: bo synchronized khoi TokenBucket (RateLimitHandler goi tren duong
+  nong nhat he thong ma khong tranh chap that), chuyen khoa vao dung IpAdmissionController.tryAdmit()
+  qua synchronized(bucket). Moi fix deu co test + prove-it. Hai van de KHONG sua bang code, chi
+  ghi ro trong Javadoc (giong tinh than G1a/G1c - can quyet dinh/do luong tu ben ngoai, khong tu
+  doan): (2) rui ro Ingress/LB lam mat that IP goc neu ingress proxy bang cach mo connection moi
+  thay vi L4 passthrough - can biet cong nghe ingress that; (11) full snapshot dong bo giua nhieu
+  phong co timing tuong quan (ca lop bat dau quiz cung luc) - moi cach jitter don gian deu co
+  nguy co lam RoomSupervisorTest (dung Clock.systemUTC() that) flaky theo xac suat, hoac mo lai
+  quyet dinh N=10 vua chot voi tham so moi chua ai duyet. (9) GC churn tu protobuf toByteArray -
+  ghi chu ro da amortize dung 1 lan/response, khong nhan theo so client (Broadcaster fan-out
+  zero-copy tu Task 8), khong dang doi kien truc de toi uu them. (5) logback-spring.xml: file da
+  co san ban sua dung tren dia TU TRUOC phien nay (chua commit) - ban cu long springProfile NGAY
+  BEN TRONG root (khong hop le voi Logback), ban da sua tach thanh 2 khoi root rieng (Logback
+  cho phep khai bao root nhieu lan, cong don appender-ref). Xac nhan dung, hoan tat commit. (6)
+  don file khong lien quan: 2 doc cu (SYSTEM_MONITORING_OBSERVABILITY_TECHNICAL_STANDARD.md,
+  health-probe-test-scenarios.md) da danh dau xoa tu truoc phien nay - hoan tat commit xoa, cung
+  voi governance kit (project-context.yaml, rules/, scripts/*) da cai tu truoc (dung xuyen suot
+  phien qua governance-check.sh) nhung chua tung commit. mvn clean install toan reactor: BUILD
+  SUCCESS, khong leak. Grep bat buoc van sach."
 dev_selftest: pending
 qc_status: pending
 trace: pending

@@ -677,6 +677,77 @@ Chạy `code-review --level high` trên toàn bộ diff Task 3/7/13. 4 lỗi CON
   mới ép channel `!isWritable()` (kỹ thuật giống `BackpressureTest`) rồi gọi
   `broadcastConnectionDegraded` — bật lại CRITICAL thì channel bị đóng như dự đoán.
 
+## Task 13 (review pass 2) — 9 vấn đề người dùng nêu thêm, đã xử lý (2026-09-07)
+
+Người dùng tự đọc code và nêu 11 vấn đề (đánh số 1-11). #2 (linear scan `sendToOneStudent`,
+trùng phát hiện cũ) và #8 (`ConcurrentHashMap` thừa, trùng phát hiện cũ) đã có test/prove-it.
+2 vấn đề (#2 ingress/NAT, #9 GC churn) là rủi ro/đánh đổi đã biết, ghi rõ trong code thay vì
+"sửa" — không có gì để sửa bằng code mà không đoán mò hạ tầng bên ngoài hoặc viết lại toàn bộ
+cơ chế mã hoá message.
+
+- **NPE tại `IpAdmissionHandler#remoteIp`:** `InetSocketAddress.getAddress()` trả `null` khi
+  address chưa resolve. Không xảy ra với connection thật (accept() luôn biết IP đối phương) nhưng
+  đây là security boundary nên vẫn fail-safe. Sửa: thêm `inet.getAddress() != null`. Prove-it:
+  test dùng `InetSocketAddress.createUnresolved(...)` — **lần đầu assert `isOpen()` không bắt
+  được lỗi** (`EmbeddedChannel` không đóng channel khi có exception chưa xử lý, chỉ ghi nhận lại)
+  — phải gọi `channel.checkException()` mới lộ đúng `NullPointerException`, rồi mới revert fix
+  để xác nhận Red thật.
+- **Rủi ro Ingress/LB NAT với L1 (§5.6):** nếu LB/ingress phía trước proxy bằng cách mở connection
+  MỚI tới pod (không phải L4 passthrough giữ nguyên source IP), `remoteAddress()` sẽ luôn là IP
+  của LB, biến L1 thành 1 ngân sách chung 4.000/phút cho TOÀN BỘ traffic thay vì theo từng
+  trường. Không tự sửa vì cần biết công nghệ ingress thật (PROXY protocol? XFF? L4 passthrough?)
+  — giống hệt tính chất câu hỏi G1a/G1c, đi hỏi đội hạ tầng, không tự đoán. Đã ghi rõ trong
+  javadoc `IpAdmissionHandler`.
+- **`RoomSupervisor` thiếu dọn dẹp `ChannelReplyActor`:** phòng đã có `watchWith` (review pass 1)
+  nhưng `ChannelReplyActor` (dùng lại cho reply cá nhân lẫn broadcast) thì chưa — nếu nó dừng bất
+  thường (không qua `ChannelClosed`), map giữ ActorRef chết vĩnh viễn. Sửa: thêm
+  `watchWith(replyActor, ReplyActorTerminated(channel))` lúc spawn, dùng chung hàm dọn dẹp
+  `forgetConnection(...)` với `onChannelClosed`. Không viết test riêng cho đường crash (khó ép
+  crash thật mà không thêm hook chỉ-để-test) — logic dọn dẹp dùng chung đã được
+  `should_stopFanningOutToAConnection_when_itsChannelCloses` (đường `ChannelClosed`) phủ.
+- **Bất đồng bộ backpressure giữa `Broadcaster` và `sendToOneStudent`:** đường gửi riêng 1 học
+  sinh (`ANSWER_ACK`, snapshot cá nhân lúc join) hoàn toàn không kiểm `isWritable()`/`isActive()`
+  — vi phạm "một cơ chế backpressure duy nhất, từ đầu tới cuối" (§10.2). Sửa: thêm
+  `Broadcaster.sendToOne(channel, frame, deliveryClass)` áp đúng quy tắc drop/close như
+  `broadcast()`, `EngineResponseRouter` gọi qua đó thay vì tự `writeAndFlush`. Prove-it: test mới
+  gửi `ANSWER_ACK` CRITICAL qua `router.route(...)` tới 1 channel bị nghẽn — revert lại
+  `writeAndFlush` trực tiếp thì fail đúng như dự đoán.
+- **Linear scan trong `sendToOneStudent` (trùng phát hiện review pass 1):** `RoomRegistry` thêm
+  overload `add(roomId, studentId, channel)` xây `Map<room_id, Map<student_id, Channel>>` song
+  song, cộng `channelFor(roomId, studentId)` O(1). `TicketAuthHandler` đổi sang overload có
+  index; `RoomRegistryTest` thêm 3 case cho index mới.
+- **`ConcurrentHashMap` thừa trong `RoomSupervisor` (trùng phát hiện review pass 1):** đổi cả 3
+  map (`roomsByRoomId`, `replyActorsByChannel`, `subscribersByRoom`) sang `HashMap` thường —
+  đúng bản chất single-actor-thread, không mất gì về đúng đắn.
+- **GC churn từ protobuf `toByteArray()`:** đã ghi chú rõ trong code — chi phí này tốn ĐÚNG 1 lần
+  mỗi response từ Engine, không nhân theo số client (Broadcaster fan-out zero-copy qua
+  `retainedDuplicate()` từ Task 8 đã lo phần đó). Không có cách rẻ hơn để bóc 1 field khỏi
+  protobuf message immutable mà không tự viết lại toàn bộ cơ chế encode — không đáng.
+- **`synchronized TokenBucket` (review pass 1) — thu hẹp lại phạm vi:** `TokenBucket` tự nó
+  KHÔNG còn `synchronized` (bỏ lại, vì `RateLimitHandler` gọi nó trên đường nóng nhất hệ thống —
+  mỗi `SUBMIT_ANSWER` — mà không hề có tranh chấp thật để cần khoá). Khoá chuyển vào đúng chỗ
+  CÓ chia sẻ thật: `IpAdmissionController.tryAdmit()` tự `synchronized (bucket)` quanh
+  `tryConsume()`. Test concurrency ở review pass 1 chạy lại vẫn xanh — vị trí khoá đổi, tác dụng
+  bảo vệ giữ nguyên.
+- **Spike mạng từ Full Snapshot đồng bộ (G2a):** rủi ro thật (nhiều phòng có timing tương quan —
+  cả lớp bắt đầu quiz cùng lúc, hạn nộp bài do server áp cùng lúc — có thể khiến full snapshot
+  của nhiều phòng rơi vào cùng cửa sổ ~200ms). **Chưa sửa bằng code**: mọi cách jitter đơn giản
+  (lệch pha theo `Clock` đã tiêm) đều có nguy cơ làm `RoomSupervisorTest` (dùng `Clock.systemUTC()`
+  thật) trở nên flaky theo xác suất, hoặc phải mở lại đúng con số N=10 vừa chốt với một tham số
+  mới chưa ai duyệt. Ghi rõ trong Javadoc `RoomState.FULL_SNAPSHOT_EVERY_N_FLUSHES`, chờ số đo
+  PH-1 hoặc quyết định rõ ràng về cách seed jitter an toàn.
+- **`<root>` trong `logback-spring.xml`:** file này đã có sẵn bản sửa đúng trên đĩa từ TRƯỚC
+  phiên này (chưa commit) — bản cũ lồng `<springProfile>` NGAY BÊN TRONG `<root>`, không hợp lệ
+  với Logback (`<root>` chỉ nhận `<appender-ref>` trực tiếp). Bản đã sửa tách thành 2 khối
+  `<root>` riêng (Logback cho phép khai báo `<root>` nhiều lần, mỗi lần cộng dồn appender-ref vào
+  logger root duy nhất — cách khắc phục chuẩn cho giới hạn này của Spring Boot + Logback). Xác
+  nhận đúng, không sửa thêm — chỉ hoàn tất commit phần đã có sẵn.
+- **Dọn file không liên quan:** 2 doc cũ (`SYSTEM_MONITORING_OBSERVABILITY_TECHNICAL_STANDARD.md`,
+  `health-probe-test-scenarios.md`) đã bị đánh dấu xoá từ trước phiên này (doc thứ hai tự ghi rõ
+  "viết cho service bán vé cũ, chưa cập nhật cho uni-realtime"). Hoàn tất commit xoá, cùng với bộ
+  governance kit (`project-context.yaml`, `rules/`, `scripts/*`) đã cài từ trước (theo CLAUDE.md,
+  dùng xuyên suốt phiên này qua `governance-check.sh`) nhưng chưa từng được commit.
+
 ## Tóm tắt tiến độ
 
 - **11/12 task done đầy đủ (T1, T2, T3, T4, T5, T7, T8, T10, T11, T12) + T6, T9, T13 một phần. SPIKE đạt.**

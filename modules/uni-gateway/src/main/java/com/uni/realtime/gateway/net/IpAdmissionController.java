@@ -43,6 +43,14 @@ public final class IpAdmissionController {
 
     /** @return true if this handshake attempt from {@code ip} is admitted, false if it must be rejected. */
     public boolean tryAdmit(String ip) {
-        return bucketsByIp.computeIfAbsent(ip, unused -> new TokenBucket(CAPACITY, REFILL_PERIOD, clock)).tryConsume();
+        TokenBucket bucket = bucketsByIp.computeIfAbsent(ip, unused -> new TokenBucket(CAPACITY, REFILL_PERIOD, clock));
+        // TokenBucket itself is not thread-safe (RateLimitHandler doesn't need it to be -- one
+        // instance per connection, one thread). This one instance is shared across every
+        // concurrent connection from the same IP, which can land on different Netty worker
+        // threads at once -- exactly the burst L1 exists to catch -- so tryConsume() must be
+        // serialized here, at the one call site that actually shares an instance across threads.
+        synchronized (bucket) {
+            return bucket.tryConsume();
+        }
     }
 }

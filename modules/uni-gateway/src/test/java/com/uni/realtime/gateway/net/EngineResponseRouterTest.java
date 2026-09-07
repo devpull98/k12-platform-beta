@@ -67,6 +67,26 @@ class EngineResponseRouterTest {
     }
 
     @Test
+    void should_closeABackpressuredChannel_when_personalMessageIsCritical() {
+        EmbeddedChannel alice = studentChannel("room-9", "student-alice");
+        alice.config().setOption(ChannelOption.WRITE_BUFFER_WATER_MARK, new WriteBufferWaterMark(1, 2));
+        alice.write(Unpooled.wrappedBuffer(new byte[1000]));
+        assertThat(alice.isWritable()).as("test setup: channel must actually be backpressured").isFalse();
+
+        router.route(GameMessage.newBuilder()
+                .setType(MessageType.ANSWER_ACK)
+                .setRoomId("room-9")
+                .setStudentId("student-alice")
+                .setInternal(InternalHeader.newBuilder().setOwnerPodId("engine-1").setDeliveryClass(DeliveryClass.CRITICAL))
+                .setAnswerAck(AnswerAck.newBuilder().setAccepted(true))
+                .build());
+
+        assertThat(alice.isOpen())
+                .as("a personal CRITICAL message must obey the same backpressure rule as a broadcast one (§5.4/§10.2)")
+                .isFalse();
+    }
+
+    @Test
     void should_deliverOnlyToTheJoiner_when_roomStateSnapshotCarriesAStudentId() throws Exception {
         // RoomActor.onJoinRoom stamps its personal full-snapshot reply with the joiner's
         // student_id specifically so this router does not mistake it for a room broadcast.
@@ -148,7 +168,7 @@ class EngineResponseRouterTest {
     private EmbeddedChannel studentChannel(String roomId, String studentId) {
         EmbeddedChannel channel = new EmbeddedChannel();
         channel.attr(ChannelAttributes.STUDENT_ID).set(studentId);
-        roomRegistry.add(roomId, channel);
+        roomRegistry.add(roomId, studentId, channel);
         return channel;
     }
 

@@ -17,10 +17,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Clock;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Task 13: the missing link between the wire and {@code RoomActor} that Task 2's note deferred
@@ -64,6 +64,9 @@ public final class RoomSupervisor extends AbstractBehavior<RoomSupervisor.Comman
     /** A room's {@code RoomActor} stopped (e.g. {@code EndGame}) -- stop treating it as live. */
     private record RoomTerminated(String roomId) implements Command {}
 
+    /** A connection's {@link ChannelReplyActor} stopped, whether by {@link ChannelClosed} or an unexpected crash. */
+    private record ReplyActorTerminated(Channel channel) implements Command {}
+
     public static Behavior<Command> create(
             RoomOwnership roomOwnership, ScoreCalculator scoreCalculator, EngineMetrics engineMetrics, Clock clock) {
         return Behaviors.setup(context ->
@@ -75,9 +78,13 @@ public final class RoomSupervisor extends AbstractBehavior<RoomSupervisor.Comman
     private final EngineMetrics engineMetrics;
     private final Clock clock;
 
-    private final Map<String, ActorRef<RoomActor.Command>> roomsByRoomId = new ConcurrentHashMap<>();
-    private final Map<Channel, ActorRef<GameMessage>> replyActorsByChannel = new ConcurrentHashMap<>();
-    private final Map<String, Set<ActorRef<GameMessage>>> subscribersByRoom = new ConcurrentHashMap<>();
+    // Plain HashMap/LinkedHashSet, not concurrent collections: RoomSupervisor is a single actor
+    // (AbstractBehavior) and the actor model guarantees only its own dispatcher thread ever
+    // touches this state -- ConcurrentHashMap here would just be overhead documenting a sharing
+    // pattern that does not exist.
+    private final Map<String, ActorRef<RoomActor.Command>> roomsByRoomId = new HashMap<>();
+    private final Map<Channel, ActorRef<GameMessage>> replyActorsByChannel = new HashMap<>();
+    private final Map<String, Set<ActorRef<GameMessage>>> subscribersByRoom = new HashMap<>();
 
     private RoomSupervisor(ActorContext<Command> context, RoomOwnership roomOwnership,
             ScoreCalculator scoreCalculator, EngineMetrics engineMetrics, Clock clock) {
@@ -96,6 +103,7 @@ public final class RoomSupervisor extends AbstractBehavior<RoomSupervisor.Comman
                 .onMessage(GetRoomActor.class, this::onGetRoomActor)
                 .onMessage(RoomBroadcast.class, this::onRoomBroadcast)
                 .onMessage(RoomTerminated.class, this::onRoomTerminated)
+                .onMessage(ReplyActorTerminated.class, this::onReplyActorTerminated)
                 .build();
     }
 
@@ -163,17 +171,36 @@ public final class RoomSupervisor extends AbstractBehavior<RoomSupervisor.Comman
         // spawnAnonymous, not a name derived from the Channel: EmbeddedChannel (every test in
         // this codebase that doesn't open a real socket) hands out the same fixed id for every
         // instance, which would collide the moment a test used two of them.
-        return replyActorsByChannel.computeIfAbsent(channel,
-                ch -> getContext().spawnAnonymous(ChannelReplyActor.create(ch, roomOwnership.ownerPodId(roomId))));
+        return replyActorsByChannel.computeIfAbsent(channel, ch -> {
+            ActorRef<GameMessage> replyActor =
+                    getContext().spawnAnonymous(ChannelReplyActor.create(ch, roomOwnership.ownerPodId(roomId)));
+            // Safety net alongside the explicit ChannelClosed message: if this actor ever stops
+            // on its own (an unhandled exception, however unlikely today), it must not stay a
+            // phantom subscriber that broadcasts silently vanish into.
+            getContext().watchWith(replyActor, new ReplyActorTerminated(ch));
+            return replyActor;
+        });
     }
 
     private Behavior<Command> onChannelClosed(ChannelClosed command) {
-        ActorRef<GameMessage> replyActor = replyActorsByChannel.remove(command.channel());
+        ActorRef<GameMessage> replyActor = replyActorsByChannel.get(command.channel());
+        forgetConnection(command.channel());
         if (replyActor != null) {
-            subscribersByRoom.values().forEach(subscribers -> subscribers.remove(replyActor));
             getContext().stop(replyActor);
         }
         return this;
+    }
+
+    private Behavior<Command> onReplyActorTerminated(ReplyActorTerminated command) {
+        forgetConnection(command.channel());
+        return this;
+    }
+
+    private void forgetConnection(Channel channel) {
+        ActorRef<GameMessage> replyActor = replyActorsByChannel.remove(channel);
+        if (replyActor != null) {
+            subscribersByRoom.values().forEach(subscribers -> subscribers.remove(replyActor));
+        }
     }
 
     private Behavior<Command> onGetRoomActor(GetRoomActor command) {

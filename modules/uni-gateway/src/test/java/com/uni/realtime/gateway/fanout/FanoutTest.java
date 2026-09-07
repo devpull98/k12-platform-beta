@@ -5,6 +5,8 @@ import com.uni.realtime.protocol.DeliveryClass;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
+import io.netty.channel.ChannelOption;
+import io.netty.channel.WriteBufferWaterMark;
 import io.netty.channel.embedded.EmbeddedChannel;
 import io.netty.handler.codec.http.websocketx.BinaryWebSocketFrame;
 import org.junit.jupiter.api.AfterEach;
@@ -100,5 +102,55 @@ class FanoutTest {
         broadcaster.broadcast("room-1", Unpooled.wrappedBuffer(new byte[] {1}), DeliveryClass.BEST_EFFORT);
 
         assertThat((BinaryWebSocketFrame) dead.readOutbound()).isNull();
+    }
+
+    @Test
+    void sendToOne_should_deliverToAWritableChannel() {
+        EmbeddedChannel channel = new EmbeddedChannel();
+        clients.add(channel);
+
+        broadcaster.sendToOne(channel, Unpooled.wrappedBuffer(new byte[] {1, 2, 3}), DeliveryClass.CRITICAL);
+
+        assertThat((BinaryWebSocketFrame) channel.readOutbound()).isNotNull();
+        assertThat(channel.isOpen()).isTrue();
+    }
+
+    @Test
+    void sendToOne_should_dropAndReleaseButNotClose_when_bestEffortAndChannelNotWritable() {
+        EmbeddedChannel channel = new EmbeddedChannel();
+        clients.add(channel);
+        channel.config().setOption(ChannelOption.WRITE_BUFFER_WATER_MARK, new WriteBufferWaterMark(1, 2));
+        channel.write(Unpooled.wrappedBuffer(new byte[1000]));
+        assertThat(channel.isWritable()).isFalse();
+        ByteBuf frame = Unpooled.wrappedBuffer(new byte[] {1});
+
+        broadcaster.sendToOne(channel, frame, DeliveryClass.BEST_EFFORT);
+
+        assertThat(frame.refCnt()).as("dropped frame must still be released").isZero();
+        assertThat(channel.isOpen()).as("BEST_EFFORT must not close a backed-up channel").isTrue();
+    }
+
+    @Test
+    void sendToOne_should_closeChannel_when_criticalAndChannelNotWritable() {
+        EmbeddedChannel channel = new EmbeddedChannel();
+        clients.add(channel);
+        channel.config().setOption(ChannelOption.WRITE_BUFFER_WATER_MARK, new WriteBufferWaterMark(1, 2));
+        channel.write(Unpooled.wrappedBuffer(new byte[1000]));
+        assertThat(channel.isWritable()).isFalse();
+
+        broadcaster.sendToOne(channel, Unpooled.wrappedBuffer(new byte[] {1}), DeliveryClass.CRITICAL);
+
+        assertThat(channel.isOpen()).as("CRITICAL must close a backed-up channel, per §5.4").isFalse();
+    }
+
+    @Test
+    void sendToOne_should_releaseFrame_when_channelAlreadyInactive() {
+        EmbeddedChannel channel = new EmbeddedChannel();
+        channel.close();
+        ByteBuf frame = Unpooled.wrappedBuffer(new byte[] {1});
+
+        broadcaster.sendToOne(channel, frame, DeliveryClass.BEST_EFFORT);
+
+        assertThat(frame.refCnt()).isZero();
     }
 }

@@ -32,6 +32,17 @@ final class RoomState {
      * G2a (tech-design.md §9.1, chốt 2026-09-06): cứ 10 lần flush thì gửi một full snapshot
      * thay vì delta -- lưới an toàn cho một client bị drop một delta best-effort dưới
      * backpressure (§5.4), vì PH-3 (client resync thật) chưa tồn tại.
+     *
+     * <p>Known, unmitigated risk (Task 13 review): every room counts its OWN flushes from 0
+     * independently, so rooms with correlated timing (a whole class starting the same quiz
+     * together, or a server-driven question deadline everyone submits near) can end up sending
+     * their full snapshots in the same ~200ms window system-wide, spiking outbound bandwidth
+     * instead of smoothing it. A phase offset per room (e.g. seeded from creation time) would
+     * fix this, but every candidate seed either reopens this already-decided cadence with an
+     * unvalidated new parameter or risks making tests that use a real/uncontrolled {@link Clock}
+     * (e.g. {@code RoomSupervisorTest}) intermittently flaky. Left as-is pending either PH-1
+     * load-test evidence that this matters at target scale, or an explicit decision on how to
+     * seed the jitter safely.
      */
     private static final int FULL_SNAPSHOT_EVERY_N_FLUSHES = 10;
 

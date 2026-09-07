@@ -60,12 +60,41 @@ class IpAdmissionHandlerTest {
         assertThat(channel.isOpen()).isTrue();
     }
 
+    @Test
+    void should_notThrow_when_remoteAddressIsUnresolved() throws Exception {
+        // InetSocketAddress.getAddress() returns null for an unresolved address -- shouldn't
+        // happen for a real accepted connection, but this handler must fail safe, not NPE, if
+        // it ever does (it is a security boundary, not a place to crash the event loop).
+        FakeUnresolvedRemoteChannel channel =
+                new FakeUnresolvedRemoteChannel(new IpAdmissionHandler(new IpAdmissionController()));
+
+        channel.register();
+        // EmbeddedChannel does not close on an unhandled exception -- it records it and only
+        // surfaces it here, on demand. isOpen() alone would stay true either way.
+        channel.checkException();
+
+        assertThat(channel.isOpen()).isTrue();
+    }
+
     private static final class FakeRemoteChannel extends EmbeddedChannel {
         private final InetSocketAddress remote;
 
         FakeRemoteChannel(String ip, ChannelHandler... handlers) {
             super(false, false, handlers); // register=false: assign `remote` before channelActive can read it
             this.remote = new InetSocketAddress(ip, 12345);
+        }
+
+        @Override
+        protected SocketAddress remoteAddress0() {
+            return isActive() ? remote : null;
+        }
+    }
+
+    private static final class FakeUnresolvedRemoteChannel extends EmbeddedChannel {
+        private final InetSocketAddress remote = InetSocketAddress.createUnresolved("unresolved-host", 12345);
+
+        FakeUnresolvedRemoteChannel(ChannelHandler... handlers) {
+            super(false, false, handlers);
         }
 
         @Override
