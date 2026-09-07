@@ -77,10 +77,35 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
             long clientTimestampMs,
             ActorRef<GameMessage> replyTo) implements Command {}
 
+    /**
+     * PH-3 / §9.3: sent after a client reconnects, carrying what it believes it has (proto
+     * {@code Resync.last_acked_seq}/{@code pending}). {@code pending} entries are replayed
+     * through the SAME {@link RoomState#submitAnswer} dedupe/scoring path {@link SubmitAnswer}
+     * already uses -- {@code sequence <= last_seen} replays the stored ack (§5.2), so an
+     * already-scored replay is structurally harmless with no new dedupe logic here.
+     * {@code lastAckedSeq} is logged for diagnostics only, never used for correctness: the
+     * server's own {@code lastSeenSequence} table is authoritative regardless of what the
+     * client believes it has. No new actor FSM state -- {@code RESYNCING} is out of scope for
+     * Phase 1 (system-architecture.md: "GĐ1: FSM chỉ có LOBBY → PLAYING → FINISHED, RESYNCING
+     * chưa cần") -- this is handled as an ordinary message.
+     */
+    public record Resync(String studentId, long lastAckedSeq, List<GameMessage> pending,
+            ActorRef<GameMessage> replyTo) implements Command {}
+
     public record EndGame() implements Command {}
 
     /** Internal timer message (ADR-4 pseudocode's {@code Flush.INSTANCE}) — never sent from outside. */
     private enum Flush implements Command { INSTANCE }
+
+    /**
+     * Task 14 follow-up (zombie-actor fix): sent to {@link #self} when a Hot Snapshot write
+     * comes back fenced ({@code snapshotStore.save} resolves {@code false}) -- a monotonically
+     * increasing epoch counter rejected this actor's epoch, which can only mean another pod
+     * already won a newer lease for this room. Not a transient condition (the counter never
+     * moves backward), so one occurrence is a definitive, permanent signal to stop -- no
+     * debounce/retry needed. Never sent from outside.
+     */
+    private enum LeaseLost implements Command { INSTANCE }
 
     /**
      * @param tickMode must be {@link TickMode#COALESCE} — Phase 1 has no other implementation
@@ -188,6 +213,13 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
     private final RoomSnapshotStore snapshotStore;
     private final long epoch;
     private final GameEventPublisher gameEventPublisher;
+    /**
+     * Captured once here, on the actor's own thread (construction always runs there) --
+     * {@code ActorRef.tell()} is safe from any thread, unlike most of {@code ActorContext}, so
+     * this is what {@link #maybeSnapshot} uses to signal {@link LeaseLost} from its async
+     * callback instead of touching {@code getContext()} off-thread.
+     */
+    private final ActorRef<Command> self;
 
     private boolean flushScheduled = false;
     private long lastFlushAtMs = 0;
@@ -210,6 +242,7 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
         this.snapshotStore = snapshotStore;
         this.gameEventPublisher = gameEventPublisher;
         this.epoch = epoch;
+        this.self = context.getSelf();
     }
 
     @Override
@@ -219,8 +252,10 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
                 .onMessage(StartQuestion.class, watched(this::onStartQuestion))
                 .onMessage(JoinRoom.class, watched(this::onJoinRoom))
                 .onMessage(SubmitAnswer.class, watched(this::onSubmitAnswer))
+                .onMessage(Resync.class, watched(this::onResync))
                 .onMessage(EndGame.class, watched(this::onEndGame))
                 .onMessage(Flush.class, watched(this::onFlush))
+                .onMessage(LeaseLost.class, watched(this::onLeaseLost))
                 .build();
     }
 
@@ -229,7 +264,7 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
             // Only commands RoomSupervisor (Task 13) counted as enqueued get decremented here --
             // StartGame/EndGame/Flush were never counted in, so decrementing for them too would
             // run the gauge negative (exactly what EngineMetrics' javadoc warns against).
-            if (command instanceof JoinRoom || command instanceof SubmitAnswer) {
+            if (command instanceof JoinRoom || command instanceof SubmitAnswer || command instanceof Resync) {
                 engineMetrics.recordMessageDequeued();
             }
             long startNanos = System.nanoTime();
@@ -281,6 +316,32 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
     }
 
     /**
+     * PH-3 / §9.3: replays every buffered submission the client believes never got acked, each
+     * through the exact same {@link RoomState#submitAnswer} call {@link #onSubmitAnswer} uses --
+     * a sequence the room already scored comes back as the stored ack (§5.2), never re-scored.
+     * Ends with one full, personally-addressed {@link RoomStateSnapshot} so a reconnecting
+     * client has the whole room again, not just acks for what it happened to buffer.
+     */
+    private Behavior<Command> onResync(Resync command) {
+        getContext().getLog().info("room {}: RESYNC from {} (client last_acked_seq={}, {} pending)",
+                roomId, command.studentId(), command.lastAckedSeq(), command.pending().size());
+        for (GameMessage pending : command.pending()) {
+            if (pending.getPayloadCase() != GameMessage.PayloadCase.SUBMIT_ANSWER) {
+                getContext().getLog().warn("room {}: ignoring non-SUBMIT_ANSWER entry in RESYNC.pending from {}",
+                        roomId, command.studentId());
+                continue;
+            }
+            GameMessage ack = state.submitAnswer(command.studentId(), pending.getSequence(),
+                    pending.getSubmitAnswer().getQuestionId(), pending.getSubmitAnswer().getAnswerIdsList());
+            command.replyTo().tell(ack);
+            publishGameEvent(ack);
+        }
+        scheduleFlushIfDirty();
+        command.replyTo().tell(state.resyncSnapshot(command.studentId()));
+        return this;
+    }
+
+    /**
      * Task 18 (§9.3 Rủi ro 6, §4.3 step 5): ships the {@code AnswerAck} itself as the event
      * payload -- no separate {@code GameEvent} schema exists yet, and this is the exact record
      * of a scored submission §4.3 describes pushing to Kafka, so reusing it avoids inventing a
@@ -300,6 +361,21 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
 
     private Behavior<Command> onEndGame(EndGame command) {
         state.endGame();
+        return Behaviors.stopped();
+    }
+
+    /**
+     * Zombie-actor fix: a fenced Hot Snapshot write means another pod already won a newer lease
+     * for this room (§5.8) -- this pod is no longer the legitimate owner, so it must stop rather
+     * than keep answering as if it were. {@code RoomSupervisor} already {@code watchWith}s every
+     * room it spawns (originally for {@code EndGame}), so stopping here is enough: cleanup of
+     * {@code roomsByRoomId}/{@code subscribersByRoom} happens the same way it already does today.
+     */
+    private Behavior<Command> onLeaseLost(LeaseLost command) {
+        // Prove-it (2026-09-07): temporarily returning `this` instead of stopped() turned
+        // exactly should_stopTheActor_when_theSnapshotWriteIsFencedOut red.
+        snapshotLog.warn("room {}: stopping -- Hot Snapshot write was fenced, another pod holds a newer epoch than {}",
+                roomId, epoch);
         return Behaviors.stopped();
     }
 
@@ -361,31 +437,41 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
                     roomId, SnapshotEnvelope.MAX_ENVELOPE_BYTES);
             return;
         }
-        CompletableFuture<Boolean> written = snapshotStore.save(roomId, epoch, envelope.get());
+        CompletableFuture<SnapshotWriteResult> written = snapshotStore.save(roomId, epoch, envelope.get());
         written.exceptionally(ex -> {
+            // A network/timeout failure is NOT a definitive signal -- unlike FENCED (a
+            // monotonic counter that never moves backward), an exception could just as easily
+            // be a transient blip. Never treated as a lease loss, or a flaky Redis connection
+            // would wrongly kill perfectly healthy rooms.
             snapshotLog.warn("room {}: Hot Snapshot write failed", roomId, ex);
             return null;
-        }).thenAccept(accepted -> {
-            // Prove-it (2026-09-07): broadcasting unconditionally here turned exactly the 2
-            // negative tests (failed write, fenced-out write) red -- confirms both are exercised.
-            if (Boolean.TRUE.equals(accepted)) {
-                // Task 15 / B2: ANSWER_ACK already went out immediately (optimistic, hot path,
-                // unchanged) -- this is the SEPARATE, later signal that tells a client which
-                // sequences are now actually safe to discard from its RingBuffer.
-                // ActorRef.tell() is thread-safe by design, so calling it from this callback
-                // (not the actor's own thread) is fine -- unlike reaching back into `state`.
-                broadcastTarget.tell(RoomState.buildCommittedSeq(roomId, committedSequenceByStudent));
-            } else if (Boolean.FALSE.equals(accepted)) {
-                // debug, not warn: with the Phase 1 default (NoopRoomSnapshotStore, Redis
-                // disabled) EVERY flush takes this branch, so warn-level here would spam
-                // production logs for entirely expected, by-design behavior. The genuinely
-                // actionable case -- a real RedisSnapshotStore rejecting a write because this
-                // pod's epoch is stale (another pod holds a newer lease) -- is indistinguishable
-                // from "disabled" at this boolean-only interface; watch a dedicated metric
-                // (zombie_actor_stopped_total or a Task-14 follow-up) for that signal instead of
-                // this log line.
-                snapshotLog.debug("room {}: Hot Snapshot write not accepted (epoch {}) -- CommittedSeq withheld for this flush",
-                        roomId, epoch);
+        }).thenAccept(result -> {
+            if (result == null) {
+                return;
+            }
+            // Prove-it (2026-09-07): broadcasting unconditionally regardless of `result` turned
+            // exactly should_notBroadcastCommittedSeq_whenTheSnapshotWriteFails/...WhenTheWriteIsFencedOut red.
+            switch (result) {
+                case ACCEPTED -> {
+                    // Task 15 / B2: ANSWER_ACK already went out immediately (optimistic, hot
+                    // path, unchanged) -- this is the SEPARATE, later signal that tells a client
+                    // which sequences are now actually safe to discard from its RingBuffer.
+                    // ActorRef.tell() is thread-safe by design, so calling it from this callback
+                    // (not the actor's own thread) is fine -- unlike reaching back into `state`.
+                    broadcastTarget.tell(RoomState.buildCommittedSeq(roomId, committedSequenceByStudent));
+                }
+                case FENCED -> {
+                    // Zombie-actor fix: another pod's epoch is ahead of this one's -- a
+                    // permanent, definitive loss of ownership (§5.8), never a transient
+                    // condition. `self` is safe to `.tell()` from this foreign thread even
+                    // though `getContext()` itself would not be.
+                    self.tell(LeaseLost.INSTANCE);
+                }
+                case DISABLED -> {
+                    // Phase 1 default (NoopRoomSnapshotStore, Redis off) -- expected on every
+                    // flush, not a failure of any kind. No action, no log: logging this at any
+                    // level above trace would spam production for entirely by-design behavior.
+                }
             }
         });
     }

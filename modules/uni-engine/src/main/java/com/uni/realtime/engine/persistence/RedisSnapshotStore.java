@@ -1,6 +1,7 @@
 package com.uni.realtime.engine.persistence;
 
 import com.uni.realtime.engine.room.RoomSnapshotStore;
+import com.uni.realtime.engine.room.SnapshotWriteResult;
 import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.async.RedisAsyncCommands;
 import io.lettuce.core.codec.ByteArrayCodec;
@@ -57,12 +58,14 @@ public final class RedisSnapshotStore implements RoomSnapshotStore {
     }
 
     @Override
-    public CompletableFuture<Boolean> save(String roomId, long epoch, byte[] envelopeBytes) {
+    public CompletableFuture<SnapshotWriteResult> save(String roomId, long epoch, byte[] envelopeBytes) {
         byte[] epochArg = String.valueOf(epoch).getBytes(StandardCharsets.US_ASCII);
         return commands.eval(SAVE_SCRIPT, ScriptOutputType.INTEGER,
                         new String[] {snapshotKey(roomId), epochKey(roomId)}, envelopeBytes, epochArg)
                 .toCompletableFuture()
-                .thenApply(result -> Long.valueOf(1L).equals(result));
+                .thenApply(result -> Long.valueOf(1L).equals(result)
+                        ? SnapshotWriteResult.ACCEPTED
+                        : SnapshotWriteResult.FENCED);
     }
 
     @Override

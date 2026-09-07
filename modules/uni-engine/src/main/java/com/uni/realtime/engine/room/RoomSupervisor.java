@@ -173,11 +173,31 @@ public final class RoomSupervisor extends AbstractBehavior<RoomSupervisor.Comman
                         message.getClientTimestampMs(), replyTo));
                 engineMetrics.recordMessageEnqueued();
             }
+            case RESYNC -> handleResync(roomId, message, command.sourceChannel());
             case TEACHER_COMMAND -> dispatchTeacherCommand(roomId, message.getTeacherCommand());
             default -> log.warn("dropping {} for room {}: no dispatch wired for this payload yet",
                     message.getPayloadCase(), roomId);
         }
         return this;
+    }
+
+    /**
+     * PH-3 / §9.3: assumes the channel already joined this room via a prior {@code JOIN_ROOM} on
+     * this same reconnect ({@code TicketAuthHandler} requires JOIN_ROOM as the first frame of
+     * every new connection), so {@code replyActorFor} below finds/reuses the same subscriber
+     * {@code deliverJoin} already registered -- no extra subscription bookkeeping needed, same
+     * as the {@code SUBMIT_ANSWER} branch above.
+     */
+    private void handleResync(String roomId, GameMessage message, Channel sourceChannel) {
+        ActorRef<RoomActor.Command> room = roomsByRoomId.get(roomId);
+        if (room == null) {
+            log.warn("dropping RESYNC for room {}: no one has joined it on this pod yet", roomId);
+            return;
+        }
+        ActorRef<GameMessage> replyTo = replyActorFor(sourceChannel, roomId);
+        room.tell(new RoomActor.Resync(message.getStudentId(), message.getResync().getLastAckedSeq(),
+                message.getResync().getPendingList(), replyTo));
+        engineMetrics.recordMessageEnqueued();
     }
 
     private void dispatchTeacherCommand(String roomId, TeacherCommand teacherCommand) {

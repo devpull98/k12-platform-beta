@@ -7,7 +7,7 @@ Nền tảng game học tập thời gian thực: giáo viên mở phiên, học
 > [!NOTE]
 > **Quy ước GĐ1:** Các khối `[!NOTE] GĐ1` đánh dấu điểm Giai đoạn 1 khác kiến trúc đích mô tả ngay phía trên — **đó mới là thứ đang code**.
 > Những chỗ **chưa ai chốt** được in đậm (`Cần Product quyết`, `chưa có cơ sở`, `chưa được định nghĩa`) kèm người quyết và việc bị chặn — tuyệt đối **không tự điền giá trị hợp lý** (xem [§7.5](#75-quyết-định-còn-treo)).
-> Code lệch tài liệu → một trong hai sai, phải sửa. Không để tồn tại song song.
+> Code lệch tài liệu → một trong hai Dưngsai, phải sửa. Không để tồn tại song song.
 
 ---
 
@@ -21,6 +21,7 @@ Nền tảng game học tập thời gian thực: giáo viên mở phiên, học
 7. [Ranh Giới Giai Đoạn 1 & Lộ Trình GĐ2](#7-ranh-giới-giai-đoạn-1--lộ-trình-gđ2)
 8. [Hồ Sơ Quyết Định Kiến Trúc (Architecture Decision Records — ADR)](#8-hồ-sơ-quyết-định-kiến-trúc-architecture-decision-records--adr)
 9. [Phân Tích Rủi Ro Thực Chiến & Chiến Lược Phòng Ngừa](#9-phân-tích-rủi-ro-thực-chiến--chiến-lược-phòng-ngừa)
+10. [Ví Dụ Thực Chiến, Chuyển Đổi Yêu Cầu PO Sang Đặc Tả Kỹ Thuật (Dev Specs) & Kịch Bản BDD](#10-ví-dụ-thực-chiến-chuyển-đổi-yêu-cầu-po-sang-đặc-tả-kỹ-thuật-dev-specs--kịch-bản-bdd)
 
 ---
 
@@ -1086,3 +1087,90 @@ khỏi phần **đề xuất cho GĐ2** (cần ADR riêng, chưa được phép 
 | **5** | **Head-of-Line Blocking trên TCP** | 🟡 Vừa | 🟢 Thấp ở GĐ1 (snapshot đã < 5 KB) | GĐ1: giám sát `internal_frame_p99_latency`/cặp pod. GĐ2 (nếu đo thấy cần): pool 2–4 TCP + sửa ADR-001, không tự làm trước | Backend Dev |
 | **6** | **Scale pod làm vỡ Modulo Hash** | 🔴 Cao | 🟢 Thấp | Tạm thời: cấm scale Engine pod giữa trận đấu (Task 19). Fix thật đã chốt: `RedisLeaseRoomOwnership` (Task 14, chưa triển khai) | Backend Dev / DevOps / SRE |
 | **7** | **Frontend thiếu RingBuffer (PH-3)** | 🔴 Cao | 🟡 Vừa | Ký hợp đồng kỹ thuật bắt buộc: RingBuffer 10 phần tử + phát `RESYNC` | Frontend Lead |
+
+---
+
+## 10. Ví Dụ Thực Chiến, Chuyển Đổi Yêu Cầu PO Sang Đặc Tả Kỹ Thuật (Dev Specs) & Kịch Bản BDD
+
+Mục này trình bày ví dụ thực tế quy trình chuyển đổi tài liệu yêu cầu nghiệp vụ từ **Product Owner (PO)** (`PO_Require_Game+nhóm_+tập+thể+Inclass.doc`) sang **Đặc Tả Kỹ Thuật cho Developer (Dev Specs)** và các **Kịch Bản Kiểm Thử Hành Vi (BDD - Behavior Driven Development)** nhằm đảm bảo tính toàn vẹn giữa Yêu cầu Sản phẩm và Hiện thực Mã nguồn.
+
+---
+
+### 10.1 Bảng Ánh Xạ Chuyển Đổi Yêu Cầu PO (PO Specs) $\rightarrow$ Kỹ Thuật Developer (Dev Specs)
+
+| Yêu cầu PO (`PO_Require_Game...doc`) | Đặc tả Kỹ thuật Developer (Dev Specs) | Thành phần / Codebase Phụ trách |
+|---|---|---|
+| **Chế độ chơi (Game Modes):**<br>- `cooperative`: Tập thể (Đánh boss)<br>- `team`: Chia X nhóm thi đấu<br>- `individual`: Thi đấu cá nhân | Mở rộng `GameDefinition` (Task 11) chứa enum `game_mode` (`SOLO`, `COOPERATIVE`, `TEAM`, `INDIVIDUAL`). Khai báo `team_count` và `team_assignment` trong Data Model `RoomState`. | `modules/uni-engine/.../definition/GameDefinition.java`<br>`modules/uni-engine/.../room/RoomState.java` |
+| **Cơ chế Mechanic:**<br>- `progress_meter` (Thanh tiến trình)<br>- `progress_display_mode`: `simple_bar` / `staged_visual` | Cấu hình `progress_target` (đích tiến trình). Thêm mốc phần trăm (`progress_stages`) trong payload Protobuf `RoomStateSnapshot`. `RoomActor` tự tính `% = (câu đúng / progress_target) * 100`. | `modules/uni-protocol/.../game_message.proto`<br>`modules/uni-engine/.../room/RoomActor.java` |
+| **Điều kiện Thắng (`win_condition`):**<br>- `progress_completed`: Đạt 100%<br>- `first_to_finish`: Đội đầu tiên chạm 100%<br>- `most_points_when_time_up`: Điểm cao nhất khi hết giờ | Thêm `WinConditionEvaluator` vào `RoomState.evaluateStep()`. Khi thỏa mãn điều kiện, `RoomActor` chuyển FSM sang trạng thái `FINISHED` và dừng ván game. | `modules/uni-engine/.../room/RoomState.java`<br>`modules/uni-engine/.../scoring/FormulaScoreCalculator.java` |
+| **Tài nguyên dùng chung (`shared_resource`):**<br>- `time`: Trừ thời gian khi sai<br>- `lives`: Trừ số mạng của phòng | Thêm `shared_resource_type` và `penalty_value`. Khi nộp bài sai, `RoomState` trừ trực tiếp vào `step_deadline_at` hoặc `remaining_lives` của nhóm/phòng. | `modules/uni-engine/.../room/RoomState.java` |
+| **Tự động hiện nút "Vào chơi" (No Room Code):**<br>- Không cần link hay mã phòng.<br>- Lấy danh tính từ tài khoản Uniclass/CMS | Xác thực `TicketAuthHandler` tại Gateway qua JWT ticket một lần (`TicketAuthHandler.java`). Trích xuất `student_id`, `room_id`, `session_id` từ token claim. | `modules/uni-gateway/.../auth/TicketAuthHandler.java` |
+| **Tương thích Hệ thống Cũ (`lms-worker`):**<br>- Thảo luận nhóm, nộp bài tập nhóm, trao cúp thành tích | `GameEventPublisher` đẩy `GameEvent` bất đồng bộ sang Kafka topic `game.events.v1`. Các listener `lms-worker` (`ActiveGroupDiscussionListener`, `SubmitExerciseListener`) tiêu thụ sự kiện từ Kafka để trao cúp/lưu DB. | `modules/uni-engine/.../events/GameEventPublisher.java`<br>`vn.edupiaclass.lms.worker.listener.event.group_discussion.*` |
+
+---
+
+### 10.2 Kịch Bản Kiểm Thử Theo Phát Triển Bằng Hành Vi (BDD Scenarios)
+
+Dưới đây là 3 kịch bản BDD chuẩn (`Given - When - Then`) ánh xạ từ yêu cầu của PO để Dev viết Integration Test (`uni-e2e` / `uni-engine`):
+
+#### 🧪 Kịch bản BDD 1: Game Tập Thể — Đánh Boss Rồng Số Học (`cooperative` Mode)
+```gherkin
+Feature: Chế độ chơi Tập thể đánh Boss chung (Cooperative Mode)
+
+  Scenario: Cả lớp 12 học sinh cùng trả lời đúng để đánh gục Boss
+    Given 12 học sinh đã vào phòng game chế độ "cooperative" với progress_target = 10 (cần 10 câu đúng)
+    And Boss đang ở trạng thái 0% sát thương (Giai đoạn visual 1: Rồng nguyên vẹn)
+    When 5 học sinh gửi đáp án đúng SubmitAnswer trong câu 1
+    Then Server RoomActor tính toán tiến trình đạt (5 / 10) * 100 = 50%
+    And Server broadcast gói tin RoomStateSnapshot mang delta progress_percentage = 50% và stage_index = 3 (Rồng lộ xương sườn)
+    And submit_ack trả về cho 5 học sinh có latency p99 < 100ms
+    When thêm 5 học sinh khác gửi đáp án đúng SubmitAnswer ở câu 2
+    Then tiến trình phòng đạt 100% (progress_completed)
+    And Server RoomActor tự động chuyển FSM sang trạng thái FINISHED
+    And broadcast thông điệp GameOver chiến thắng cho toàn thể học sinh trong phòng
+```
+
+#### 🧪 Kịch bản BDD 2: Game Chia Nhóm Thi Đấu Tốc Độ (`team` Mode)
+```gherkin
+Feature: Chế độ chơi Chia Nhóm thi đấu (Team Mode)
+
+  Scenario: Hai nhóm thi đấu tốc độ với win_condition = first_to_finish
+    Given Phòng game được chia thành 2 nhóm: Đội Đỏ (6 HS) và Đội Xanh (6 HS)
+    And score_aggregation = sum_all, round_time_limit = 30s
+    When Đội Đỏ có 6 học sinh trả lời đúng ngay ở giây thứ 5
+    Then Server RoomActor cộng dồn điểm cho Đội Đỏ và đóng dấu server_received_at chuẩn xác
+    And Đội Đỏ hoàn thành tiến trình 100% trước Đội Xanh
+    Then Server RoomActor tuyên bố Đội Đỏ thắng cuộc (first_to_finish)
+    And Đẩy sự kiện TeamSubmitExerciseEvent sang Kafka topic game.events.v1
+    And lms-worker (SubmitExerciseListener) nhận sự kiện và trao cúp danh dự cho Đội Đỏ trong DB
+```
+
+#### 🧪 Kịch bản BDD 3: Khôi Phục Kết Nối Giữa Chừng & Chống Nộp Bài Trùng (Resilience & Deduplication)
+```gherkin
+Feature: Khôi phục kết nối và Chống nộp trùng dữ liệu
+
+  Scenario: Học sinh bị ngắt mạng tạm thời trong lúc ván game đang diễn ra
+    Given Học sinh A đã nộp bài thành công ở câu 1 với sequence = 1 và nhận ANSWER_ACK
+    When Học sinh A bị rớt mạng WebSocket và kết nối lại sau 10 giây
+    Then Gateway xác thực vé One-Time Ticket và tra cứu RouteCache đưa học sinh A về đúng Engine Pod
+    And Client gửi gói tin Resync(last_acked_seq = 1, pending = [sequence_1])
+    Then Server RoomActor tra cứu LastSeenSequenceTable phát hiện sequence_1 <= last_seen (1 <= 1)
+    And Server trả lại ANSWER_ACK cũ, không cộng điểm lần hai, không làm thay đổi điểm số ván game
+    And Học sinh A nhận lại đúng trạng thái ván game hiện tại (RoomStateSnapshot) mà không bị mất điểm
+```
+
+---
+
+### 10.3 Ma Trận Tương Thích & Quy Trình Chuyển Đổi cho Đội Ngũ Phát Triển (Dev Workflow)
+
+```text
+[ PO REQUIREMENT (.DOC) ]
+   │
+   ├─► 1. Parse Input Schema (Nhóm A: Mode/Mechanic, Nhóm B: LLM Progress Target/Stages)
+   ├─► 2. Viết BDD Scenarios (Given - When - Then)
+   └─► 3. Ánh xạ vào Codebase hiện tại:
+           ├── Protocol: Thêm field vào GameMessage / RoomStateSnapshot (uni-protocol)
+           ├── Engine FSM: Bổ sung WinCondition & Progress Calculator vào RoomState (uni-engine)
+           ├── Gateway: Giữ nguyên TicketAuthHandler & RouteCache (uni-gateway)
+           └─► Worker Integration: Đẩy Kafka Event sang lms-worker / SubmitExerciseListener
+```

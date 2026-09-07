@@ -18,11 +18,21 @@ uni:
     # Netty event loops = cores x 2, fixed. Never do DB/Redis/HTTP work on one.
     event-loop-multiplier: 2
 
-  engine:
-    # Every engine pod the gateway holds a frame-channel connection to. Room ownership is
-    # LEARNED from owner_pod_id on responses, so this list is only the dial list — the
-    # gateway never hashes a room id itself.
-    pods: ${ENGINE_PODS:localhost:9100}
+    engine:
+      # Every engine pod the gateway holds a frame-channel connection to. Room ownership is
+      # LEARNED from owner_pod_id on responses, so this list is only the dial list — the
+      # gateway never hashes a room id itself.
+      pods: ${ENGINE_PODS:localhost:9100}
+
+    # Local-Docker-only stand-in for the still-blocked G1a/G1c ticket verifier (see the
+    # com.uni.realtime.gateway.auth.dev package javadoc). NEVER valid for staging/production --
+    # gated behind BOTH this flag AND the "dev-docker" Spring profile so neither alone can
+    # accidentally light it up.
+    dev-ticket:
+      enabled: ${GATEWAY_DEV_TICKET_ENABLED:false}
+      hmac-secret: ${GATEWAY_DEV_TICKET_SECRET:}
+      ttl-seconds: ${GATEWAY_DEV_TICKET_TTL_SECONDS:300}
+      replay-guard-enabled: ${GATEWAY_DEV_TICKET_REPLAY_GUARD_ENABLED:false}
 
 management:
   endpoints:

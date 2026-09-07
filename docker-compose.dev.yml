@@ -1,0 +1,134 @@
+# Local Docker test infrastructure -- stands in for PH-1 (multi-pod topology; load testing
+# itself is explicitly out of scope), PH-3 (exercised via SimulatedStudentClient /
+# DockerComposeResyncIT in modules/uni-e2e, not by anything here), and G1a/G1c (the gateway's
+# dev-ticket profile below). NOT for staging/production -- see the "NEVER" warnings on
+# DevTicketVerifier and uni.gateway.dev-ticket.
+#
+# Usage:
+#   mvn clean package -DskipTests                    # build the exec jars Dockerfiles COPY
+#   docker compose -f docker-compose.dev.yml up -d --build
+#   docker compose -f docker-compose.dev.yml down -v # tear down, including Redis/Kafka volumes
+#
+# Base images verified to exist and pull successfully as of 2026-09-07: eclipse-temurin:25-jre,
+# redis:7-alpine, apache/kafka:3.9.0.
+#
+# Explicit project name -- without this, Compose defaults the project name to the directory
+# basename ("spring-ticket-ddd"), which collided with an unrelated, pre-existing "spring-ticket-ddd"
+# Compose project on this machine (mysql/mongodb/kafka-ui/exporters, none of which exist in this
+# repo) and overwrote its registry entry. Never remove this.
+name: uni-realtime-dev
+
+networks:
+  uni-dev-net:
+    driver: bridge
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    networks: [uni-dev-net]
+
+  # Single-broker KRaft mode (no Zookeeper) -- the official Apache Kafka image, env-var
+  # convention is KAFKA_<PROPERTY.DOTS.UPPERCASED_WITH_UNDERSCORES> (verified against the
+  # image's own /etc/kafka/docker/server.properties and launch script).
+  kafka:
+    image: apache/kafka:3.9.0
+    environment:
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093,PLAINTEXT_HOST://:29092"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+    ports:
+      - "29092:29092"
+    networks: [uni-dev-net]
+
+  # Pod naming matters: EngineNetworkLifecycle derives ids as "engine-" + list-position
+  # (application.yml's ENGINE_POD_ID default is "engine-0"), and GatewayNetworkLifecycle assigns
+  # the SAME "engine-" + position ids to its dial list (uni.gateway.engine.pods) regardless of
+  # ENGINE_POD_ID's actual value -- so these Compose service/hostnames only need to match the
+  # ORDER in gateway's ENGINE_PODS below, not their own ENGINE_POD_ID literally. Both are set to
+  # the same "engine-N" here purely for humans reading logs, not because the code requires it.
+  engine-0:
+    build:
+      context: .
+      dockerfile: modules/uni-engine/Dockerfile
+    environment:
+      SERVER_PORT: "8090"
+      ENGINE_FRAME_PORT: "9100"
+      ENGINE_POD_ID: "engine-0"
+      ENGINE_POD_COUNT: "2"
+      ENGINE_REDIS_ENABLED: "true"
+      ENGINE_REDIS_URI: "redis://redis:6379"
+      ENGINE_KAFKA_ENABLED: "true"
+      ENGINE_KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+      ENGINE_KAFKA_TOPIC: "game.events.v1"
+    ports:
+      - "18090:8090"
+    depends_on: [redis, kafka]
+    networks: [uni-dev-net]
+    # GatewayNetworkLifecycle dials this pod's frame-channel port at ITS OWN startup, synchronously,
+    # and a failed dial crashes the whole gateway JVM (no retry) -- Spring Boot's actuator port
+    # comes up BEFORE the ApplicationRunner that opens 9100 runs, so actuator/health is not a
+    # sufficient readiness signal here; check the actual frame-channel port. No curl/wget in this
+    # JRE base image, so use bash's /dev/tcp instead (Ubuntu-based image ships bash).
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/9100' 2>/dev/null"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 5s
+
+  engine-1:
+    build:
+      context: .
+      dockerfile: modules/uni-engine/Dockerfile
+    environment:
+      SERVER_PORT: "8090"
+      ENGINE_FRAME_PORT: "9100"
+      ENGINE_POD_ID: "engine-1"
+      ENGINE_POD_COUNT: "2"
+      ENGINE_REDIS_ENABLED: "true"
+      ENGINE_REDIS_URI: "redis://redis:6379"
+      ENGINE_KAFKA_ENABLED: "true"
+      ENGINE_KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+      ENGINE_KAFKA_TOPIC: "game.events.v1"
+    ports:
+      - "18091:8090"
+    depends_on: [redis, kafka]
+    networks: [uni-dev-net]
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/9100' 2>/dev/null"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 5s
+
+  gateway:
+    build:
+      context: .
+      dockerfile: modules/uni-gateway/Dockerfile
+    environment:
+      SERVER_PORT: "8080"
+      GATEWAY_WS_PORT: "9000"
+      # Position 0 -> engine-0, position 1 -> engine-1 (see the pod-naming note above).
+      ENGINE_PODS: "engine-0:9100,engine-1:9100"
+      SPRING_PROFILES_ACTIVE: "dev-docker"
+      GATEWAY_DEV_TICKET_ENABLED: "true"
+      # Must stay textually identical to DevTicketCodec.DEFAULT_DEV_SECRET.
+      GATEWAY_DEV_TICKET_SECRET: "uni-realtime-local-docker-dev-secret-do-not-use-elsewhere"
+    ports:
+      - "9000:9000"
+      - "8080:8080"
+    depends_on:
+      engine-0:
+        condition: service_healthy
+      engine-1:
+        condition: service_healthy
+    networks: [uni-dev-net]

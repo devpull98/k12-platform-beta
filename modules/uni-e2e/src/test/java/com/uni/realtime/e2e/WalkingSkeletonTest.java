@@ -7,6 +7,7 @@ import com.uni.realtime.engine.room.RoomActor;
 import com.uni.realtime.engine.room.RoomOwnership;
 import com.uni.realtime.engine.room.RoomSupervisor;
 import com.uni.realtime.engine.scoring.FormulaScoreCalculator;
+import com.uni.realtime.e2e.support.SimulatedStudentClient;
 import com.uni.realtime.gateway.auth.TicketClaims;
 import com.uni.realtime.gateway.auth.TicketRejectedException;
 import com.uni.realtime.gateway.auth.TicketVerifier;
@@ -15,7 +16,6 @@ import com.uni.realtime.gateway.fanout.RoomRegistry;
 import com.uni.realtime.gateway.metrics.GatewayMetrics;
 import com.uni.realtime.gateway.net.EngineResponseRouter;
 import com.uni.realtime.gateway.net.GatewayBootstrap;
-import com.uni.realtime.gateway.net.GatewayPipeline;
 import com.uni.realtime.gateway.net.IpAdmissionController;
 import com.uni.realtime.gateway.routing.FrameChannelClient;
 import com.uni.realtime.gateway.routing.RouteCache;
@@ -24,40 +24,17 @@ import com.uni.realtime.protocol.JoinRoom;
 import com.uni.realtime.protocol.MessageType;
 import com.uni.realtime.protocol.SubmitAnswer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
-import io.netty.bootstrap.Bootstrap;
-import io.netty.buffer.Unpooled;
-import io.netty.channel.Channel;
-import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.ChannelInitializer;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.MultiThreadIoEventLoopGroup;
-import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.channel.nio.NioIoHandler;
-import io.netty.channel.socket.SocketChannel;
-import io.netty.channel.socket.nio.NioSocketChannel;
-import io.netty.handler.codec.http.DefaultHttpHeaders;
-import io.netty.handler.codec.http.HttpClientCodec;
-import io.netty.handler.codec.http.HttpObjectAggregator;
-import io.netty.handler.codec.http.websocketx.BinaryWebSocketFrame;
-import io.netty.handler.codec.http.websocketx.WebSocketClientHandshaker;
-import io.netty.handler.codec.http.websocketx.WebSocketClientHandshakerFactory;
-import io.netty.handler.codec.http.websocketx.WebSocketClientProtocolHandler;
-import io.netty.handler.codec.http.websocketx.WebSocketVersion;
 import org.apache.pekko.actor.typed.ActorRef;
 import org.apache.pekko.actor.typed.ActorSystem;
 import org.apache.pekko.actor.testkit.typed.javadsl.TestProbe;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
-import java.net.InetSocketAddress;
-import java.net.URI;
 import java.time.Clock;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -86,8 +63,8 @@ class WalkingSkeletonTest {
     private ActorSystem<RoomSupervisor.Command> engineSystem;
     private FrameChannelServer engineServer;
     private GatewayBootstrap gatewayBootstrap;
-    private WsTestClient clientA;
-    private WsTestClient clientB;
+    private SimulatedStudentClient clientA;
+    private SimulatedStudentClient clientB;
 
     @AfterEach
     void tearDown() throws InterruptedException {
@@ -112,8 +89,8 @@ class WalkingSkeletonTest {
 
         int gatewayPort = startGateway(engineServer.boundPort());
 
-        clientA = WsTestClient.connect(gatewayPort);
-        clientB = WsTestClient.connect(gatewayPort);
+        clientA = SimulatedStudentClient.connect(gatewayPort);
+        clientB = SimulatedStudentClient.connect(gatewayPort);
         clientA.send(joinRoom("ticket:student-a:room-1", "Alice"));
         clientB.send(joinRoom("ticket:student-b:room-1", "Bob"));
         assertThat(clientA.takeMatching("Alice's full snapshot",
@@ -207,89 +184,6 @@ class WalkingSkeletonTest {
                 throw new TicketRejectedException("malformed test ticket: " + ticket);
             }
             return new TicketClaims(parts[1], parts[2], "session-" + parts[1], List.of("student"));
-        }
-    }
-
-    /** A real WebSocket client: connects, completes the upgrade, and queues decoded {@link GameMessage}s. */
-    private static final class WsTestClient {
-        private final EventLoopGroup group;
-        private final Channel channel;
-        private final BlockingQueue<GameMessage> received;
-
-        private WsTestClient(EventLoopGroup group, Channel channel, BlockingQueue<GameMessage> received) {
-            this.group = group;
-            this.channel = channel;
-            this.received = received;
-        }
-
-        static WsTestClient connect(int port) throws InterruptedException {
-            BlockingQueue<GameMessage> received = new LinkedBlockingQueue<>();
-            EventLoopGroup group = new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
-            WebSocketClientHandshaker handshaker = WebSocketClientHandshakerFactory.newHandshaker(
-                    URI.create("ws://localhost:" + port + GatewayPipeline.WEBSOCKET_PATH),
-                    WebSocketVersion.V13, null, false, new DefaultHttpHeaders());
-            java.util.concurrent.CompletableFuture<Void> handshakeComplete = new java.util.concurrent.CompletableFuture<>();
-
-            Bootstrap bootstrap = new Bootstrap()
-                    .group(group)
-                    .channel(NioSocketChannel.class)
-                    .handler(new ChannelInitializer<SocketChannel>() {
-                        @Override
-                        protected void initChannel(SocketChannel ch) {
-                            ch.pipeline().addLast(new HttpClientCodec());
-                            ch.pipeline().addLast(new HttpObjectAggregator(65536));
-                            ch.pipeline().addLast(new WebSocketClientProtocolHandler(handshaker));
-                            ch.pipeline().addLast(new SimpleChannelInboundHandler<Object>() {
-                                @Override
-                                protected void channelRead0(ChannelHandlerContext ctx, Object msg) throws Exception {
-                                    if (msg instanceof BinaryWebSocketFrame frame) {
-                                        received.add(GameMessage.parseFrom(
-                                                io.netty.buffer.ByteBufUtil.getBytes(frame.content())));
-                                    }
-                                }
-
-                                @Override
-                                public void userEventTriggered(ChannelHandlerContext ctx, Object evt) {
-                                    if (evt == WebSocketClientProtocolHandler.ClientHandshakeStateEvent.HANDSHAKE_COMPLETE) {
-                                        handshakeComplete.complete(null);
-                                    }
-                                }
-                            });
-                        }
-                    });
-
-            Channel channel = bootstrap.connect("localhost", port).sync().channel();
-            try {
-                handshakeComplete.get(5, TimeUnit.SECONDS);
-            } catch (Exception e) {
-                throw new IllegalStateException("WS handshake never completed", e);
-            }
-            return new WsTestClient(group, channel, received);
-        }
-
-        void send(GameMessage message) {
-            channel.writeAndFlush(new BinaryWebSocketFrame(Unpooled.wrappedBuffer(message.toByteArray())));
-        }
-
-        GameMessage takeMatching(String description, java.util.function.Predicate<GameMessage> predicate) throws InterruptedException {
-            long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
-            while (System.nanoTime() < deadlineNanos) {
-                GameMessage message = received.poll(200, TimeUnit.MILLISECONDS);
-                if (message != null && predicate.test(message)) {
-                    return message;
-                }
-            }
-            throw new AssertionError("expected " + description + " within 3s, none arrived");
-        }
-
-        void assertNoMoreMessagesFor(long millis) throws InterruptedException {
-            GameMessage unexpected = received.poll(millis, TimeUnit.MILLISECONDS);
-            assertThat(unexpected).as("expected silence but got %s", unexpected).isNull();
-        }
-
-        void close() throws InterruptedException {
-            channel.close().sync();
-            group.shutdownGracefully().sync();
         }
     }
 }

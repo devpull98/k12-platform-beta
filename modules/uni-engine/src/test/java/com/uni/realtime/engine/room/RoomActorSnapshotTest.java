@@ -161,6 +161,39 @@ class RoomActorSnapshotTest {
     }
 
     @Test
+    void should_stopTheActor_when_theSnapshotWriteIsFencedOut() {
+        // Zombie-actor fix: a FENCED result means another pod already won a newer lease for
+        // this room -- this actor must stop rather than keep answering as if it still owned it.
+        MutableClock clock = new MutableClock(Instant.parse("2026-09-07T09:00:00Z"));
+        BehaviorTestKit<RoomActor.Command> testKit = BehaviorTestKit.create(
+                RoomActor.create("room-1", clock, FormulaScoreCalculator.binaryChoice(),
+                        new EngineMetrics(new SimpleMeterRegistry()), TickMode.COALESCE,
+                        TestInbox.<GameMessage>create().getRef(), new FencedSnapshotStore(), 0L, null));
+
+        testKit.run(new RoomActor.JoinRoom("student-1", "Alice", TestInbox.<GameMessage>create().getRef()));
+        assertThat(testKit.isAlive()).as("LeaseLost was sent to self, not processed yet").isTrue();
+        testKit.runOne(); // drains self-inbox: processes the LeaseLost this JoinRoom's flush queued
+
+        assertThat(testKit.isAlive()).as("must stop once it learns it was fenced out").isFalse();
+    }
+
+    @Test
+    void should_notStopTheActor_when_theSnapshotStoreIsMerelyDisabled() {
+        // The Phase 1 default (NoopRoomSnapshotStore) also resolves "not accepted" on every
+        // flush -- must NOT be confused with FENCED, or every room would stop under today's
+        // default config. Uses the six-arg overload, which defaults to NoopRoomSnapshotStore.
+        MutableClock clock = new MutableClock(Instant.parse("2026-09-07T09:00:00Z"));
+        BehaviorTestKit<RoomActor.Command> testKit = BehaviorTestKit.create(
+                RoomActor.create("room-1", clock, FormulaScoreCalculator.binaryChoice(),
+                        new EngineMetrics(new SimpleMeterRegistry()), TickMode.COALESCE,
+                        TestInbox.<GameMessage>create().getRef()));
+
+        testKit.run(new RoomActor.JoinRoom("student-1", "Alice", TestInbox.<GameMessage>create().getRef()));
+
+        assertThat(testKit.isAlive()).as("DISABLED must never be treated as FENCED").isTrue();
+    }
+
+    @Test
     void should_resumeScoreAndRoster_when_createdFromASnapshot() {
         RoomState original = new RoomState("room-1", Clock.systemUTC(), FormulaScoreCalculator.binaryChoice());
         original.joinRoom("student-1", "Alice");
@@ -189,10 +222,10 @@ class RoomActorSnapshotTest {
         private final AtomicReference<Long> lastEpoch = new AtomicReference<>();
 
         @Override
-        public CompletableFuture<Boolean> save(String roomId, long epoch, byte[] envelopeBytes) {
+        public CompletableFuture<SnapshotWriteResult> save(String roomId, long epoch, byte[] envelopeBytes) {
             saveCalls.incrementAndGet();
             lastEpoch.set(epoch);
-            return CompletableFuture.completedFuture(true);
+            return CompletableFuture.completedFuture(SnapshotWriteResult.ACCEPTED);
         }
 
         @Override
@@ -203,7 +236,7 @@ class RoomActorSnapshotTest {
 
     private static final class FailingSnapshotStore implements RoomSnapshotStore {
         @Override
-        public CompletableFuture<Boolean> save(String roomId, long epoch, byte[] envelopeBytes) {
+        public CompletableFuture<SnapshotWriteResult> save(String roomId, long epoch, byte[] envelopeBytes) {
             return CompletableFuture.failedFuture(new RuntimeException("simulated Redis error"));
         }
 
@@ -215,8 +248,8 @@ class RoomActorSnapshotTest {
 
     private static final class FencedSnapshotStore implements RoomSnapshotStore {
         @Override
-        public CompletableFuture<Boolean> save(String roomId, long epoch, byte[] envelopeBytes) {
-            return CompletableFuture.completedFuture(false);
+        public CompletableFuture<SnapshotWriteResult> save(String roomId, long epoch, byte[] envelopeBytes) {
+            return CompletableFuture.completedFuture(SnapshotWriteResult.FENCED);
         }
 
         @Override
@@ -227,7 +260,7 @@ class RoomActorSnapshotTest {
 
     private static final class NeverCompletingSnapshotStore implements RoomSnapshotStore {
         @Override
-        public CompletableFuture<Boolean> save(String roomId, long epoch, byte[] envelopeBytes) {
+        public CompletableFuture<SnapshotWriteResult> save(String roomId, long epoch, byte[] envelopeBytes) {
             return new CompletableFuture<>();
         }
 

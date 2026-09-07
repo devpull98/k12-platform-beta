@@ -194,8 +194,8 @@ class RoomSupervisorTest {
         private CompletableFuture<Optional<byte[]>> pending;
 
         @Override
-        public synchronized CompletableFuture<Boolean> save(String roomId, long epoch, byte[] envelopeBytes) {
-            return CompletableFuture.completedFuture(true);
+        public synchronized CompletableFuture<SnapshotWriteResult> save(String roomId, long epoch, byte[] envelopeBytes) {
+            return CompletableFuture.completedFuture(SnapshotWriteResult.ACCEPTED);
         }
 
         @Override

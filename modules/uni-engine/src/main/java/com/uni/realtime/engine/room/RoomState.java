@@ -306,6 +306,16 @@ final class RoomState {
         return ack;
     }
 
+    /**
+     * PH-3 / §9.3: full snapshot addressed to one reconnecting student, personal delivery (same
+     * convention {@link #joinRoom} uses). Has no side effect on roster/dirty state -- a resync is
+     * not a new join -- and reuses {@link #buildFullSnapshot()}, so it shares the one
+     * {@code broadcast_seq} counter (§B3) with every other snapshot this room ever emits.
+     */
+    GameMessage resyncSnapshot(String studentId) {
+        return buildFullSnapshot().toBuilder().setStudentId(studentId).build();
+    }
+
     /** ADR-4: the flush timer only calls this when {@link #isDirty()} -- a silent room broadcasts nothing. */
     boolean isDirty() {
         return !dirtyStudentIds.isEmpty();

@@ -727,14 +727,36 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
   không cần biết cụ thể là `RedisLeaseRoomOwnership`.
 
   `mvn clean install` toàn reactor: BUILD SUCCESS, **162 test**, không leak.
-- **Chưa làm (rõ ràng, không phải quên):** (1) `RoomActor` không tự dừng khi mất lease giữa
-  chừng (epoch cố định lúc spawn) — `RoomSnapshotStore.save` trả `false` khi bị fencing chỉ mới
-  log cảnh báo, chưa có gì khiến actor tự `Behaviors.stopped()`; (2) `RedisRoomLeaseStore`/
-  `RedisSnapshotStore` **vẫn chưa test được với Redis thật** (không có Redis/Docker trong môi
-  trường này) — cùng caveat như `TicketVerifier`. Wiring đã sẵn sàng và bật được qua
-  `ENGINE_REDIS_ENABLED=true`, nhưng **DevOps/người có Redis thật phải verify trước khi bật ở
-  staging/production** — đây chính là điều kiện các AC "Scale thêm pod"/"Pod crash thật" phía
-  trên cần để chuyển từ `[ ]` sang `[x]` bằng chaos test thật, không phải chỉ đọc code.
+- **Kết quả (fix zombie-actor — tiếp tục 2026-09-07):** `RoomActor` giờ **tự dừng** khi bị
+  fencing. Vấn đề thiết kế phát hiện giữa chừng: `RoomSnapshotStore.save()` trước đây trả
+  `boolean` — `false` **không phân biệt được** "bị fencing thật" (phải dừng) khỏi "snapshot đang
+  tắt" (`NoopRoomSnapshotStore`, mặc định GĐ1, trả `false` ở **mọi** flush). Cho `false` kích hoạt
+  tự dừng vô điều kiện sẽ làm **mọi phòng tự dừng ngay sau lần flush đầu** trong cấu hình mặc
+  định hiện tại — một regression nghiêm trọng hơn cả lỗ hổng đang vá. Sửa bằng cách nâng
+  `RoomSnapshotStore.save()` từ `CompletableFuture<Boolean>` lên `CompletableFuture<SnapshotWriteResult>`
+  (enum 3 trạng thái: `ACCEPTED`/`FENCED`/`DISABLED`) — `NoopRoomSnapshotStore` trả `DISABLED`
+  (không hành động gì), `RedisSnapshotStore` trả `ACCEPTED`/`FENCED` tuỳ kết quả Lua script.
+  `RoomActor` lưu `ActorRef<Command> self` (lấy lúc khởi tạo, trên đúng actor thread — an toàn để
+  `.tell()` từ thread khác sau này, khác `getContext()` không an toàn ngoài actor thread) — khi
+  nhận `FENCED`, gửi `LeaseLost.INSTANCE` cho chính mình, actor tự `Behaviors.stopped()`.
+  `RoomSupervisor` không cần sửa gì — cơ chế `watchWith`/`RoomTerminated` đã dọn dẹp
+  `roomsByRoomId` cho MỌI lý do actor dừng từ Task 13, không riêng `EndGame`. Một exception khi
+  ghi (lỗi mạng/timeout) **không** kích hoạt dừng — chỉ epoch bị fencing thật (bộ đếm đơn điệu,
+  không bao giờ giảm) mới là tín hiệu dứt khoát; lỗi mạng có thể là tạm thời.
+
+  Test mới: `should_stopTheActor_when_theSnapshotWriteIsFencedOut` +
+  `should_notStopTheActor_when_theSnapshotStoreIsMerelyDisabled` (dùng đúng overload 6-tham-số
+  mặc định, xác nhận cấu hình GĐ1 hiện tại không bị ảnh hưởng) — prove-it xác nhận đúng 1 test Red.
+  Cập nhật toàn bộ fake trong `RoomActorSnapshotTest`/`RoomSupervisorTest` theo enum mới.
+  `mvn clean install` toàn reactor: BUILD SUCCESS, **179 test**, không leak.
+- **Cập nhật 2026-09-07 (Task 20, Docker daemon lần đầu khả dụng trong phiên này):**
+  `RedisRoomLeaseStore`/`RedisSnapshotStore` **đã verify được với Redis thật** lần đầu tiên, qua
+  `docker-compose.dev.yml` (Redis 7 thật, 2 engine pod thật, `ENGINE_REDIS_ENABLED=true`) —
+  `DockerComposeResyncIT` join 2 phòng khác pod, sau đó `redis-cli KEYS "*"` xác nhận cả
+  `room:owner:*`, `room:epoch:*`, `room:snap:*` đều được ghi đúng. Đây vẫn là verify thủ công qua
+  Docker cục bộ, **không phải chaos test/staging thật** — AC "Scale thêm pod"/"Pod crash thật"
+  phía trên vẫn cần môi trường staging thật để đóng hẳn, nhưng phần "chưa từng chạm Redis thật"
+  đã không còn đúng nữa. Xem Task 20 để biết toàn bộ hạ tầng Docker này.
 - **Mode:** sequential after [T13]
 - **Mô tả:** Gộp hai việc luôn phải đi cùng nhau: (1) Hot Snapshot thật lên Redis (B1 — tài liệu
   nói pod crash → phòng phục hồi trong 10–50ms từ Redis Snapshot, nhưng `RoomActor.flush()` hiện
@@ -862,9 +884,13 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
   Noop **không** làm hỏng bất kỳ test nào khác đang dùng overload mặc định (`RoomActorTest`,
   `TickCoalescingTest`, `RoomSupervisorTest`, `WalkingSkeletonTest`) vốn có thể đã âm thầm nhận
   thêm message `CommittedSeq` giả nếu không sửa kịp.
-- **Chưa làm:** Toàn bộ phần PH-3 (client đổi điều kiện discard RingBuffer từ `ANSWER_ACK` sang
-  `committed_seq`) — ngoài phạm vi service này, chưa có đội nhận việc. **Không được công bố SLA
-  "mất dữ liệu = 0" tới khi client đổi điều kiện discard.**
+- **Chưa làm:** Toàn bộ phần PH-3 thật (client sản xuất đổi điều kiện discard RingBuffer từ
+  `ANSWER_ACK` sang `committed_seq`) — ngoài phạm vi service này, chưa có đội nhận việc. **Không
+  được công bố SLA "mất dữ liệu = 0" tới khi client đổi điều kiện discard.** Task 20 (2026-09-07)
+  đã dựng một client giả lập (`SimulatedStudentClient`, chỉ để test cục bộ) có RingBuffer + gửi
+  `RESYNC` thật, và đã thêm xử lý `RESYNC` thật ở `RoomActor` (trước đây hoàn toàn chưa có handler
+  nào) — nhưng client giả lập đó KHÔNG implement chính sách discard theo `committed_seq` (để
+  `markAcked` cho caller tự quyết, xem javadoc), nên "Chưa làm" ở trên vẫn đúng nguyên văn.
 - **Mode:** sequential after [T14] · phối hợp với PH-3 (hợp đồng client, ngoài phạm vi service này)
 - **Mô tả:** `_context.md` mục B2 ghi nhận: `ANSWER_ACK` gửi ngay lập tức (hot path, §4.3 bước 4),
   còn Hot Snapshot ghi Redis là async và luôn xảy ra **sau** ACK (bước 5). Client xoá submission
@@ -1055,7 +1081,16 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
   khi `session_id` trở thành khái niệm thật (tích hợp với dịch vụ nền tảng/matchmaking). Publish
   mỗi lần accept (kể cả nộp trùng `sequence` được replay ack cũ) có thể double-publish cho phân
   tích — chấp nhận được vì downstream consumer có thể dedupe theo `(student_id, acked_sequence)`.
-  `KafkaGameEventSink` vẫn **chưa verify với Kafka thật** (không có broker trong môi trường này).
+- **Cập nhật 2026-09-07 (Task 20):** `KafkaGameEventSink` **đã verify với Kafka thật** lần đầu
+  (single-broker KRaft qua `docker-compose.dev.yml`), qua `KafkaGameEventSinkDockerIT`. Verify này
+  phát hiện một bug thật, đã sửa: `max.block.ms=0` khiến **sự kiện ĐẦU TIÊN sau mỗi lần khởi động
+  producer luôn bị rớt âm thầm** (metadata của topic chưa có sẵn, không có 0ms nào để chờ fetch) —
+  không phải hiện tượng riêng của môi trường Docker mà xảy ra ở MỌI lần engine pod (re)start thật.
+  Sửa bằng `KafkaGameEventSink.warmUpMetadata()`: gọi `partitionsFor(topic)` lặp lại (tối đa 5s,
+  một lần lúc khởi tạo, không đụng thread dispatcher hay thread publisher) để buộc lần fetch
+  metadata nền của producer hoàn tất trước khi có sự kiện thật nào cần gửi. Đồng thời thêm
+  callback log cho `producer.send(...)` — trước đó lỗi bất đồng bộ (khác lỗi đồng bộ
+  `GameEventPublisher.runLoop()` đã bắt) hoàn toàn im lặng, không có log nào.
 - **Mode:** sequential after [T13] · song song được với Task 14–17
 - **Mô tả:** `system-architecture.md` §9.3 "Rủi ro 6" đã mô tả đúng cơ chế nghẽn nếu làm sai:
   `RoomActor` gọi `KafkaProducer.send()` trực tiếp để đẩy `GameEvent` (§4.3 bước 5) → nếu Kafka
@@ -1134,6 +1169,103 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
   có thể nới lỏng; runbook lúc đó nên đổi thành hướng dẫn vận hành lease (theo dõi
   `zombie_actor_stopped_total`, TTL/renewal) thay vì cấm tuyệt đối.
 - **Rollback nếu fail:** revert; chỉ là tài liệu, không ảnh hưởng code hay build.
+
+---
+
+### Task 20: Hạ tầng Docker test cục bộ — giả lập PH-1 (đa pod), PH-3 (client resync), G1a/G1c (dev ticket) — ✅ XONG (2026-09-07, yêu cầu người dùng: "Dựng dockerfile giả lập PH-1, PH-3, G1a/G1 để test ở local")
+
+- **Bối cảnh:** Docker daemon lần đầu chạy được trong phiên này (trước đó luôn không sẵn sàng —
+  Task 13/19 đều ghi nhận điều này). Người dùng yêu cầu dựng hạ tầng Docker để test cục bộ toàn hệ
+  thống, chấp nhận bỏ qua test tải (PH-1's load-test harness), nhưng code phải đáp ứng đúng nghiệp
+  vụ (không phải giả lập rỗng).
+- **Kết quả:**
+  - **G1a/G1c (dev-only, KHÔNG bao giờ dùng ở staging/production):**
+    `modules/uni-gateway/src/main/java/.../auth/dev/DevTicketCodec.java` (HMAC-SHA256, ký/verify
+    ticket dev cục bộ, không liên quan gì tới thuật toán ký thật mà platform team sẽ chốt),
+    `DevTicketReplayGuard.java` (in-memory, single-pod, KHÔNG phải cơ chế chống replay thật —
+    xem javadoc), `DevTicketVerifier.java` (bean `TicketVerifier` đầu tiên từng tồn tại trong
+    repo, khoá kép `@Profile("dev-docker")` **và** `uni.gateway.dev-ticket.enabled=true`). Đăng
+    ký bean này tự động mở `GatewayNetworkLifecycle` (vốn `@ConditionalOnBean(TicketVerifier.class)`)
+    — đúng như javadoc của lớp đó đã hứa "chỉ cần thêm 1 bean".
+  - **Bug tiềm ẩn phát hiện khi bean `TicketVerifier` đầu tiên xuất hiện:** `application.yml` của
+    `uni-gateway` định nghĩa `uni.engine.pods` (ngang cấp `uni.gateway`), nhưng
+    `GatewayNetworkLifecycle` đọc `@Value("${uni.gateway.engine.pods}")` — sai đường dẫn, chưa bao
+    giờ lộ ra vì `GatewayNetworkLifecycle` chưa từng được khởi tạo. Đã sửa: lồng `engine.pods` vào
+    đúng `uni.gateway.engine.pods`.
+  - **PH-3 (RESYNC thật ở server, không phải state FSM mới):** `RoomActor` thêm command `Resync`
+    + handler `onResync` — replay từng `pending` qua đúng `RoomState.submitAnswer` (dedupe theo
+    `lastSeenSequence` tái dùng nguyên vẹn, không code mới), rồi trả `RoomState.resyncSnapshot`
+    (full snapshot cá nhân). `RoomSupervisor.onDispatch` thêm case `RESYNC`. **Không thêm
+    `GamePhase.RESYNCING`** — đúng ghi chú kiến trúc "GĐ1 FSM chỉ có LOBBY→PLAYING→FINISHED".
+    Test `RoomActorResyncTest` (in-process, real socket) chứng minh: replay không double-score,
+    ack trùng `sequence` trả về đúng ack gốc nguyên văn (§5.2), học sinh khác không bị ảnh hưởng.
+  - **PH-3 (client giả lập, chỉ để test, không phải sản phẩm):**
+    `modules/uni-e2e/.../support/SimulatedStudentClient.java` — trích xuất + mở rộng
+    `WalkingSkeletonTest`'s `WsTestClient` cũ (đã xoá, thay bằng lớp dùng chung này): RingBuffer
+    10 phần tử, `sequence` client-side tăng dần, `simulateDisconnectAndReconnect` gửi `RESYNC`
+    thật. `joinRoomWithRetry` — xem "Phát hiện quan trọng" bên dưới.
+  - **Dockerfiles + compose:** `modules/uni-gateway/Dockerfile`, `modules/uni-engine/Dockerfile`
+    (runtime-only, COPY jar `-exec` đã build sẵn trên host, không build Maven trong Docker) +
+    `docker-compose.dev.yml` ở root (project name riêng `uni-realtime-dev`, 1 gateway + 2 engine
+    pod thật + Redis 7 + Kafka KRaft đơn broker, healthcheck TCP `/dev/tcp` trên port 9100 vì
+    image JRE không có curl/wget và actuator port lên trước ApplicationRunner mở frame-channel).
+  - **Đã CHẠY THẬT, không chỉ viết:** `mvn clean package -DskipTests` → `docker compose up -d
+    --build` → cả 5 container `Up`/`healthy` → `DockerComposeResyncIT` (gated `RUN_DOCKER_IT=true`,
+    không chạy trong `mvn clean install` thường) join 2 phòng băm về 2 pod khác nhau, disconnect +
+    RESYNC thật qua mạng Docker thật — **PASS**. `redis-cli KEYS "*"` xác nhận `room:owner:*`,
+    `room:epoch:*`, `room:snap:*` — **lần đầu `RedisRoomLeaseStore`/`RedisSnapshotStore` chạm
+    Redis thật**. `KafkaGameEventSinkDockerIT` (mới, `uni-engine`) xác nhận `KafkaGameEventSink`
+    gửi được tới Kafka thật — **lần đầu chạm Kafka thật**.
+  - **Phát hiện quan trọng #1 (đã có giải pháp, KHÔNG sửa code sản phẩm):** JOIN_ROOM đầu tiên của
+    một phòng mới có thể rơi vào sai pod (gateway đoán round-robin khi chưa học route, §4.5 bước
+    2). `RoomOwnershipHandler`'s javadoc **đã ghi rõ, có chủ đích**: GĐ1 không forward nội bộ giữa
+    2 pod Engine (khác với câu chữ literal của system-architecture.md §4.5 bước 2 — "pod nhận sẽ
+    tự forward" — code đã chọn phương án khác: "client/Gateway retry cycle đã dung thứ điều này"),
+    dựa vào giả định client tự retry. Với chỉ 1 pod Engine (mọi test real-socket trước Task 20),
+    tình huống này **không thể xảy ra** — Task 20 là lần đầu 2+ pod Engine chạy cùng lúc trong bất
+    kỳ test nào của repo, nên đây là lần đầu bug này lộ ra. Giải pháp: `joinRoomWithRetry` trong
+    `SimulatedStudentClient` (client tự gửi lại JOIN_ROOM tối đa 5 lần, mỗi lần chờ 2s) — đúng với
+    giả định "client retry" mà code đã chọn, không sửa `RoomOwnershipHandler`/Gateway.
+  - **Phát hiện quan trọng #2 (đã sửa code sản phẩm):** `KafkaGameEventSink` với `max.block.ms=0`
+    khiến **sự kiện đầu tiên sau mỗi lần khởi tạo producer luôn rớt âm thầm** (metadata topic chưa
+    có, 0ms không đủ để fetch) — xảy ra ở MỌI lần engine pod thật (re)start, không chỉ Docker cục
+    bộ. Sửa: `warmUpMetadata()` (retry `partitionsFor` tối đa 5s lúc khởi tạo, không đụng thread
+    actor/publisher) + callback log lỗi bất đồng bộ trên `producer.send(...)` (trước đó im lặng
+    hoàn toàn — xem chi tiết ở mục "Chưa làm" của Task 18).
+  - **Sự cố ngoài ý muốn (đã báo cho người dùng ngay khi phát hiện):** Lần chạy `docker compose up`
+    đầu tiên dùng project name mặc định (trùng tên thư mục `spring-ticket-ddd`) — cờ
+    `--remove-orphans` đã xoá vài container KHÔNG liên quan tới repo này (mysql, mongodb, kafka-ui,
+    4 exporter, đã dừng 10-13 ngày, không có compose file nào của chúng trong repo). Đã xác nhận
+    volume dữ liệu (`spring-ticket-ddd_mysql-data`, `_mongodb-data`) và toàn bộ image vẫn còn
+    nguyên — chỉ container bị xoá, dữ liệu chưa mất. Đã sửa gốc: `docker-compose.dev.yml` giờ có
+    `name: uni-realtime-dev` cố định, không bao giờ đụng namespace mặc định của thư mục nữa.
+  - `mvn clean install` toàn reactor: BUILD SUCCESS, **180 test**, không leak (2 Docker IT tách
+    riêng, không chạy trong build thường).
+- **Chưa làm / giới hạn đã biết:**
+  - PH-1 (load-test harness thật) — **cố tình bỏ qua theo đúng yêu cầu người dùng**. Compose file
+    2 pod Engine chỉ là bằng chứng hạ tầng đa pod tồn tại được, không phải công cụ đo tải.
+  - PH-3 client giả lập KHÔNG implement chính sách discard RingBuffer theo `COMMITTED_SEQ` (Task
+    15's "Chưa làm" vẫn còn nguyên) — `markAcked` để caller tự quyết định gọi khi nào.
+  - `DockerComposeResyncIT` không thể lái phòng vào `PLAYING` (không có wire message nào cho việc
+    này ở GĐ1 — xem `WalkingSkeletonTest`), nên không chứng minh lại "không double-score qua
+    RESYNC" bằng hạ tầng Docker thật — phần đó do `RoomActorResyncTest` (in-process) đảm nhiệm.
+  - Vẫn không có K8s manifest nào — ngoài phạm vi "test cục bộ".
+- **File mới/sửa chính:** xem "Kết quả" ở trên; danh sách đầy đủ:
+  `docker-compose.dev.yml`, `modules/uni-gateway/Dockerfile`, `modules/uni-engine/Dockerfile`,
+  `modules/uni-gateway/src/main/java/.../auth/dev/{DevTicketCodec,DevTicketReplayGuard,DevTicketVerifier}.java`,
+  `modules/uni-gateway/src/main/resources/{application.yml,application-dev-docker.yml}`,
+  `modules/uni-engine/src/main/java/.../room/{RoomActor,RoomState,RoomSupervisor}.java`,
+  `modules/uni-engine/src/main/java/.../persistence/KafkaGameEventSink.java`,
+  `modules/uni-e2e/src/test/java/.../support/SimulatedStudentClient.java` (mới),
+  `modules/uni-e2e/src/test/java/.../{WalkingSkeletonTest,RoomActorResyncTest}.java`,
+  `modules/uni-e2e/src/test/java/.../docker/DockerComposeResyncIT.java` (mới),
+  `modules/uni-engine/src/test/java/.../persistence/KafkaGameEventSinkDockerIT.java` (mới).
+- **Verification:** xem "Kết quả" — mọi bước đều CHẠY THẬT (build jar → docker compose up →
+  actuator health → 2 Docker IT chạy pass → `redis-cli`/Kafka consumer xác nhận dữ liệu thật),
+  không dừng ở mức viết code/đọc bằng mắt.
+- **Rollback nếu fail:** revert toàn bộ file Task 20; `RoomActor`/`RoomSupervisor` quay lại không
+  xử lý `RESYNC` (hành vi cũ), Gateway quay lại không mở port WS nếu không có `TicketVerifier`
+  bean nào khác được thêm.
 
 ---
 
