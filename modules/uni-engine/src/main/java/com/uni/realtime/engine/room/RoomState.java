@@ -9,7 +9,14 @@ import com.uni.realtime.protocol.PlayerState;
 import com.uni.realtime.protocol.RejectReason;
 import com.uni.realtime.protocol.RoomStateSnapshot;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.time.Clock;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -71,6 +78,120 @@ final class RoomState {
         this.roomId = roomId;
         this.clock = clock;
         this.scoreCalculator = scoreCalculator;
+    }
+
+    /**
+     * Task 14 (Hot Snapshot, §5.8): everything needed to resume this room on another pod after
+     * a lease handoff, deliberately excluding {@link #dirtyStudentIds} (transient broadcast
+     * state, meaningless once flushed to a byte array) and the per-student ack history (see
+     * {@link #submitAnswer}). The wire format is hand-rolled rather than reusing
+     * {@code RoomStateSnapshot} from {@code uni-protocol} on purpose: this is Engine-internal
+     * persistence, never seen by a Gateway or client, so it must not be coupled to
+     * {@code game_message.proto} -- growing this format cannot force a wire-schema PR (Rollback
+     * plan's "đổi .proto phải đi qua PR riêng" is about the SHARED envelope, not this).
+     */
+    byte[] serializeSnapshot() {
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        try (DataOutputStream out = new DataOutputStream(buffer)) {
+            out.writeUTF(phase.name());
+            out.writeUTF(currentQuestionId == null ? "" : currentQuestionId);
+            out.writeInt(currentCorrectAnswerIds.size());
+            for (String answerId : currentCorrectAnswerIds) {
+                out.writeUTF(answerId);
+            }
+            out.writeLong(serverQuestionStartedAtMs);
+            out.writeLong(deadlineMs);
+            out.writeInt(nextStudentIndex);
+            out.writeInt(flushesSinceFullSnapshot);
+
+            out.writeInt(players.size());
+            for (Map.Entry<String, PlayerRecord> entry : players.entrySet()) {
+                PlayerRecord player = entry.getValue();
+                out.writeUTF(entry.getKey());
+                out.writeInt(player.index);
+                out.writeUTF(player.displayName);
+                out.writeBoolean(player.answeredCurrent);
+                out.writeBoolean(player.connected);
+            }
+
+            out.writeInt(totalScoreByStudent.size());
+            for (Map.Entry<String, Integer> entry : totalScoreByStudent.entrySet()) {
+                out.writeUTF(entry.getKey());
+                out.writeInt(entry.getValue());
+            }
+
+            out.writeInt(lastSeenSequence.size());
+            for (Map.Entry<String, Long> entry : lastSeenSequence.entrySet()) {
+                out.writeUTF(entry.getKey());
+                out.writeLong(entry.getValue());
+            }
+        } catch (IOException e) {
+            // ByteArrayOutputStream/DataOutputStream never actually throw IOException in
+            // practice (no real I/O underneath) -- this is here only so the try-with-resources
+            // compiles, not a reachable failure mode worth a checked exception on the API.
+            throw new UncheckedIOException(e);
+        }
+        return buffer.toByteArray();
+    }
+
+    /**
+     * Task 14 (Hot Snapshot): rebuilds a room from bytes produced by {@link #serializeSnapshot()}
+     * on some earlier instance -- possibly on a different pod, after a lease handoff. The
+     * restored room starts with an empty {@link #dirtyStudentIds} (nothing to re-broadcast; a
+     * reconnecting client gets a full snapshot through the ordinary join/{@code RESYNC} path,
+     * not through dirty-flag replay) and an empty ack history (see the comment in
+     * {@link #submitAnswer} for why {@link #lastSeenSequence} alone is sufficient for dedupe).
+     *
+     * <p>Throws {@link UncheckedIOException} for a payload too short/malformed for this format
+     * (an {@code EOFException} is an {@code IOException}) -- the caller
+     * ({@code SnapshotEnvelope}) is the one that decides a corrupt payload means "treat as empty
+     * state" (§5.8) by catching it there; this method's job is only to parse bytes that already
+     * passed the CRC32 check, so a throw here signals a real bug (format mismatch despite a
+     * valid checksum), not an expected runtime case.
+     */
+    static RoomState restore(String roomId, Clock clock, ScoreCalculator scoreCalculator, byte[] payload) {
+        RoomState state = new RoomState(roomId, clock, scoreCalculator);
+        try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(payload))) {
+            state.phase = GamePhase.valueOf(in.readUTF());
+            String questionId = in.readUTF();
+            state.currentQuestionId = questionId.isEmpty() ? null : questionId;
+            int correctAnswerCount = in.readInt();
+            List<String> correctAnswerIds = new ArrayList<>(correctAnswerCount);
+            for (int i = 0; i < correctAnswerCount; i++) {
+                correctAnswerIds.add(in.readUTF());
+            }
+            state.currentCorrectAnswerIds = correctAnswerIds;
+            state.serverQuestionStartedAtMs = in.readLong();
+            state.deadlineMs = in.readLong();
+            state.nextStudentIndex = in.readInt();
+            state.flushesSinceFullSnapshot = in.readInt();
+
+            int playerCount = in.readInt();
+            for (int i = 0; i < playerCount; i++) {
+                String studentId = in.readUTF();
+                int index = in.readInt();
+                String displayName = in.readUTF();
+                boolean answeredCurrent = in.readBoolean();
+                boolean connected = in.readBoolean();
+                PlayerRecord record = new PlayerRecord(index, displayName);
+                record.answeredCurrent = answeredCurrent;
+                record.connected = connected;
+                state.players.put(studentId, record);
+            }
+
+            int scoreCount = in.readInt();
+            for (int i = 0; i < scoreCount; i++) {
+                state.totalScoreByStudent.put(in.readUTF(), in.readInt());
+            }
+
+            int sequenceCount = in.readInt();
+            for (int i = 0; i < sequenceCount; i++) {
+                state.lastSeenSequence.put(in.readUTF(), in.readLong());
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        return state;
     }
 
     GamePhase phase() {
@@ -135,6 +256,16 @@ final class RoomState {
             if (previousAck != null) {
                 return previousAck;
             }
+            // No original ack to replay -- happens after this RoomState was rebuilt from a Hot
+            // Snapshot (Task 14), which persists lastSeenSequence but deliberately not a full
+            // ack history (§5.2's table alone is enough to dedupe; a whole ack log would not
+            // fit the < 5 KB budget, §4.8). Falling through past this point would re-run
+            // scoreCalculator.award(...) and double-count -- exactly the bug this table exists
+            // to prevent. RejectReason.DUPLICATE_SEQUENCE was reserved in the schema for this.
+            // Prove-it (2026-09-07): temporarily falling through here turned exactly this test
+            // red (asserted `accepted=false`, got `true`), confirming the fix is exercised.
+            return buildAck(studentId, sequence, questionId, false, RejectReason.DUPLICATE_SEQUENCE,
+                    0, totalScoreOf(studentId), serverReceivedAtMs, 0);
         }
 
         if (!Objects.equals(questionId, currentQuestionId)) {

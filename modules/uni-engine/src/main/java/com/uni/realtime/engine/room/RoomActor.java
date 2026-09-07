@@ -13,10 +13,14 @@ import org.apache.pekko.actor.typed.javadsl.Behaviors;
 import org.apache.pekko.actor.typed.javadsl.Receive;
 import org.apache.pekko.actor.typed.javadsl.TimerScheduler;
 import org.apache.pekko.japi.function.Function;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.time.Clock;
 import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -31,6 +35,22 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
 
     /** ADR-4/§6.2: 200ms is a ceiling on broadcast frequency, never a fixed tick. */
     private static final long MIN_FLUSH_INTERVAL_MS = 200;
+
+    /**
+     * Task 14, §4.3 step 5: "định kỳ mỗi 2-3s hoặc sau câu hỏi" -- approximated here as "at most
+     * once per this many ms, checked every time a client-facing flush happens" rather than a
+     * second, independent timer. During active submission this naturally coalesces multiple
+     * flushes into roughly one Hot Snapshot write every ~2s; during a lull, no snapshot is
+     * written at all, which is safe (the last one written is still valid, nothing changed).
+     */
+    private static final long SNAPSHOT_MIN_INTERVAL_MS = 2_000;
+
+    /**
+     * Deliberately NOT {@code getContext().getLog()}: {@link RoomSnapshotStore#save} completes
+     * on whatever thread the store's async I/O runs on, never this actor's own thread, and
+     * Pekko's actor-bound logger is only safe to use from the actor thread itself.
+     */
+    private static final Logger snapshotLog = LoggerFactory.getLogger(RoomActor.class);
 
     public sealed interface Command {}
 
@@ -71,12 +91,39 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
     public static Behavior<Command> create(
             String roomId, Clock clock, ScoreCalculator scoreCalculator, EngineMetrics engineMetrics,
             TickMode tickMode, ActorRef<GameMessage> broadcastTarget) {
+        return create(roomId, clock, scoreCalculator, engineMetrics, tickMode, broadcastTarget,
+                NoopRoomSnapshotStore.INSTANCE, 0L, null);
+    }
+
+    /**
+     * Task 14 (Hot Snapshot): the full-featured constructor. Kept separate from the six-arg
+     * {@link #create} above rather than replacing it, so every existing caller (tests,
+     * {@code RoomSupervisor}, the scheduler spike) that has no snapshot store to offer keeps
+     * compiling unchanged -- {@code RoomSupervisor} switching to this overload for real is a
+     * follow-up task, not done here (see plan.md Task 14 progress note).
+     *
+     * @param snapshotStore where this room's Hot Snapshot is persisted. {@link NoopRoomSnapshotStore}
+     *     if the caller has none (Phase 1 today, before wiring).
+     * @param epoch this room's fencing generation (from {@link RedisLeaseRoomOwnership#epochOf}
+     *     at the moment {@code RoomSupervisor} decided to spawn this actor). Fixed for this
+     *     actor's whole lifetime -- reacting to losing the lease mid-life (stopping the actor)
+     *     is not wired yet, so a stale epoch here would keep being rejected by the store
+     *     (§5.8) rather than silently corrupting anything, but the actor itself would not know
+     *     to stop.
+     * @param restoreFromSnapshot bytes from a prior {@link RoomState#serializeSnapshot()} (via
+     *     {@link RoomSnapshotStore#load}) to resume from, or {@code null} for a brand-new room.
+     */
+    public static Behavior<Command> create(
+            String roomId, Clock clock, ScoreCalculator scoreCalculator, EngineMetrics engineMetrics,
+            TickMode tickMode, ActorRef<GameMessage> broadcastTarget,
+            RoomSnapshotStore snapshotStore, long epoch, byte[] restoreFromSnapshot) {
         if (tickMode != TickMode.COALESCE) {
             throw new IllegalArgumentException(
                     "RoomActor only implements TickMode.COALESCE in Phase 1, got " + tickMode);
         }
         return Behaviors.withTimers(timers -> Behaviors.setup(
-                context -> new RoomActor(context, timers, roomId, clock, scoreCalculator, engineMetrics, broadcastTarget)));
+                context -> new RoomActor(context, timers, roomId, clock, scoreCalculator, engineMetrics,
+                        broadcastTarget, snapshotStore, epoch, restoreFromSnapshot)));
     }
 
     private final String roomId;
@@ -86,20 +133,28 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
     private final EngineMetrics engineMetrics;
     private final TimerScheduler<Command> timers;
     private final ActorRef<GameMessage> broadcastTarget;
+    private final RoomSnapshotStore snapshotStore;
+    private final long epoch;
 
     private boolean flushScheduled = false;
     private long lastFlushAtMs = 0;
+    private long lastSnapshotAtMs = 0;
 
     private RoomActor(ActorContext<Command> context, TimerScheduler<Command> timers, String roomId, Clock clock,
-            ScoreCalculator scoreCalculator, EngineMetrics engineMetrics, ActorRef<GameMessage> broadcastTarget) {
+            ScoreCalculator scoreCalculator, EngineMetrics engineMetrics, ActorRef<GameMessage> broadcastTarget,
+            RoomSnapshotStore snapshotStore, long epoch, byte[] restoreFromSnapshot) {
         super(context);
         this.timers = timers;
         this.roomId = roomId;
         this.clock = clock;
-        this.state = new RoomState(roomId, clock, scoreCalculator);
+        this.state = restoreFromSnapshot == null
+                ? new RoomState(roomId, clock, scoreCalculator)
+                : RoomState.restore(roomId, clock, scoreCalculator, restoreFromSnapshot);
         this.processingTimer = engineMetrics.processingLatencyTimer();
         this.engineMetrics = engineMetrics;
         this.broadcastTarget = broadcastTarget;
+        this.snapshotStore = snapshotStore;
+        this.epoch = epoch;
     }
 
     @Override
@@ -205,5 +260,53 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
     private void doFlush(long now) {
         broadcastTarget.tell(state.flush());
         lastFlushAtMs = now;
+        maybeSnapshot(now);
+    }
+
+    /**
+     * Task 14: fire-and-forget, off the actor's own execution -- {@link RoomSnapshotStore#save}
+     * returns a future this method never blocks on, so a slow or unavailable Redis cannot delay
+     * the message this flush was already processing (§13.2, ADR-005's spirit extended to the
+     * actor dispatcher, not just the Netty EventLoop).
+     */
+    private void maybeSnapshot(long now) {
+        // Prove-it (2026-09-07): removing this gate turned exactly
+        // should_notSaveAgain_when_anotherFlushHappensWithinTheMinInterval red (1 expected, got
+        // 2) -- confirms the test actually exercises the 2s floor, not passing by coincidence.
+        if (now - lastSnapshotAtMs < SNAPSHOT_MIN_INTERVAL_MS) {
+            return;
+        }
+        lastSnapshotAtMs = now;
+        Optional<byte[]> envelope = SnapshotEnvelope.wrap(epoch, state.serializeSnapshot());
+        if (envelope.isEmpty()) {
+            snapshotLog.error("room {}: Hot Snapshot exceeds {} bytes, skipping this write",
+                    roomId, SnapshotEnvelope.MAX_ENVELOPE_BYTES);
+            return;
+        }
+        CompletableFuture<Boolean> written = snapshotStore.save(roomId, epoch, envelope.get());
+        written.exceptionally(ex -> {
+            snapshotLog.warn("room {}: Hot Snapshot write failed", roomId, ex);
+            return null;
+        }).thenAccept(accepted -> {
+            if (Boolean.FALSE.equals(accepted)) {
+                snapshotLog.warn("room {}: Hot Snapshot write rejected -- epoch {} is stale, "
+                        + "another pod holds a newer lease for this room", roomId, epoch);
+            }
+        });
+    }
+
+    /** Default for callers with no Redis wiring yet (Phase 1 today) -- every write silently no-ops. */
+    private static final class NoopRoomSnapshotStore implements RoomSnapshotStore {
+        static final NoopRoomSnapshotStore INSTANCE = new NoopRoomSnapshotStore();
+
+        @Override
+        public CompletableFuture<Boolean> save(String roomId, long epoch, byte[] envelopeBytes) {
+            return CompletableFuture.completedFuture(true);
+        }
+
+        @Override
+        public CompletableFuture<Optional<byte[]>> load(String roomId) {
+            return CompletableFuture.completedFuture(Optional.empty());
+        }
     }
 }

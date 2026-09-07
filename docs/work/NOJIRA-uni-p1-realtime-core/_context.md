@@ -18,7 +18,7 @@
 2. `plan.md`
 3. `docs/specs/tech-design/NOJIRA-uni-p1-tech-design.md` — hợp đồng còn trống trước T2/T4/T6.
    **Bắt buộc đọc trước khi code T3 / T6 / T7**; §9 liệt kê thứ đang chặn
-4. Kiến trúc: `docs/architect/system-architecture.md` (đặc tả toàn diện & các quyết định ADR).
+4. Kiến trúc: `docs/architecture/system-architecture.md` (đặc tả toàn diện & các quyết định ADR).
    **Đây là nguồn chính**, không phải v3.0
 5. Các mục v3.0 liệt kê ở trên — chỉ khi cần chiều sâu (phân tích tải, benchmark, phương án đã
    loại). **Không đọc toàn bộ 1528 dòng**
@@ -66,7 +66,7 @@
 
 | # | Câu hỏi | Quyết định | Hệ quả |
 |---|---|---|---|
-| 1 | Công thức điểm Quiz GĐ1 (Product) | Trắc nghiệm 1/4 đáp án, đúng = 100đ, sai = 0đ, không bonus tốc độ | **Đã hiện thực 2026-09-06**: `FormulaScoreCalculator.binaryChoice()` (T2, bọc `ScoringFormula` của T11) thay `PlaceholderScoreCalculator` (đã xoá). 46/46 test `uni-engine` pass. Chi tiết: [system-architecture.md §2.5](../../architect/system-architecture.md#25-game-definition--guardrails) |
+| 1 | Công thức điểm Quiz GĐ1 (Product) | Trắc nghiệm 1/4 đáp án, đúng = 100đ, sai = 0đ, không bonus tốc độ | **Đã hiện thực 2026-09-06**: `FormulaScoreCalculator.binaryChoice()` (T2, bọc `ScoringFormula` của T11) thay `PlaceholderScoreCalculator` (đã xoá). 46/46 test `uni-engine` pass. Chi tiết: [system-architecture.md §2.5](../../architecture/system-architecture.md#25-game-definition--guardrails) |
 | 2 | Hệ thống chạy bao nhiêu giờ/ngày (Business) | Chạy **cả ngày**; ca điểm/thi đấu chỉ 18h50–21h30 | Rủi ro "chỉ chạy 4–6 tiếng/ngày" ở ADR-002 **không xảy ra** — giữ nguyên Pekko Cluster Sharding luôn-bật, không cần đảo ngược |
 | 3 | Quy mô trường lớn nhất sau 1 NAT IP (Business) | Ước lượng **4.000** (theo quy mô phiên/lớp lớn nhất thực tế đang chạy — không phải số đo IP trực tiếp) | Ngưỡng L1 rate-limit theo IP nâng từ 300 → **4.000 handshake/phút**. Cần PH-1 xác nhận lại bằng số đo thật. **Chưa có code** — L1 admission control vẫn chưa có điểm gắn trong repo (xem Task 7) |
 | — | (Ngoài 5 câu ở §7.5) Trần `HttpObjectAggregator` ở Gateway | Nâng **8KB → 50KB** — trần chung mọi gói WS, tách biệt với ràng buộc cứng `RoomStateSnapshot < 5KB` (giữ nguyên) | **Đã sửa code 2026-09-06**: `GatewayPipeline.MAX_HTTP_AGGREGATED_CONTENT_BYTES` = 50KB |
@@ -90,6 +90,13 @@ system-architecture.md §7.5 — Product/Business chưa trả lời.
 > **Rủi ro vận hành đã biết của Giai đoạn 1:** không có Cluster Sharding nghĩa là mất một
 > Engine pod = các phòng trên pod đó **chết cho tới khi pod lên lại**. Đây là đánh đổi có chủ
 > đích ở mức 2–3k CCU, **phải bỏ trước Giai đoạn 2** và phải hiển thị rõ trên UI.
+>
+> **Rủi ro liên quan nhưng khác cơ chế:** *chủ động* scale Engine pod (HPA, `kubectl scale`,
+> rolling update đổi số replica) giữa ca thi đấu sẽ đổi `N` trong `room_id % N`
+> (`ModuloRoomOwnership`) và rehash **toàn bộ phòng trên mọi pod cùng lúc** — nặng hơn 1 pod
+> crash đơn lẻ. Đây là rủi ro quy trình vận hành, không sửa được bằng code ở GĐ1 (xem
+> `system-architecture.md` §9.3 Rủi ro 6, ADR-002, và `plan.md` Task 19 — runbook vận hành cụ thể
+> cho DevOps, `docs/runbook/engine-scaling-freeze.md`, chưa viết).
 
 ## Phát hiện review kiến trúc (2026-09-07) — chưa có task xử lý
 

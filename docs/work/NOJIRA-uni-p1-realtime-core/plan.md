@@ -30,6 +30,7 @@ parallel_safe: true
 | **Dùng `retain()` thay `retainedDuplicate()` trong vòng fan-out** | Med | **High** — client thứ 2 trở đi nhận 0 byte, triệu chứng mơ hồ | Test 12 client bắt buộc (Task 8). Test 1 client **sẽ pass** dù code sai. Cộng `-Dio.netty.leakDetection.level=paranoid` |
 | **Vô tình tạo hai tầng backpressure** — thêm queue/buffer riêng ở tầng app cạnh watermark socket | Med | Med — nghẽn không truy được tầng nào chặn, mất lợi ích chính của ADR-1 | Task 9 review riêng. Quy tắc: **không** có queue nào giữa `RoomActor` mailbox và socket |
 | **Mất Engine pod = mất phòng** (không có sharding ở GĐ1) | **High** | High — đang giờ học | Đánh đổi có chủ đích ở 2–3k CCU. Bắt buộc: UI hiển thị rõ, `terminationGracePeriodSeconds` đủ, và **bỏ trước GĐ2** |
+| **Scale Engine pod (thêm/bớt) giữa ca thi đấu vỡ bảng hash `room_id % N`** — khác với hàng trên: đây là *chủ động* đổi `pod-count`/danh sách pod (HPA, `kubectl scale`, rolling update đổi số replica), không phải pod tự crash | Med — chỉ xảy ra nếu ai đó bật HPA/scale thủ công trong ca thi đấu | **Cao hơn cả pod crash** — rehash **toàn bộ phòng của mọi pod cùng lúc**, không chỉ phòng của 1 pod | **Fix thật: Task 14** (`RedisLeaseRoomOwnership` thay `ModuloRoomOwnership` tĩnh — phòng giữ nguyên chủ sở hữu qua Redis lease khi scale, không phụ thuộc `N`). Cho tới khi Task 14 triển khai **và** verify bằng chaos test thật: **Task 19** (runbook cấm auto-scale) là lưới an toàn tạm thời, đây vẫn là rủi ro *quy trình con người* trong lúc chờ |
 | **Scope creep sang snapshot/sharding** | Med | Med — GĐ1 trượt lịch, gói rủi ro nhất bị làm vội | Ranh giới đã chốt ở `_context.md`. Task nào chạm Redis/ShardRegion → dừng, đưa sang GĐ2 |
 | **`Clock` gọi thẳng `System.currentTimeMillis()`** | Med | Med — tick coalescing và chấm điểm không test tất định được | Quyết định D1: `Clock` là tham số tiêm, ép từ Task 2. Sửa sau rất đắt |
 | **PH-3: client contract vắng mặt** | **High** | **High** — SLA "mất dữ liệu = 0" không có cơ sở | Ngoài phạm vi GĐ1. Đã ghi ở `_context.md`. **Không được công bố SLA đó** trước khi client ship ring buffer + RESYNC |
@@ -661,44 +662,151 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 
 ---
 
-### Task 14: Redis Hot Snapshot thật cho `RoomActor` — đóng phát hiện B1 — ⏳ CHƯA BẮT ĐẦU (thêm 2026-09-07)
+### Task 14: `RedisLeaseRoomOwnership` + Hot Snapshot thật — thay `ModuloRoomOwnership` tĩnh, đóng B1 + cho phép auto-scale an toàn — ⚠️ MỘT PHẦN XONG (viết lại 2026-09-07, thay bản Task 14 gốc; bắt đầu code 2026-09-07)
 
+- **Kết quả (phần ownership — 2026-09-07):** `RoomLease`/`RoomLeaseStore` (interface async,
+  `CompletableFuture`) + `RedisLeaseRoomOwnership implements RoomOwnership` — cache RAM
+  (`ConcurrentHashMap`), `ensureAcquired()` giành lease async qua `computeIfAbsent` (đúng 1 lần
+  gọi store dù nhiều frame trùng lúc cho phòng mới — **prove-it**: tạm bỏ `computeIfAbsent` thay
+  bằng gọi thẳng, xác nhận đúng 1/11 test Red trước khi trả lại Green), `renewAll()` (renew thất
+  bại/exception → coi như mất lease, gỡ khỏi cache), fallback về `ModuloRoomOwnership` khi store
+  lỗi kết nối. `RoomOwnership` thêm default method `ensureAcquired()` (no-op cho
+  `ModuloRoomOwnership`) — **phát hiện giữa chừng quan trọng**: `RoomOwnershipHandler.isOwner()`
+  chạy TRÊN Netty EventLoop (mỗi frame), nên `isOwner`/`ownerPodId` của `RedisLeaseRoomOwnership`
+  tuyệt đối không được chạm Redis — chỉ đọc cache, không bao giờ block (ADR-005). `ownerPodId()`
+  trả `""` khi chưa xác định được (lease đang giành dở) — sửa `RoomOwnershipHandler` để DROP
+  frame đó thay vì trả lời `NOT_OWNER` bịa chủ phòng. `RedisRoomLeaseStore` (Lettuce, 2 key
+  `room:owner:{id}`/`room:epoch:{id}`, Lua script cho renew atomic) — **CHƯA verify được với
+  Redis thật** (không có Redis/Docker trong môi trường viết code này, giống hệt caveat của
+  `TicketVerifier`). Thêm dependency `io.lettuce:lettuce-core` vào `uni-engine/pom.xml` (version
+  quản lý transitively qua BOM Spring Boot). Test mới: `RedisLeaseRoomOwnershipTest` (11 case,
+  logic thuần + fake `RoomLeaseStore`) + 2 case mới trong `RoomOwnershipHandlerTest`
+  (drop-khi-chưa-biết-owner, `ensureAcquired` được gọi trước khi check). `mvn clean install`
+  toàn reactor: BUILD SUCCESS, 145 test, không leak.
+- **Kết quả (phần Hot Snapshot — tiếp tục 2026-09-07):** `RoomState.serializeSnapshot()` +
+  `RoomState.restore(...)` (định dạng nhị phân tự viết bằng `DataOutputStream`, KHÔNG tái dùng
+  `RoomStateSnapshot` của `uni-protocol` — đây là persistence nội bộ Engine, không phải wire
+  schema, cố tình tách khỏi ADR-1 để không kéo theo PR đổi `.proto` mỗi lần đổi định dạng lưu
+  trữ). `SnapshotEnvelope` (schema_version/epoch/crc32/size-guard, §5.8). `RoomSnapshotStore`
+  interface (async) + `RedisSnapshotStore` (Lettuce, **chưa verify Redis thật**, dùng chung key
+  epoch với `RedisRoomLeaseStore` qua Lua script để fencing). Nối vào `RoomActor`: overload
+  `create(...)` mới nhận `RoomSnapshotStore` + `epoch` + `restoreFromSnapshot` (overload 6-tham-số
+  cũ giữ nguyên, gọi overload mới với `NoopRoomSnapshotStore` — không phá bất kỳ test/call site
+  nào đang có: `RoomSupervisor`, `RoomActorTest`, `TickCoalescingTest`, `SchedulerCapacitySpike`
+  không cần sửa). `maybeSnapshot()` gate 2s (`SNAPSHOT_MIN_INTERVAL_MS`, khớp "2-3s" của §4.3),
+  không bao giờ block actor kể cả khi store treo vĩnh viễn. **Bug đã tìm và sửa kèm theo** (xem
+  AC): `RoomState.submitAnswer` thiếu nhánh dedupe an toàn khi không có ack gốc — dùng
+  `RejectReason.DUPLICATE_SEQUENCE` (đã có sẵn trong schema, chưa ai dùng tới giờ). Test mới:
+  `RoomStateSnapshotTest` (5) + `SnapshotEnvelopeTest` (6) + `RoomActorSnapshotTest` (5) = 16
+  test, cả 2 đều có prove-it riêng (bug dedupe + gate 2s). `mvn clean install` toàn reactor:
+  BUILD SUCCESS, **161 test, không leak**.
+- **Chưa làm (rõ ràng, không phải quên):** (1) Chưa nối `RedisLeaseRoomOwnership` +
+  `RedisSnapshotStore` vào `EngineNetworkLifecycle`/`RoomSupervisor` thật — production vẫn dùng
+  `ModuloRoomOwnership` + `NoopRoomSnapshotStore` (không snapshot) như cũ. Đây là lý do các AC
+  "Scale thêm pod"/"Pod crash thật" bên dưới vẫn để `[ ]` dù logic từng phần đã xong và test kỹ —
+  chưa ai chứng minh được bằng thực nghiệm (chaos test) vì chưa có gì chạy thật; (2) `renewAll()`
+  chưa có gì gọi định kỳ — cần một scheduler nối vào `EngineNetworkLifecycle`; (3) `RoomActor`
+  không tự dừng khi mất lease giữa chừng (epoch cố định lúc spawn) — `RoomSnapshotStore.save`
+  trả `false` khi bị fencing chỉ mới log cảnh báo, chưa có gì khiến actor tự `Behaviors.stopped()`;
+  (4) `RedisRoomLeaseStore`/`RedisSnapshotStore` chưa test được với Redis thật (không có
+  Redis/Docker trong môi trường này) — cùng caveat như `TicketVerifier`.
 - **Mode:** sequential after [T13]
-- **Mô tả:** `_context.md` mục "Phát hiện review kiến trúc (2026-09-07)" (B1) ghi nhận: tài liệu
-  (ADR-002 GĐ1-note, §6.3) nói pod crash → phòng phục hồi từ Redis Snapshot trong 10–50ms, nhưng
-  **chưa có một dòng code nào ghi Redis snapshot** — `RoomActor.flush()` chỉ gửi
-  `state.flush()` tới `broadcastTarget` (client), không có nhánh persist. Task này làm cho câu đó
-  đúng: ghi Hot Snapshot (< 5 KB) lên Redis bất đồng bộ sau mỗi flush/câu hỏi (§4.3 bước 5), và
-  nạp lại khi `RoomActor` mới được `RoomSupervisor` spawn sau khi pod cũ chết.
-- **File dự kiến:** `modules/uni-engine/src/main/java/.../persistence/RedisSnapshotStore.java` (mới),
-  `RoomActor.java`/`RoomSupervisor.java` (sửa: gọi ghi async sau flush, nạp snapshot lúc spawn nếu có)
+- **Mô tả:** Gộp hai việc luôn phải đi cùng nhau: (1) Hot Snapshot thật lên Redis (B1 — tài liệu
+  nói pod crash → phòng phục hồi trong 10–50ms từ Redis Snapshot, nhưng `RoomActor.flush()` hiện
+  chỉ gửi tới `broadcastTarget`, không có nhánh persist nào), và (2) thay `ModuloRoomOwnership`
+  (`room_id % N` tĩnh, Task 10) bằng `RedisLeaseRoomOwnership` — một pod **giành** quyền sở hữu
+  phòng qua Redis thay vì được **gán** cố định bằng phép chia dư. Đây đúng là điểm mở rộng
+  ADR-007 đã thiết kế sẵn (`RoomOwnership` là interface duy nhất, GĐ2 chỉ thay một class) — chỉ
+  thay sớm hơn dự kiến, ngay ở GĐ1, để đóng rủi ro "scale Engine giữa ca thi đấu vỡ hash" (xem
+  Risk Assessment, Task 19) mà không cần đợi Pekko Cluster Sharding đầy đủ của GĐ2.
+
+  **Vì sao không chọn Consistent Hashing (phương án đã cân nhắc và loại):** giảm tỷ lệ vỡ phòng
+  khi scale từ "toàn bộ" xuống còn "~1/N" — đúng, đây là tính chất thật của consistent hashing.
+  Nhưng (a) **không giải quyết được phục hồi khi crash** — vẫn cần y hệt Redis Hot Snapshot,
+  nên không tiết kiệm được phụ thuộc Redis nào; (b) muốn ring cập nhật động lúc pod chết/thêm mà
+  không redeploy toàn bộ cấu hình tĩnh thì **mọi** pod (Gateway lẫn Engine) phải đồng bộ đúng một
+  view membership tại mọi thời điểm — tức phải tự xây một cơ chế phát hiện pod sống/chết và phát
+  tán thay đổi ring, chính là bài toán Pekko Cluster Sharding đã giải sẵn (có SBR, có kiểm chứng
+  thực tế). Tự làm lại bằng tay rủi ro cao hơn dùng Redis (đã có `SETNX` atomic sẵn) hoặc dùng
+  thẳng Sharding. Không triển khai Consistent Hashing ở GĐ1.
+- **File dự kiến:** `modules/uni-engine/src/main/java/.../room/RedisLeaseRoomOwnership.java`
+  (mới, implement `RoomOwnership`), `.../persistence/RedisSnapshotStore.java` (mới),
+  `RoomSupervisor.java`/`RoomActor.java` (sửa: renew lease định kỳ, nạp snapshot khi giành được lease)
 - **Dependency:** Task 13 (cần `RoomSupervisor`/`RoomActor` đã nối dây thật)
-- **Acceptance criteria:**
-  - [ ] Ghi async trên thread pool/virtual thread riêng — **tuyệt đối không trong đường xử lý
-        đồng bộ của `RoomActor`, không trong Netty EventLoop** (§13.2, CLAUDE.md: "Redis Cluster
-        ... never inside a Netty EventLoop or on the synchronous RoomActor message path")
-  - [ ] Payload đóng gói đúng `{schema_version, epoch, crc32, payload}` (§5.8); `epoch` luôn `0` ở GĐ1
-  - [ ] Kích thước snapshot thực đo **< 5 KB** — test guard fail cứng nếu vượt (ràng buộc này là
-        lý do `missed_step_policy: ALLOW_LATE` bị cấm ở GĐ1 — xem Task 15/`DefinitionLoader`)
-  - [ ] `LastSeenSequenceTable` **bắt buộc nằm trong snapshot** (§5.2) — thiếu nó thì actor hồi
-        sinh sẽ chấp nhận trùng các gói replay từ client
-  - [ ] CRC32 sai hoặc snapshot thiếu → coi như state rỗng, phục hồi hoàn toàn dựa trên client
-        replay (§5.8) — **không throw, không crash actor**
-  - [ ] Redis không khả dụng (timeout/connection refused) → **không được chặn `ANSWER_ACK` hay
-        bất kỳ message nào trên hot path** — log + metric riêng, actor tiếp tục chạy không snapshot
+- **Acceptance criteria — phần ownership (mới):**
+  - [x] `RoomOwnership` vẫn là **interface duy nhất** biết cách gán chủ phòng —
+        `RedisLeaseRoomOwnership` thay `ModuloRoomOwnership` làm implementation mặc định của
+        GĐ1. **Không xoá `ModuloRoomOwnership`** — giữ làm fallback khi Redis không khả dụng
+        (xem AC fallback bên dưới) — chữ ký interface không đổi, `ModuloRoomOwnership` không sửa
+  - [x] Giành quyền sở hữu bằng `SET room:owner:{room_id} "{pod_id}" EX <ttl> NX` + `INCR` một
+        key epoch riêng (`room:epoch:{room_id}`) khi thắng — tách 2 key thay vì nhồi
+        `"{pod_id}:{epoch}"` vào 1 giá trị, để epoch sống sót qua việc lease hết hạn rồi được
+        giành lại (xem `RedisRoomLeaseStore`, **chưa verify với Redis thật**). `ttl` là tham số
+        constructor, không hardcode — khuyến nghị 15–30s vẫn phải áp dụng lúc **wiring thật**
+        (chưa làm, xem "Chưa làm" ở trên)
+  - [x] `renewAll()` hiện thực: renew thất bại (exception hoặc trả `false`) → gỡ khỏi cache, lần
+        `ensureAcquired` kế tiếp tự giành lại từ đầu. **Chưa có gì gọi `renewAll()` định kỳ** —
+        xem "Chưa làm" ở trên, đây là lỗi cụ thể nếu triển khai mà quên nối scheduler
+  - [x] Mang theo **epoch tăng dần mỗi lần giành lease thành công** — `RoomLease.epoch()` +
+        `RedisLeaseRoomOwnership.epochOf()` lộ ra cho phần Hot Snapshot dùng sau. Việc RoomActor
+        **dùng** epoch đó để từ chối ghi snapshot cũ (§5.8) thuộc phần Hot Snapshot, chưa làm
+  - [x] `ownerPodId(roomId)`/`isOwner(roomId)` đọc từ **cache RAM**, không bao giờ chạm Redis —
+        xác nhận bằng test `should_callTheStoreExactlyOnce_when_ensureAcquiredIsCalledRepeatedlyAfterResolving`.
+        An toàn Netty EventLoop: `RoomOwnershipHandler.isOwner()` chạy trên EventLoop mỗi frame,
+        nên đây là điều kiện đúng-hay-sai, không phải tối ưu — xác nhận qua thiết kế
+        `ensureAcquired()` async tách biệt khỏi `isOwner`/`ownerPodId`
+  - [x] Redis không khả dụng lúc giành lease lần đầu (lỗi kết nối) → fallback về
+        `ModuloRoomOwnership`, log cảnh báo — test `should_fallBackToProvidedOwnership_when_theStoreFailsWithAnException`
+  - [ ] Scale thêm pod giữa ca thi: cơ chế `NOT_OWNER` phía Gateway không cần sửa (đã đúng từ
+        Task 5/10) — nhưng **chưa test end-to-end** vì `RedisLeaseRoomOwnership` chưa nối vào
+        `EngineNetworkLifecycle` (production vẫn chạy `ModuloRoomOwnership`)
+  - [ ] Pod crash thật → pod khác giành lại + nạp snapshot — **chưa làm** (phụ thuộc Hot
+        Snapshot, chưa nối wiring)
+- **Acceptance criteria — phần Hot Snapshot (2026-09-07, tiếp tục code):**
+  - [x] Ghi async, không trong đường xử lý đồng bộ của `RoomActor`/Netty EventLoop —
+        `RoomActor.maybeSnapshot()` gọi `snapshotStore.save(...)` (trả `CompletableFuture`) và
+        **không bao giờ `.get()`/`.join()`** — test
+        `should_neverBlockOnASlowOrFailingStore` dùng store không bao giờ resolve, xác nhận
+        message kế tiếp vẫn xử lý bình thường
+  - [x] Payload đóng gói `{schema_version, epoch, crc32, payload}` đúng §5.8 —
+        `SnapshotEnvelope.wrap`/`unwrap`, epoch lấy từ tham số `epoch` của `RoomActor` (nguồn:
+        `RedisLeaseRoomOwnership.epochOf()`, chưa nối — xem "Chưa làm")
+  - [x] Kích thước < 5 KB — `SnapshotEnvelope.MAX_ENVELOPE_BYTES`, `wrap()` trả `Optional.empty()`
+        nếu vượt (không throw). Test `should_stayUnderFiveKilobytes_forARealisticFullRoom` (12
+        học sinh, tên dài, câu hỏi dài) đo thật, không giả định
+  - [x] `LastSeenSequenceTable` nằm trong `RoomState.serializeSnapshot()` — **và một bug đã sửa
+        kèm theo**: `RoomState.submitAnswer` trước đây chỉ dedupe đúng khi có sẵn
+        `lastAckByStudent` (ack gốc); một phòng phục hồi từ snapshot có `lastSeenSequence`
+        nhưng KHÔNG có lịch sử ack đầy đủ (cố tình, để giữ < 5KB) → nộp trùng `sequence` sau khi
+        phục hồi sẽ **chấm điểm lại lần hai**. Đã sửa: dùng `RejectReason.DUPLICATE_SEQUENCE`
+        (đã có sẵn trong schema, chưa ai dùng) làm câu trả lời an toàn khi không có ack gốc.
+        **Prove-it**: tạm bỏ nhánh sửa, xác nhận đúng 1 test Red trước khi trả lại Green
+  - [x] CRC32 sai/thiếu/schema mismatch → `SnapshotEnvelope.unwrap` trả `Optional.empty()`,
+        không throw, không crash actor — 4 test riêng (`SnapshotEnvelopeTest`)
+  - [x] Redis không khả dụng → không chặn hot path — `maybeSnapshot()` chỉ `.exceptionally(...)`
+        log cảnh báo, không có đường nào quay lại chặn actor
+  - [x] Fencing bằng epoch (§5.8 "ghi snapshot cũ hơn → từ chối"): `RedisSnapshotStore.save`
+        dùng Lua script so epoch với **cùng key** `room:epoch:{room_id}` mà
+        `RedisRoomLeaseStore` đã tăng — một nguồn sự thật epoch duy nhất cho cả lease lẫn
+        snapshot, không tách hai bộ đếm riêng. **Chưa verify với Redis thật.**
   - [ ] Sau khi có implementation thật: sửa `system-architecture.md` ADR-002 GĐ1-note và §6.3 —
-        câu "10–50ms" chỉ được giữ nguyên nếu có số đo thật; nếu chưa đo, ghi rõ đây là mục tiêu
-        chưa xác nhận (cùng tinh thần PH-1 với ngưỡng L1 IP)
-- **Verification:** Test giết actor giữa chừng (restart trong `ActorTestKit` hoặc thật), spawn
-  actor mới cùng `room_id`, xác nhận roster + score + `LastSeenSequenceTable` khớp state trước khi
-  chết. Đo thời gian nạp thật, đối chiếu với con số 10–50ms đang ghi trong tài liệu — lệch thì sửa
-  tài liệu, không sửa số đo.
-- **Ghi chú:** Lần đầu Redis chạm code thật ở GĐ1 — đúng phạm vi đã chốt ở `_context.md`
-  ("Redis Cluster (Ticket SETNX & Snapshot)" nằm trong scope GĐ1). Không mở rộng sang ticket
-  replay dedup (`SETNX`) trong task này trừ khi được giao riêng — đó là một điểm gắn khác
-  (handshake, không phải RoomActor).
-- **Rollback nếu fail:** revert; `RoomActor` tiếp tục chạy không snapshot (đúng hành vi hiện tại) —
-  không có gì regress vì tính năng chưa từng tồn tại trước task này.
+        **đã sửa một phần ở lượt review trước** (bỏ câu "10-50ms" vô căn cứ); số đo thật (10-50ms
+        hay khác) vẫn cần benchmark thật, chưa làm — không tự ý điền số vào lại tài liệu
+- **Verification:** Test giành lease đồng thời từ 2 "pod" giả (2 client Redis trỏ cùng key) →
+  đúng 1 thắng, khớp `SETNX` semantics. Test hết hạn không renew (TTL cực ngắn trong test) → pod
+  thứ hai giành được, epoch tăng đúng 1. Test crash + phục hồi: giết actor, spawn actor mới trên
+  "pod" khác, xác nhận nạp đúng roster/score/`LastSeenSequenceTable` kèm epoch mới hơn epoch cũ.
+  Đo thời gian phục hồi thật (phải tính bằng giây theo `ttl` đã chọn, không phải "chờ đúng pod cũ
+  lên lại" như hiện tại), đối chiếu con số 10–50ms trong tài liệu — lệch thì sửa tài liệu.
+- **Ghi chú:** Lần đầu Redis chạm code thật ở GĐ1, gộp cả B1 lẫn phần ownership mới — không tách
+  2 task riêng vì dùng chung một Redis Cluster và luôn đi cùng nhau về vận hành (giành lease xong
+  luôn phải nạp snapshot ngay). Không mở rộng sang ticket replay dedup (`SETNX` cho ticket JWT) —
+  đó là điểm gắn khác (handshake, không phải `RoomActor`). `plan.md` Task 19 (runbook cấm
+  auto-scale) **vẫn cần thiết cho tới khi task này triển khai và verify bằng chaos test thật**
+  (kill pod giữa trận, đo thời gian phục hồi) — không tự động gỡ ràng buộc vận hành chỉ vì code
+  đã viết xong, phải chứng minh bằng thực nghiệm trước.
+- **Rollback nếu fail:** revert; `ModuloRoomOwnership` (Task 10) tiếp tục là implementation duy
+  nhất, đúng hành vi GĐ1 hiện tại — không regress.
 
 ---
 
@@ -723,12 +831,12 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 - **Acceptance criteria:**
   - [ ] **`ANSWER_ACK` không bị trì hoãn dù chỉ một chút để chờ Redis** — đây là điều kiện fail
         cứng, không thương lượng, xác nhận bằng test đo latency ACK không đổi so với trước Task 15
-  - [ ] Tín hiệu mới (`COMMITTED_SEQ` hoặc tên tương đương — quyết định hình dạng cụ thể trước khi
-        code, giống cách Task 3 chốt G2a/G2b trước khi implement) là Best-effort, không cần bypass
-        tick coalescing như Critical — mất một lần thì lần ghi Redis kế tiếp tự nâng
-        `committed_seq` cao hơn, tự lành, không cần cơ chế retry riêng
+  - [ ] Tín hiệu mới (`COMMITTED_SEQ` / `ANSWER_COMMITTED`) **bắt buộc thuộc `DeliveryClass.CRITICAL`**
+        (không phải Best-effort) — không được drop ngầm khi socket nghẽn, đảm bảo client nhận được
+        tín hiệu để giải phóng RingBuffer an toàn
   - [ ] `RoomActor` không tự gửi tín hiệu này nếu `RedisSnapshotStore` báo lỗi/timeout — im lặng
         bỏ qua lượt đó, đợi lần flush kế tiếp thử lại
+
   - [ ] Đổi `.proto` đi đúng quy trình đã ghi ở Rollback plan đầu file: PR riêng, codegen lại **cả
         hai** service, không chỉ một bên
   - [ ] Cập nhật `_context.md`/ADR-003: "mất dữ liệu = 0" chỉ đúng khi **cả hai** điều kiện đạt —
@@ -862,6 +970,55 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
   trình GĐ2 (`system-architecture.md` §18, mục 2–3), không phải task này.
 - **Rollback nếu fail:** revert; `RoomActor` tiếp tục không đẩy `GameEvent` nào ra Kafka (đúng
   hành vi hiện tại) — không regress vì tính năng chưa từng tồn tại trước task này.
+
+---
+
+### Task 19: Runbook vận hành — cấm Auto-scaling Engine trong ca thi đấu — đóng §9.3 Rủi ro 6 phần "Scale pod làm vỡ Modulo Hash" — ⏳ CHƯA BẮT ĐẦU (thêm 2026-09-07)
+
+- **Mode:** parallel — thuần tài liệu vận hành, không phụ thuộc/chặn task code nào
+- **Mô tả:** **Đây không phải bug sửa được bằng code trong GĐ1.** `ModuloRoomOwnership`
+  (`room_id % N`) dùng danh sách pod **tĩnh** (`ENGINE_POD_COUNT`/`ENGINE_POD_ID`, cố định lúc
+  khởi động — xem `application.yml` của `uni-engine`), cô lập có chủ đích sau interface
+  `RoomOwnership` (ADR-007) đúng để GĐ2 thay bằng Cluster Sharding. Việc "sửa" thật là chuyển
+  sang Redis Lease hoặc Cluster Sharding — nằm ngoài phạm vi GĐ1 theo chính `_context.md`. Rủi ro
+  cụ thể bạn nêu (scale Engine giữa ca thi đấu làm vỡ hash) **đã được ghi nhận sẵn** ở
+  `system-architecture.md` §9.3 Rủi ro 6 và ADR-002 ("Cấm HPA theo CPU cho Engine"), chủ sở hữu
+  đã ghi là DevOps/SRE — nhưng hiện tại **chưa có gì trong repo để enforce nó về mặt hạ tầng**:
+  không có Dockerfile, không có K8s manifest, không có `docker-compose.dev.yml` nào (Docker
+  daemon không chạy được trong môi trường viết code này — xác nhận ở Task 13). Task này biến quy
+  tắc từ một dòng trong bảng rủi ro thành một **checklist go/no-go cụ thể** mà DevOps phải xác
+  nhận trước khi mở ca thi đấu.
+- **File dự kiến:** `docs/runbook/engine-scaling-freeze.md` (mới)
+- **Dependency:** none
+- **Acceptance criteria:**
+  - [ ] Runbook nêu rõ khung giờ cấm tuyệt đối: ca điểm/thi đấu **18h50–21h30** (quyết định
+        Business 2026-09-06, `_context.md`) — trong khung giờ đó **không được**: (a) có
+        `HorizontalPodAutoscaler` nào target Engine Deployment, (b) chạy `kubectl scale`/đổi số
+        replica thủ công, (c) rolling update Engine pod (đổi `ENGINE_POD_COUNT` hoặc tập
+        `ENGINE_POD_ID` tương đương với đổi `N`)
+  - [ ] Runbook giải thích **vì sao** bằng đúng cơ chế kỹ thuật: `pod-count`/`pod-id` là config
+        tĩnh đọc lúc JVM khởi động (`ModuloRoomOwnership.java`), không phải cluster membership tự
+        phát hiện — đổi một trong hai đồng nghĩa rehash **toàn bộ phòng đang sống trên mọi pod
+        cùng lúc**, không chỉ phòng của pod bị đổi (khác hẳn 1 pod crash đơn lẻ, vốn chỉ giết
+        phòng của đúng pod đó — xem hàng riêng trong Risk Assessment)
+  - [ ] Checklist DevOps phải ký xác nhận **trước khi mở ca thi đấu**: (1) không `HPA` nào tồn
+        tại cho Engine Deployment, (2) `ENGINE_POD_COUNT`/danh sách `ENGINE_PODS` đã fix cứng,
+        (3) không có pipeline auto-deploy/rolling-update nào được lên lịch chạy trong khung giờ đó
+  - [ ] Link runbook này từ mục cảnh báo pod-loss đã có sẵn trong `_context.md` (dòng
+        `[!WARNING]` "Rủi ro vận hành đã biết của Giai đoạn 1") để không ai đọc thiếu
+  - [ ] **Không viết bất kỳ K8s manifest/HPA YAML/PodDisruptionBudget nào trong task này** — chưa
+        có Dockerfile hay cluster nào để verify; viết mù sẽ lặp lại đúng lý do Task 13 đã từ chối
+        viết `docker-compose.dev.yml`
+- **Verification:** Đọc lại bằng mắt (tài liệu vận hành thuần, không có test tự động) + xác nhận
+  link hai chiều giữa runbook và `_context.md` đúng, không link chết.
+- **Ghi chú:** Khi nào có K8s manifest thật cho Engine (task tương lai, cần cluster để verify),
+  manifest đó nên nêu rõ bằng comment là **cố tình không có** tài nguyên `HorizontalPodAutoscaler`
+  nào — nhưng viết manifest đó không thuộc phạm vi task này. **Task này là lưới an toàn tạm
+  thời** — một khi Task 14 (`RedisLeaseRoomOwnership`) triển khai xong **và** được verify bằng
+  chaos test thật (kill/scale pod giữa trận, đo thời gian phục hồi), ràng buộc "cấm auto-scale"
+  có thể nới lỏng; runbook lúc đó nên đổi thành hướng dẫn vận hành lease (theo dõi
+  `zombie_actor_stopped_total`, TTL/renewal) thay vì cấm tuyệt đối.
+- **Rollback nếu fail:** revert; chỉ là tài liệu, không ảnh hưởng code hay build.
 
 ---
 

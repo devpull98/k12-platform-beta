@@ -6,8 +6,8 @@
 
 ## 1. Tóm tắt và phạm vi
 
-Tài liệu này **không mô tả lại kiến trúc**. Kiến trúc nằm ở `docs/architect/` và
-[Tài liệu kiến trúc](../../architect/system-architecture.md) nói rõ: *"khi lệch nhau, một trong hai sai và phải
+Tài liệu này **không mô tả lại kiến trúc**. Kiến trúc nằm ở `docs/architecture/` và
+[Tài liệu kiến trúc](../../architecture/system-architecture.md) nói rõ: *"khi lệch nhau, một trong hai sai và phải
 sửa — không để tồn tại song song."* Viết lại envelope, luồng dữ liệu hay ADR ở đây là tạo ra
 đúng bản sao mà quy ước đó cấm.
 
@@ -19,7 +19,7 @@ khoảng trống là một chỗ ba người sẽ tự điền ba kiểu khác n
 
 | Đầu vào skill `tech-docs` yêu cầu | Trạng thái thật |
 |---|---|
-| BDD spec đã duyệt (`.feature` có UC-ID) | **Không tồn tại.** `docs/specs/bdd/` chưa có. Tài liệu này lấy hành vi từ `docs/architect/` + `plan.md`, không từ BDD |
+| BDD spec đã duyệt (`.feature` có UC-ID) | **Không tồn tại.** `docs/specs/bdd/` chưa có. Tài liệu này lấy hành vi từ `docs/architecture/` + `plan.md`, không từ BDD |
 | Codebase hiện tại | T1 xong: `game_message.proto` đã chốt + `GameMessageRoundTripTest` 4/4 |
 | Stack rules | `rules/spring/` (cài 2026-09-06) |
 
@@ -28,20 +28,20 @@ khoảng trống là một chỗ ba người sẽ tự điền ba kiểu khác n
 > skip toàn bộ (không có thư mục BDD → không đòi `@trace` tag nào của code). Đừng đọc gate xanh
 > đó là "đã phủ test".
 
-**Ngoài phạm vi tài liệu này:** mọi thứ `docs/architect/` đã chốt, và mọi câu hỏi
-[README §7.5](../../architect/system-architecture.md#75-quyết-định-còn-treo) giao cho **Product/Business** — xem §9.
+**Ngoài phạm vi tài liệu này:** mọi thứ `docs/architecture/` đã chốt, và mọi câu hỏi
+[README §7.5](../../architecture/system-architecture.md#75-quyết-định-còn-treo) giao cho **Product/Business** — xem §9.
 
 ---
 
 ## 2. API / hợp đồng trên dây
 
 Không có REST endpoint mới. Biên realtime là WebSocket + Protobuf, đã chốt ở
-[README §3.3](../../architect/system-architecture.md#33-envelope-thống-nhất-gamemessage) và `modules/uni-protocol/src/main/proto/game_message.proto`.
+[README §3.3](../../architecture/system-architecture.md#33-envelope-thống-nhất-gamemessage) và `modules/uni-protocol/src/main/proto/game_message.proto`.
 Phần dưới chỉ đóng ba chỗ còn trống.
 
 ### G1 — Hợp đồng ticket (chặn T6)
 
-[README §3.4](../../architect/system-architecture.md#34-xác-thực-one-time-ticket) mô tả *luồng* ticket nhưng chưa ở đâu định nghĩa
+[README §3.4](../../architecture/system-architecture.md#34-xác-thực-one-time-ticket) mô tả *luồng* ticket nhưng chưa ở đâu định nghĩa
 **ticket là cái gì**. T6 phải viết `TicketAuthHandler` verify nó.
 
 Ba ràng buộc dưới đây **suy ra được từ thiết kế đã chốt**, không phải lựa chọn mới:
@@ -49,8 +49,8 @@ Ba ràng buộc dưới đây **suy ra được từ thiết kế đã chốt**,
 | # | Ràng buộc | Suy ra từ |
 |---|---|---|
 | R1 | Ticket phải **tự chứa và verify được cục bộ** — không tra cứu, không gọi mạng | §13.2 cấm mọi DB/Redis/HTTP call trong EventLoop. Ticket dạng handle mờ (phải tra ra danh tính) **vi phạm trực tiếp** rule này |
-| R2 | Ticket phải mang chữ ký | [README §2.3](../../architect/system-architecture.md#23-bên-trong-gateway): *"Mọi gói sau đó KHÔNG verify lại chữ ký"* — câu đó chỉ có nghĩa nếu có chữ ký để verify một lần |
-| R3 | Claim tối thiểu: `student_id`, `room_id`, `session_id`, `roles`, `exp` | [README §3.4](../../architect/system-architecture.md#34-xác-thực-one-time-ticket) bước 3 — đó đúng là tập `ChannelAttributes` gateway phải bind |
+| R2 | Ticket phải mang chữ ký | [README §2.3](../../architecture/system-architecture.md#23-bên-trong-gateway): *"Mọi gói sau đó KHÔNG verify lại chữ ký"* — câu đó chỉ có nghĩa nếu có chữ ký để verify một lần |
+| R3 | Claim tối thiểu: `student_id`, `room_id`, `session_id`, `roles`, `exp` | [README §3.4](../../architecture/system-architecture.md#34-xác-thực-one-time-ticket) bước 3 — đó đúng là tập `ChannelAttributes` gateway phải bind |
 
 **Chưa quyết được ở đây, phải xác nhận với đội dịch vụ nền tảng:** thuật toán ký (HMAC dùng
 secret chung hay chữ ký bất đối xứng), cách phân phối/xoay khoá, và encoding cụ thể.
@@ -77,7 +77,7 @@ một con số ở đây — cần biết hai bên có cùng nguồn NTP không.
 
 ### G2 — Mã hoá delta snapshot (chặn T3, và client PH-3)
 
-[README §3.6](../../architect/system-architecture.md#36-tối-ưu-payload) và [ADR-004](../../architect/system-architecture.md#adr-004)
+[README §3.6](../../architecture/system-architecture.md#36-tối-ưu-payload) và [ADR-004](../../architecture/system-architecture.md#adr-004)
 đều nói broadcast là **delta**, full snapshot chỉ khi JOIN / RESYNC / *"mỗi N lần flush"*. Hai
 chỗ trống:
 
@@ -97,16 +97,16 @@ Hợp đồng đề xuất — **cần review, không phải đã chốt**:
 | D1 | `full = false` → `players` chỉ chứa những học sinh **có thay đổi** kể từ lần flush trước |
 | D2 | Mỗi `PlayerState` trong delta là **bản đầy đủ của học sinh đó**, không phải phần thay đổi trong đó |
 | D3 | Học sinh vắng mặt trong delta = **không đổi**, không phải bị xoá |
-| D4 | Định danh trong delta dùng `student_index` ([README §3.6](../../architect/system-architecture.md#36-tối-ưu-payload): 1 byte thay UUID) |
+| D4 | Định danh trong delta dùng `student_index` ([README §3.6](../../architecture/system-architecture.md#36-tối-ưu-payload): 1 byte thay UUID) |
 
 D1–D4 giữ được lợi ích kích thước (phòng 12 người, 1 người trả lời → gửi 1 `PlayerState` thay
 vì 12) mà **không phải sửa `.proto`**. Nếu review muốn delta ở mức trường thay vì mức người
-chơi thì **phải** sửa schema (thêm optional/field-mask) — và [README §3.6](../../architect/system-architecture.md#36-tối-ưu-payload)
+chơi thì **phải** sửa schema (thêm optional/field-mask) — và [README §3.6](../../architecture/system-architecture.md#36-tối-ưu-payload)
 quy định: sửa `.proto` sau khi chốt phải đi PR riêng + codegen lại cả hai service.
 
 ### G3 — `UPDATE_DRAFT` mâu thuẫn trong schema (chạm T7)
 
-[README §3.6](../../architect/system-architecture.md#36-tối-ưu-payload) đã ghi nhận: `MessageType` có `UPDATE_DRAFT` nhưng
+[README §3.6](../../architecture/system-architecture.md#36-tối-ưu-payload) đã ghi nhận: `MessageType` có `UPDATE_DRAFT` nhưng
 `oneof` **không có payload `UpdateDraft`**. Bổ sung một hệ quả cụ thể mà mục đó chưa nêu:
 
 **T7 sẽ code một rate-limit bucket (`UPDATE_DRAFT` 10/refill 10s) cho một loại thông điệp client
@@ -134,7 +134,7 @@ Task nào bắt đầu chèn truy vấn database/Redis đồng bộ vào hot pat
 - Topic: `game.events.v1`, partition key = `session_id`.
 - `RoomActor` đẩy event sau khi đã tính điểm và gửi `ANSWER_ACK` cho học sinh (hoàn toàn ngoài hot path).
 - Consumer: Teacher Dashboard (`SessionAggregator` theo dõi thời gian thực), PostgreSQL Writer (lưu điểm bền vững).
-- Cấm tuyệt đối: Kafka nằm trên đường nộp bài của học sinh hoặc Kafka tham gia vào recovery ([ADR-003](../../architect/system-architecture.md#adr-003)).
+- Cấm tuyệt đối: Kafka nằm trên đường nộp bài của học sinh hoặc Kafka tham gia vào recovery ([ADR-003](../../architecture/system-architecture.md#adr-003)).
 
 ## 5. Tích hợp dịch vụ ngoài
 
@@ -156,15 +156,15 @@ EventLoop) thành phụ thuộc lúc boot.
 Chưa có client production, chưa có gì để giữ tương thích. `game_message.proto` **đã chốt** (T1)
 và cả hai service cùng phụ thuộc một artifact — nên quy tắc duy nhất đang áp dụng:
 
-- Sửa `.proto` → PR riêng + codegen lại cả hai service ([README §3.6](../../architect/system-architecture.md#36-tối-ưu-payload)).
+- Sửa `.proto` → PR riêng + codegen lại cả hai service ([README §3.6](../../architecture/system-architecture.md#36-tối-ưu-payload)).
 - **Không đánh số lại field.** `epoch` và `GamePhase.RESYNCING` đã chừa sẵn chỗ cho Giai đoạn 2
   chính là để tránh việc đó.
 - Đề xuất D1–D4 ở §G2 chọn đường **không** đụng schema, có chủ đích.
 
 ## 7. Yêu cầu phi chức năng
 
-Đã chốt ở [README §2.5 & §5](../../architect/system-architecture.md#25-game-definition--guardrails) và
-[README §6](../../architect/system-architecture.md#6-triển-khai-vận-hành--khôi-phục-sự-cố); không lặp lại. Ba điểm liên quan trực tiếp tới hợp đồng
+Đã chốt ở [README §2.5 & §5](../../architecture/system-architecture.md#25-game-definition--guardrails) và
+[README §6](../../architecture/system-architecture.md#6-triển-khai-vận-hành--khôi-phục-sự-cố); không lặp lại. Ba điểm liên quan trực tiếp tới hợp đồng
 trên:
 
 - **Xác thực:** một lần lúc handshake, sau đó danh tính đọc từ `ChannelAttributes`. `room_id`
@@ -210,7 +210,7 @@ sao: `stack: spring` ở repo này chỉ nghĩa là "boot bằng Spring Boot" �
 
 ### 9.2 Product / Business — tài liệu này **cố ý không điền**
 
-[README §7.5](../../architect/system-architecture.md#75-quyết-định-còn-treo) đã giao chủ những câu này, và quy ước của bộ
+[README §7.5](../../architecture/system-architecture.md#75-quyết-định-còn-treo) đã giao chủ những câu này, và quy ước của bộ
 tài liệu nói thẳng: *"không tự điền một giá trị hợp lý. Một mặc định bịa ra trong tài liệu kiến
 trúc sẽ được code theo và không ai biết nó chưa từng được duyệt."*
 
@@ -222,7 +222,7 @@ trúc sẽ được code theo và không ai biết nó chưa từng được duy
 > [!NOTE]
 > **Câu 1 đã chốt (2026-09-06, Product):** trắc nghiệm 1-trong-4 đáp án, nhị phân đúng/sai —
 > đúng = **100 điểm**, sai = **0 điểm**, không có bonus tốc độ. Chi tiết đầy đủ:
-> [README §2.5](../../architect/system-architecture.md#25-game-definition--guardrails).
+> [README §2.5](../../architecture/system-architecture.md#25-game-definition--guardrails).
 >
 > T2 đã xong từ trước với `PlaceholderScoreCalculator` (flat, đánh dấu rõ TEMPORARY) đúng theo
 > đường đi khuyến nghị lúc đó. Việc còn lại: viết implementation thật của `ScoreCalculator`

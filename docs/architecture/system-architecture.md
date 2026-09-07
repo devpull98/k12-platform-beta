@@ -164,7 +164,11 @@ LOBBY ──TEACHER_START──► PLAYING ──hết step cuối / TEACHER_END
 - **`RESYNCING`** (kiến trúc đích): Áp dụng pending submissions từ client trước khi broadcast, chống tụt điểm tạm thời.
 
 > [!NOTE]
-> **GĐ1:** FSM chỉ có `LOBBY → PLAYING → FINISHED`. `RESYNCING` chưa cần vì GĐ1 mất pod là mất phòng. `RoomOwnership` dùng modulo `room_id % N` trong class `ModuloRoomOwnership`.
+> **GĐ1:** FSM chỉ có `LOBBY → PLAYING → FINISHED`. `RESYNCING` chưa cần trong hiện trạng GĐ1
+> (`ModuloRoomOwnership` — mất pod là mất phòng cho tới khi đúng pod đó lên lại). **Quyết định
+> 2026-09-07:** chuyển sang `RedisLeaseRoomOwnership` (xem [ADR-007](#adr-007), [§9.2](#92-rủi-ro-tầng-runtime--chấm-điểm-jvm--actor)
+> Rủi ro 4, `plan.md` Task 14 — **chưa triển khai**) để một phòng phục hồi được trên **pod khác**,
+> không chỉ đợi đúng pod cũ.
 
 #### State của một phòng (RAM & Snapshot):
 Toàn bộ state nằm trong RAM actor và phải nén được vào snapshot:
@@ -297,12 +301,14 @@ Phần lớn CCU đang đọc câu hỏi trên màn hình. Với R = 4.500 phòn
      c. server_received_at > deadline + 500ms GRACE → từ chối, gửi ACK kèm mã lỗi.
      d. response_time_ms = server_received_at − server_question_started_at.
      e. Cập nhật điểm, đánh dấu dirty = true.
-4. Phản hồi tức thì (Hot path):
-     - Gửi ANSWER_ACK (Critical) ngay lập tức về client nộp bài → client xoá khỏi RingBuffer.
+4. Phản hồi tức thì & Bền vững (Two-stage Confirmation):
+     - Gửi ANSWER_ACK (Critical) ngay lập tức về client nộp bài → client hiển thị phản hồi UI tức thì ("Đã nhận bài").
+     - **Chưa xóa RingBuffer:** Client **giữ nguyên submission trong RingBuffer**, chưa xóa.
      - Delta Snapshot (Best-effort) gom qua Tick Coalescing (§4.6) → Gateway fan-out zero-copy.
-5. Xử lý nền bất đồng bộ (Async Backplane trên Virtual Thread):
-     - Ghi Hot Snapshot (< 5 KB) lên Redis Cluster: SET room:snap:{room_id} (định kỳ mỗi 2–3s hoặc sau câu hỏi).
-     - Đẩy GameEvent vào Kafka topic game.events.v1 (partition key = session_id) cho Teacher Dashboard và DB writer.
+5. Xử lý nền bất đồng bộ & Xác nhận Bền vững (Async Backplane & Durable Confirmation):
+     - Ghi Hot Snapshot (< 5 KB) lên Redis Cluster: SET room:snap:{room_id} (Task 14).
+     - **Gửi COMMITTED_SEQ (Critical):** Ngay sau khi ghi Redis thành công, Server gửi tín hiệu `COMMITTED_SEQ` / `ANSWER_COMMITTED` (Critical, Task 15) → **Client mới được phép xóa submission khỏi RingBuffer**.
+     - Đẩy GameEvent vào Kafka topic game.events.v1 (partition key = session_id) cho Teacher Dashboard và DB writer (Task 18).
 ```
 
 ### 4.4 Fan-out Zero-Copy qua nhiều Pod
@@ -323,7 +329,7 @@ Phòng 12 người trên 3 Gateway pod chỉ tốn **3 gói tin nội bộ** tha
 Gateway không băm hash hay tra cứu Redis để tìm vị trí phòng:
 1. Gateway duy trì kết nối TCP tới toàn bộ 12–16 Engine pod.
 2. Khi chưa biết vị trí phòng: Gateway gửi round-robin. Pod Engine nhận được sẽ tự forward nội bộ tới pod đúng.
-3. Response từ Engine luôn mang `InternalHeader.owner_pod_id` → Gateway học và ghi nhớ `room_id → engine_pod_id` vào `RouteCache`.
+3. Response từ Engine luông mang `InternalHeader.owner_pod_id` → Gateway học và ghi nhớ `room_id → engine_pod_id` vào `RouteCache`.
 4. Nếu cache sai (do pod Engine chuyển giao hoặc rebalance): Pod nhận trả về `NOT_OWNER` kèm pod owner mới → Gateway cập nhật lại cache.
 5. Khi kết nối tới một Engine pod bị đứt: Gateway tự động xóa toàn bộ cache trỏ tới pod đó.
 
@@ -339,11 +345,12 @@ Thay vì phát định kỳ 200ms cố định (sinh ra 270.000 pkt/s vô ích k
 ### 4.7 Kết nối lại (Reconnect Flow)
 **Nguồn khôi phục đúng đắn là client, không phải snapshot:**
 1. Client duy trì RingBuffer N=10 submission gần nhất kèm sequence.
-2. Chỉ xoá submission khỏi RingBuffer khi đã nhận `ANSWER_ACK`.
+2. **Chỉ xoá submission khỏi RingBuffer khi đã nhận tín hiệu bền vững `COMMITTED_SEQ` / `ANSWER_COMMITTED` (Critical)** — nhận `ANSWER_ACK` chưa được xoá.
 3. Khi mất mạng và kết nối lại: Client gửi `RESYNC{last_acked_seq, pending[]}`.
 4. `RoomActor` nhận lệnh, kiểm tra `pending[]` qua `LastSeenSequenceTable` để loại bỏ các bản ghi trùng lặp trong $O(1)$.
 5. `RoomActor` trả về full snapshot và **gia hạn deadline câu hỏi** bù đúng bằng thời gian gián đoạn.
 6. Màn hình học sinh hiển thị overlay "Đang đồng bộ...", **không văng lỗi, không mất đáp án đã chọn**.
+
 
 ### 4.8 Vào phòng muộn (Late Join) vs Kết nối lại
 Vào phòng muộn và Reconnect là **hai luồng hoàn toàn khác nhau**:
@@ -435,28 +442,126 @@ Mỗi bản ghi snapshot gồm `{ schema_version, epoch, crc32, payload }`:
 
 ## 6. Triển Khai, Vận Hành & Khôi Phục Sự Cố
 
-### 6.1 Topology Phục Vụ 54.000 CCU
+#### 6.1 Phân Tích Tài Nguyên Hệ Thống Cũ (`k12-socketio`) vs Dự Toán Hệ Thống Mới (`uni-realtime`)
 
-| Tầng | Số Pod | Cấu hình Pod | Ghi chú |
+#### 📊 1. Phân Tích Hiện Trạng Thực Tế Hệ Thống Cũ (`Netty-SocketIO + Node.js/Spring`):
+Dựa trên số liệu đo đạc thực tế tại ca cao điểm (19:00 – 21:30):
+* **Tổng CPU tiêu thụ toàn cụm:** Chỉ khoảng **2.5 – 3.0 cores CPU** cho toàn bộ 7 Pods (gồm 4 pod `k12-socketio` và 3 pod `k12-socketio-worker`).
+* **Chi tiết Tầng Socket (`k12-socketio` - 4 Pods):**
+  * **K8s Config:** Request `1Gi RAM / 0.5 CPU`, Limit `6Gi RAM / 4 CPUs`.
+  * **Thực tế sử dụng TỔNG (4 Pods):** CPU tiêu thụ **0.196 core** (trung bình **~0.049 core/pod**); Memory ngốn **~5.48 GiB** (trung bình **~1.37 GiB RAM/pod**).
+  * **Đánh giá:** Đặt `Limit 4 CPUs/pod` (tổng 16 CPUs cho 4 pod) là mức lãng phí Quota K8s nghiêm trọng (>98% CPU requested/limited bị thừa). Bộ nhớ phồng chủ yếu ở tầng Native Memory do phảnh mảnh `glibc malloc` và đệm Socket.IO JSON.
+* **Chi tiết Tầng Worker (`k12-socketio-worker` - 3 Pods):**
+  * **K8s Config:** Request `1Gi RAM / 0.5 CPU`, Limit `8Gi RAM / 4 CPUs`.
+  * **Thực tế sử dụng TỔNG (3 Pods):** CPU tiêu thụ **0.241 core** (trung bình **~0.08 core/pod**); Memory ngốn **~2.44 GiB** (trung bình **~0.81 GiB RAM/pod**).
+
+---
+
+#### 🔄 2. Bảng Đối Soát Kiến Trúc & Hiệu Năng (Hệ Thống Cũ vs Hệ Thống Mới):
+
+| Tiêu chí | Hệ Thống Cũ (`k12-socketio`) | Hệ Thống Mới (`uni-realtime`) | Lợi ích Kiến trúc Mới |
 |---|---|---|---|
-| **Gateway** | 10 – 12 | 2 vCPU / 4 GB | Stateless — scale theo CPU và số lượng WS connection |
-| **Engine** | **12 – 16** | 2 vCPU / 4 GB | ~300–375 phòng/pod. **Cấm HPA theo CPU** |
-| **Redis** | 3 shard + replica | Cluster | GĐ1 chỉ cần 1 node độc lập |
-| **PostgreSQL** | Multi-AZ | Primary-Replica | Lưu kết quả phiên sau khi FINISHED |
-| **Kafka** | 3 broker | Cluster | Event log analytics (**Giai đoạn 1** — `game.events.v1`, xem [§7.1](#71-giai-đoạn-1-gđ1-có-gì)) |
+| **Định dạng dữ liệu** | JSON over Socket.IO | **Binary Protobuf over Netty** | Giảm 80% dung lượng gói, 0 rác JSON Heap |
+| **Giao thức nội bộ** | Redis Pub/Sub Cluster | **Raw Netty TCP Direct** (Lazy-Learned) | **Triệt tiêu 100% nghẽn Redis Pub/Sub** |
+| **Mô hình Fan-out** | Parse & Serialize JSON từng client | **Zero-Copy `retainedDuplicate()`** | Không tốn CPU/RAM khi broadcast 12 HS |
+| **Quản lý State** | Redis Buffer + Thread Pool | **Pekko Typed Actors (`RoomActor`) RAM** | Đơn luồng, 0 Lock, 0 Race Condition |
+| **Hiệu quả CPU** | 2.5-3.0 cores toàn cụm (Lãng phí >95%) | **Tối ưu 100% Multi-threading Java 25** | Tiết kiệm >40% CPU Quota trên K8s |
 
-**Đánh đổi chiến lược: 12–16 Pod nhỏ thay vì 4 Pod lớn:**
-- Khi 1 pod Engine chết: Chỉ ảnh hưởng **~4.000 học sinh** (~350 phòng) thay vì 13.500 học sinh.
-- Tải recovery snapshot dồn cục vào Redis giảm 3 lần (350 lượt nạp so với 1.125 lượt).
-- **Cấm HPA theo CPU cho Engine:** Tự ý scale down sẽ làm mất quorum của cụm Pekko, kích hoạt SBR `keep-majority` làm sập cụm cluster đang hoạt động bình thường.
+---
+
+#### 📐 3. Bảng Dự Toán Tài Nguyên K8s Hệ Thống Mới (Phục vụ 54.000 CCU / 4.500 Phòng):
+
+| Tầng / Dịch vụ | Số Pod | Request (CPU / RAM) | Limit (CPU / RAM) | Ghi chú vận hành |
+|---|:---:|:---:|:---:|---|
+| **Gateway (`uni-gateway`)** | **4 – 5 Pods** | **1.5 CPU / 3 GiB** | **3.0 CPU / 6 GiB** | Peak Load Target: ~10.000–13.000 WS conns/pod (Tải thường 10k–20k CCU dùng 2–3 pods ~5k–6.5k WS/pod). |
+| **Engine (`uni-engine`)** | **6 – 8 Pods** | **1.5 CPU / 3 GiB** | **3.0 CPU / 6 GiB** | Gánh ~550–750 phòng/pod (~6.700–9.000 HS) ở tải đỉnh (*chỉ áp dụng sau Task 14*; trước Task 14 giữ 300–375 phòng/pod). **Cấm HPA**. |
+| **Redis Cluster** | 3 shard + replica | Cluster | Cluster | Ticket SETNX, Hot Snapshot (<5KB) & Lease (`Task 14`). |
+| **PostgreSQL** | Multi-AZ | Primary-Replica | Primary-Replica | Lưu kết quả phiên sau khi FINISHED. |
+| **Kafka Cluster** | 3 broker | Cluster | Cluster | Async event log analytics (`game.events.v1`, `Task 18`). |
+
+> [!IMPORTANT]
+> **Ràng buộc Mật độ Phòng & Connection Target:**
+> 1. **Gateway Connections/pod:** Con số ~10k–13k WS/pod là **Mục tiêu Tải Đỉnh** khi chạy 54k CCU (4–5 pods). Ở tải thường (10k–20k CCU), hệ thống chạy 2–3 pods với mật độ an toàn ~5k–6.5k WS/pod.
+> 2. **Mật độ phòng/Engine:** Mức 550–750 phòng/pod (~6.700–9.000 HS/pod) là chỉ tiêu tải đỉnh tối đa, **chỉ áp dụng sau khi hoàn tất Task 14 (`RedisLeaseRoomOwnership` + Hot Snapshot)** và đã xác minh `actor_mailbox_depth` không bị tích tụ. Trước khi Task 14 hoàn thành, mật độ thiết kế an toàn được duy trì ở 300–375 phòng/pod.
+
+---
+
+#### 📈 4. Quy Trình Co Giãn Hạ Tầng: Tải Thường (10k – 20k CCU) vs Tải Đỉnh 3x (54k CCU)
+
+Bảng chi tiết quy tắc co giãn (Scaling Rules) khi chạy ở mức tải bình thường và khi có spike 3x CCU:
+
+| Thành phần / Tầng | Mức Tải Thường (10k – 20k CCU) | Mức Tải Đỉnh 3x (54.000 CCU) | Chi Tiết Hành Động Co Giãn (Scaling Action) |
+|---|:---:|:---:|---|
+| **Số phòng game (`room_id`)** | ~850 – 1.700 phòng | ~4.500 phòng | Tăng số phòng 12 người tương ứng theo lượng học sinh |
+| **Gateway (`uni-gateway`)** | **2 – 3 Pods** | **4 – 5 Pods** | **TĂNG +2 Pods** (Scheduled Scaling trước 18:50 hoặc HPA theo CPU >65%) |
+| **Engine (`uni-engine`)** | **3 – 4 Pods** | **6 – 8 Pods** | **TĂNG +3–4 Pods TRƯỚC 18:50** (Cấm auto-scale tự động; **CẤM scale khi chạy Modulo**) |
+| **Tổng Gateway Request** | 3.0–4.5 CPUs / 6–9 GiB | 6.0–7.5 CPUs / 12–15 GiB | Tự động mở rộng Quota K8s cho Gateway |
+| **Tổng Engine Request** | 4.5–6.0 CPUs / 9–12 GiB | 9.0–12.0 CPUs / 18–24 GiB | Mở rộng Quota K8s cho Engine trước ca thi đấu |
+| **Redis Connection Pool** | 50 conns/pod | 150 conns/pod | **TĂNG max-connections pool** để xử lý bão ticket `SETNX` lúc 19:00 |
+
+> [!CAUTION]
+> **Ràng buộc Scale Engine trong Ca Thi:**
+> - **Cấm auto-scale tự động (HPA) đối với Engine Pod.** Engine phải được scale thủ công (manual scheduled scale) trước giờ cao điểm.
+> - **ĐẶC BIỆT NGHÊM CẤM:** Khi hệ thống vẫn đang sử dụng `ModuloRoomOwnership` (Phase 1), **CẤM TUYỆT ĐỐI** mọi thao tác scale Engine Pod (cả scale-up lẫn scale-down) trong ca thi đấu vì phép chia `room_id % N` sẽ bị xáo trộn làm vỡ room ownership toàn cụm. Việc scale Engine Pod **chỉ được phép thực hiện sau khi Task 14 (`RedisLeaseRoomOwnership`) đã triển khai chính thức và verify thành công**.
+
+* **Quy trình TĂNG TÀI NGUYÊN (Scale-Up) khi có tin báo thi đấu 3x CCU:**
+  1. **Bước 1 (18:30 - Trước ca thi 20 phút):** Thực hiện `kubectl scale deployment uni-engine --replicas=7` để khởi tạo sẵn 7 Engine Pods (chỉ áp dụng sau Task 14). Các Pods mới sẽ đăng ký danh sách vào `RedisLeaseRoomOwnership` sẵn sàng nhận phòng mới.
+  2. **Bước 2 (18:40 - Trước ca thi 10 phút):** Thực hiện `kubectl scale deployment uni-gateway --replicas=5` để sẵn sàng đón đợt bão kết nối WebSocket (Connection Storm).
+  3. **Bước 3 (18:50 - Bắt đầu ca thi):** Khóa chức năng Auto-scaling of Engine (Task 19) để giữ nguyên topology 7 Pods ổn định suốt ca thi 18h50 - 21h30.
+* **Quy trình GIẢM TÀI NGUYÊN (Scale-Down) sau ca thi:**
+  1. **Sau 21:30 (Khi ca thi kết thúc):** Kiểm tra số lượng kết nối CCU hạ xuống $< 10.000$.
+  2. Scale down `uni-gateway` về **2 Pods** và `uni-engine` về **3 Pods** để tiết kiệm tài nguyên Cloud ban đêm.
+
+---
+
+#### 🧬 5. Phân Rã Bộ Nhớ RSS (Resident Set Size Memory Budget - Limit 6.0 GiB/pod):
+
+Bộ nhớ K8s kiểm soát để trigger `OOMKilled` là **RSS Memory** (Heap + DirectMemory + Metaspace + Stacks + Native Memory):
+
+1. **Gateway Pod RSS Budget (Limit 6.0 GiB):**
+   * JVM Heap Max (`-Xmx3g`): **3.00 GiB** (Chứa Spring Boot, RouteCache, Channel Registry, Metrics).
+   * Netty Direct Memory (`-XX:MaxDirectMemorySize=2g`): **2.00 GiB** (Đệm Socket cho 13k WebSockets binary).
+   * Metaspace (`-XX:MaxMetaspaceSize=384m`): **0.38 GiB** (384 MB).
+   * Code Cache & Symbols (`-XX:ReservedCodeCacheSize=240m`): **0.25 GiB** (256 MB).
+   * Thread Stacks (~100 threads $\times$ `-Xss256k`): **0.025 GiB** (25 MB).
+   * C++ Native & jemalloc Arenas: **0.20 GiB** (~200 MB).
+   * **$\rightarrow$ TỔNG RSS PEAK:** **5.855 GiB** (Khoảng dự phòng an toàn: ~145 MB).
+
+2. **Engine Pod RSS Budget (Limit 6.0 GiB):**
+   * JVM Heap Max (`-Xms2g -Xmx3g`): **3.00 GiB** (Chứa 750 `RoomActor` state, Pekko System, Protobuf).
+   * Netty Direct Memory (`-XX:MaxDirectMemorySize=1536m`): **1.50 GiB** (Kênh Netty Internal Frame Server).
+   * Metaspace (`-XX:MaxMetaspaceSize=384m`): **0.38 GiB** (384 MB).
+   * Code Cache & Symbols: **0.25 GiB** (256 MB).
+   * Thread Stacks (~80 threads $\times$ `-Xss256k`): **0.02 GiB** (20 MB).
+   * Snapshot C++ Off-Heap & jemalloc: **0.35 GiB** (~350 MB).
+   * **$\rightarrow$ TỔNG RSS PEAK:** **5.500 GiB** (Khoảng dự phòng an toàn: ~500 MB).
+
+> [!NOTE]
+> **Ghi chú Kiểm chứng RSS Engine:** Con số 750 `RoomActor` trong 3 GiB Heap (~4 MB/phòng gồm state, snapshot buffer & mailbox) là mức ngân sách ước tính dựa trên thiết kế. Chỉ số này cần được kiểm chứng và điều chỉnh thực tế thông qua các kịch bản tải đè PH-1 Load Testing (đo dung lượng `RoomActor` state + snapshot buffer thật).
+
+---
 
 ### 6.2 Cấu hình Kubernetes, JVM & Native Allocator (jemalloc)
-- **QoS Guaranteed**: Đặt `requests = limits` (`cpu: 2`, `memory: 4Gi`) để không bị throttle CPU bất ngờ giữa trận đấu.
-- `terminationGracePeriodSeconds`: **45s** (để Pekko CoordinatedShutdown di tản shard an toàn).
+- **QoS Profile (Burstable QoS Rationale)**: Requests được thiết lập 50% Limits (`cpu: 1.5`, `memory: 3Gi` vs `limits: cpu: 3.0`, `memory: 6Gi`).
+  - *Lý do kiến trúc:* Đạt hiệu quả tối ưu cho K8s scheduler quota trong thời gian tải thấp (không lãng phí quota node khi không có ca thi), đồng thời cung cấp khoảng dự phòng 100% (burst headroom) để chịu bão kết nối (Connection Storm) và chống CPU Throttling tuyệt đối trong các ca thi đấu đỉnh điểm.
+- `terminationGracePeriodSeconds`: **45s** (để Pekko CoordinatedShutdown di tản state an toàn).
 - `topologySpreadConstraints`: `maxSkew: 1` theo hostname, không xếp chồng pod lên cùng worker node.
 - `livenessProbe`: `/actuator/health/liveness` cổng riêng :8090 (chu kỳ 10s, failure 3). **Tuyệt đối không kiểm tra dependency ngoài (Redis/DB) trong liveness probe**.
 - `readinessProbe`: `/actuator/health/readiness` cổng :8090 (chu kỳ 5s).
-- **JVM**: JDK 21, `-XX:MaxRAMPercentage=70`, Garbage Collector dùng **G1 GC** mặc định (nghiệm thu `GC pause p99 < 10ms`).
+- **JVM Flags Chuẩn hóa**:
+  ```bash
+  -Xms2048m -Xmx3072m
+  -XX:MaxDirectMemorySize=2048m # Gateway (1536m cho Engine)
+  -XX:MaxMetaspaceSize=384m
+  -XX:+UseG1GC
+  -XX:InitiatingHeapOccupancyPercent=35
+  -XX:MaxGCPauseMillis=10
+  -XX:G1HeapRegionSize=16m
+  -Xss256k
+  -XX:+UseContainerSupport
+  -XX:+HeapDumpOnOutOfMemoryError
+  -Duser.timezone=Asia/Ho_Chi_Minh
+  ```
 - **Native Memory Allocator (`jemalloc`) — Bắt buộc ([ADR-009](#adr-009))**:
   - **Vấn đề triệt tiêu**: Mặc định `glibc ptmalloc` tạo nhiều arena bộ nhớ theo CPU core (`MALLOC_ARENA_MAX = 8 * cores`), gây phân mảnh nghiêm trọng khi Netty liên tục cấp phát/giải phóng Direct ByteBuf. Hệ quả: RSS memory (Resident Set Size) phình to không trả lại cho OS, dẫn đến Pod bị Kubernetes **OOMKilled (`Exit Code 137`)** dù JVM Heap còn rất trống.
   - **Chuẩn cấu hình Dockerfile (Ubuntu/Debian)**:
@@ -466,12 +571,12 @@ Mỗi bản ghi snapshot gồm `{ schema_version, epoch, crc32, payload }`:
     # Ép nạp jemalloc trước glibc malloc
     ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2
     # Cấu hình thu hồi dirty pages thần tốc về Linux kernel
-    ENV MALLOC_CONF="background_thread:true,dirty_decay_ms:1000,muzzy_decay_ms:0"
+    ENV MALLOC_CONF="background_thread:true,metadata_thp:auto,dirty_decay_ms:1000,muzzy_decay_ms:0,narenas:4"
     ```
   - **Ý nghĩa cấu hình**:
     - `background_thread:true`: Cho phép jemalloc chạy thread riêng dọn dẹp trang nhớ định kỳ, không làm chậm EventLoop của Netty.
-    - `dirty_decay_ms:1000`: Sau 1 giây không sử dụng, lập tức trả trang nhớ bẩn về cho hệ điều hành.
-
+    - `narenas:4`: Ép Native Memory Allocator giới hạn 4 arenas, loại bỏ hiện tượng phồng bộ nhớ RSS.
+    - `dirty_decay_ms:1000`: Sau 1.000ms (1 giây) không sử dụng, lập tức trả trang nhớ bẩn về cho hệ điều hành.
 
 ### 6.3 TLS & Ràng buộc Ingress
 TLS được terminate hoàn toàn tại **Load Balancer / Ingress**; traffic đi vào Gateway pod là plaintext ([ADR-008](#adr-008)). Lý do: 54.000 kết nối dồn vào 15s nếu giải mã TLS tại pod sẽ nuốt sạch CPU của Gateway (360 handshake/s/pod).
@@ -502,7 +607,10 @@ t ≈ 22s     Phòng trở lại PLAYING, broadcast state đầy đủ cho học
 ```
 
 > [!NOTE]
-> **Khôi phục ngay với Redis Cluster:** Nhờ Hot Snapshot (< 5 KB) được lưu liên tục lên Redis Cluster, khi 1 Engine pod bị crash và pod mới khởi động lại (hoặc failover), state của ~350 phòng được phục hồi chỉ trong **10–50ms** từ Redis. Client kết nối lại gửi `RESYNC(pending[])` → hoàn tất phục hồi với cam kết **Zero Data Loss**.
+> **Khôi phục với Redis Cluster (Sau Task 14):** Nhờ Hot Snapshot (< 5 KB) được lưu liên tục lên Redis Cluster, khi 1 Engine pod bị crash và pod mới khởi động lại (hoặc failover), state của ~350 phòng được phục hồi từ Redis. Client kết nối lại gửi `RESYNC(pending[])` → hoàn tất phục hồi với cam kết **Zero Data Loss**.
+> 
+> *Ghi chú GĐ1:* Con số 10–50ms chỉ có hiệu lực sau khi triển khai và verify Task 14 (Redis Hot Snapshot & Lease Ownership). Ở GĐ1 hiện tại khi pod crash, phòng sẽ rớt kết nối cho tới khi pod phục hồi.
+
 
 ### 6.6 Chỉ số Giám sát & SLA Nội bộ
 
@@ -541,15 +649,15 @@ t ≈ 22s     Phòng trở lại PLAYING, broadcast state đầy đủ cho học
 
 | Chưa có ở GĐ1 | Hệ quả thực tế |
 |---|---|
-| **Cluster Sharding đa node + SBR** | Hiện chạy `ModuloRoomOwnership` (hoặc Redis Lease) phân bổ tĩnh/bán tĩnh; chưa có tự động rebalance phân tán Pekko |
+| **Cluster Sharding đa node + SBR** | GĐ1 đang chạy `ModuloRoomOwnership`; **đã chốt chuyển sang `RedisLeaseRoomOwnership`** (2026-09-07, `plan.md` Task 14 — chưa triển khai) để chịu được scale/crash mà không vỡ hash. Vẫn là phân bổ bán tĩnh (lease theo TTL), chưa có tự động rebalance phân tán kiểu Pekko Sharding |
 | Trạng thái `RESYNCING` đa pod tự động | Hiện tại nạp snapshot từ Redis khi pod hồi sinh; resync tự động liên pod nâng cao để GĐ2 |
 | `tick_mode: FIXED` | Chỉ hỗ trợ `COALESCE`; nếu Game Definition khai báo FIXED phải **fail lúc upload** |
 | Chế độ Team / Hybrid | Chỉ hỗ trợ duy nhất thể thức thi đấu cá nhân **Solo** |
 
 ### 7.3 Các điểm Code khác Tài liệu có chủ đích
-1. **Phân bổ phòng**: Tài liệu kiến trúc đích mô tả gửi qua ShardRegion; GĐ1 triển khai thông qua modulo `room_id % N` được cô lập chặt chẽ bên trong interface `RoomOwnership` ([ADR-007](#adr-007)).
+1. **Phân bổ phòng**: Tài liệu kiến trúc đích mô tả gửi qua ShardRegion; GĐ1 triển khai qua interface `RoomOwnership` ([ADR-007](#adr-007)) — hiện là `ModuloRoomOwnership` (`room_id % N`), **đã chốt chuyển sang `RedisLeaseRoomOwnership`** (lease qua Redis `SETNX`, xem [§9.2](#92-rủi-ro-tầng-runtime--chấm-điểm-jvm--actor) Rủi ro 4) trước khi cho phép auto-scale Engine.
 2. **Định tuyến Gateway**: Gateway áp dụng cơ chế tự học route ngay từ GĐ1 nên khi nâng cấp lên GĐ2 sẽ **không cần sửa bất kỳ dòng code nào ở Gateway**.
-3. **Fencing Token**: GĐ1 luôn gửi `epoch = 0` trong `InternalHeader` để giữ nguyên tương thích schema cho GĐ2.
+3. **Fencing Token**: GĐ1 hiện luôn gửi `epoch = 0` trong `InternalHeader` (giữ tương thích schema cho GĐ2) — **sẽ có giá trị thật lần đầu** khi `RedisLeaseRoomOwnership` triển khai: epoch tăng mỗi lần một pod giành lại quyền sở hữu phòng, dùng để từ chối ghi snapshot từ zombie actor ([§5.8](#58-toàn-vẹn-snapshot)).
 
 ### 7.4 Phụ thuộc Ngoài Phạm vi (Blockers)
 - **PH-1 · Load-test Harness chưa chạy**: Các con số capacity (`5.000 WS/pod`, `300–375 phòng/pod`) là giả thuyết để đo đạc và bác bỏ; ngưỡng handshake admission control phải được đo tại tầng Ingress.
@@ -569,7 +677,7 @@ Năm câu hỏi cần cấp thẩm quyền quyết định — **3/5 đã chốt
 ### 7.6 Lộ trình nâng cấp lên Giai đoạn 2 (GĐ2)
 Các bước nâng cấp tiếp theo:
 ```text
-1. Bật Pekko Cluster Sharding + SBR (thay thế ModuloRoomOwnership / Redis Lease).
+1. Bật Pekko Cluster Sharding + SBR (thay thế `RedisLeaseRoomOwnership` — xem ADR-007).
 2. Tích hợp trực tiếp PostgreSQL batch writer từ Kafka consumer (lưu trữ kết quả phiên bền vững).
 3. Triển khai Web frontend cho SessionAggregator (Teacher Dashboard) đọc từ Kafka event stream.
 4. Mở rộng Game Definition cho chế độ Team và Hybrid (tick_mode: FIXED).
@@ -655,7 +763,13 @@ update là một lần nghi ngờ split-brain) · `requests = limits` · theo d�
 `zombie_actor_stopped_total`, bất kỳ giá trị > 0 đều đáng điều tra.
 
 > [!NOTE]
-> **GĐ1:** Cluster Sharding **chưa bật**. Quyền sở hữu là `room_id % N` (hoặc Redis Lease) cô lập sau interface `RoomOwnership` ([ADR-007](#adr-007)). Khi một Engine pod bị crash, các phòng trên pod đó được phục hồi state từ Redis Snapshot (< 5 KB) sau 10–50ms.
+> **GĐ1 (cập nhật 2026-09-07):** Cluster Sharding **chưa bật**. Quyền sở hữu hiện tại là
+> `room_id % N` tĩnh (`ModuloRoomOwnership`), cô lập sau interface `RoomOwnership`
+> ([ADR-007](#adr-007)) — **chưa có ghi Redis Snapshot nào trong code hiện tại**, nên một Engine
+> pod crash làm mất **toàn bộ** state phòng trên pod đó, không phải phục hồi trong 10–50ms như
+> câu cũ ở đây từng ghi. Đã chốt chuyển sang `RedisLeaseRoomOwnership` + Hot Snapshot thật
+> (`plan.md` Task 14, **chưa triển khai**) — con số 10–50ms chỉ được ghi lại **sau khi** Task 14
+> đo được bằng số thật, không phải hiện trạng hay mục tiêu chưa kiểm chứng.
 
 ---
 
@@ -754,19 +868,37 @@ ngay, Channel chết còn trong set của phòng khác là rò dữ liệu chéo
 
 ### ADR-007
 
-**Quyền sở hữu phòng nằm sau một interface duy nhất `RoomOwnership`**, có đúng một implementation
-ở GĐ1 là `ModuloRoomOwnership`. **Không class nào ngoài `RoomOwnership` được biết tới phép `% N`.**
+**Quyền sở hữu phòng nằm sau một interface duy nhất `RoomOwnership`.** **Không class nào ngoài
+`RoomOwnership` được biết tới thuật toán phân bổ cụ thể** — dù đó là `% N` hay lease Redis.
 
-Hai ràng buộc đi kèm: Mọi response từ Engine **đóng dấu `InternalHeader.owner_pod_id`** · nhận gói
-của phòng không thuộc pod này → forward, hoặc trả `NOT_OWNER` kèm owner hiện tại. Ràng buộc thứ
-nhất là thứ khiến Gateway **học** vị trí phòng thay vì tự tính ([§4.5](#45-định-tuyến-tự-học-learned-routing)).
+GĐ1 khởi đầu với đúng một implementation, `ModuloRoomOwnership` (`room_id % N`), tĩnh và đơn giản
+nhất có thể. **Quyết định 2026-09-07:** thay bằng `RedisLeaseRoomOwnership` làm implementation
+chính của GĐ1 (`plan.md` Task 14, **chưa triển khai**) — một pod **giành** quyền sở hữu phòng qua
+Redis (`SET room:owner:{room_id} "{pod_id}:{epoch}" EX <ttl> NX`, TTL ngắn + renew định kỳ +
+fencing bằng `epoch`) thay vì được **gán** cố định bằng phép chia dư. `ModuloRoomOwnership`
+không bị xoá — giữ làm fallback khi Redis không khả dụng lúc pod cần giành lease lần đầu.
 
-**Cái giá:** Một tầng gián tiếp cho thứ hiện chỉ là một phép chia lấy dư — nhìn như
-over-engineering nếu không biết GĐ2.
+**Vì sao không chọn Consistent Hashing thay cho Redis Lease:** giảm được tỷ lệ vỡ phòng khi scale
+từ "toàn bộ" xuống "~1/N" (đúng tính chất của Ketama/virtual node), nhưng (a) không giải quyết
+phục hồi khi crash — vẫn cần y hệt Redis Hot Snapshot, nên không tiết kiệm được phụ thuộc Redis
+nào; (b) muốn ring cập nhật động (thêm/bớt pod) mà không redeploy toàn bộ thì **mọi** pod phải
+đồng bộ đúng một view membership tại mọi thời điểm — tức tự xây lại một phần bài toán mà Pekko
+Cluster Sharding (GĐ2) đã giải sẵn, có SBR, có kiểm chứng thực tế. Không đáng tự làm tay ở GĐ1.
 
-**Hệ quả:** GĐ2 thay một class (`ModuloRoomOwnership` → `ShardRegionRoomOwnership`), không đụng
-Gateway, `RoomActor`, hay codec · **Gateway không cần sửa gì khi lên GĐ2** ·
-`InternalHeader.epoch` gửi `0` ở GĐ1 nhưng trường phải có mặt trên wire ngay từ đầu.
+Hai ràng buộc đi kèm (không đổi bởi quyết định trên): Mọi response từ Engine **đóng dấu
+`InternalHeader.owner_pod_id`** · nhận gói của phòng không thuộc pod này → forward, hoặc trả
+`NOT_OWNER` kèm owner hiện tại. Ràng buộc thứ nhất là thứ khiến Gateway **học** vị trí phòng thay
+vì tự tính ([§4.5](#45-định-tuyến-tự-học-learned-routing)) — **cơ chế học của Gateway không cần
+sửa gì** khi Engine đổi từ modulo sang lease, đúng giá trị mà interface này được thiết kế để bảo vệ.
+
+**Cái giá:** Một tầng gián tiếp, cộng thêm từ 2026-09-07 là một phụ thuộc Redis thật cho quyết
+định sở hữu (trước đó chỉ là phép tính thuần RAM) — đổi lấy khả năng chịu được crash/scale mà
+không vỡ hash.
+
+**Hệ quả:** GĐ2 thay một class nữa (`RedisLeaseRoomOwnership` → `ShardRegionRoomOwnership`),
+không đụng Gateway, `RoomActor`, hay codec · **Gateway không cần sửa gì khi lên GĐ2** ·
+`InternalHeader.epoch` từ chỗ luôn gửi `0` ở GĐ1 giai đoạn đầu, sẽ có giá trị thật lần đầu khi
+`RedisLeaseRoomOwnership` triển khai — trường đã có mặt trên wire từ Task 1 nên không cần đổi schema.
 
 ---
 
@@ -864,13 +996,23 @@ khỏi phần **đề xuất cho GĐ2** (cần ADR riêng, chưa được phép 
   2. **Đóng dấu thời gian sớm tại Netty:** Đóng dấu `received_at` ngay tại `FrameChannelServer` (tầng transport Netty) trước khi đẩy vào Mailbox của Actor, sau đó truyền timestamp này vào message để Actor dùng tính điểm.
 
 #### ⚠️ Rủi ro 4: "Cái bẫy" Modulo Hash (`room_id % N`) khi thay đổi số Pod
-- **Hiện trạng:** Ở GĐ1, `RoomOwnership` dùng thuật toán `room_id % N` để xác định Engine pod sở hữu phòng.
+- **Hiện trạng (2026-09-07):** GĐ1 hiện tại vẫn chạy `ModuloRoomOwnership`. **Đã chốt thay bằng
+  `RedisLeaseRoomOwnership`** (xem [ADR-007](#adr-007)) qua `plan.md` Task 14 — **chưa triển
+  khai**, nên rủi ro dưới đây vẫn có hiệu lực đầy đủ tới khi task đó xong và được verify bằng
+  chaos test thật (không tự động coi là đã giải quyết chỉ vì đã có quyết định).
 - **Nguy cơ:** Trong lúc các lớp học đang diễn ra (4.500 phòng đang chơi), nếu 1 pod bị chết hoặc SRE thấy tải cao muốn scale-up từ 12 pod lên 14 pod:
   - Giá trị $N$ thay đổi → Hầu hết các kết quả của phép tính `room_id % N` sẽ bị **nhảy sang pod khác**!
   - **Hệ quả:** Gateway gửi gói tin sang nhầm pod, actor mới khởi tạo ở pod mới không có dữ liệu phòng cũ, làm vỡ trận hàng nghìn phòng thi đấu!
 - **Chiến lược phòng ngừa:**
-  1. **Quy tắc vận hành cứng:** Tuyệt đối KHÔNG scale-up/scale-down Engine pod khi hệ thống đang chạy chế độ Modulo.
-  2. **Nâng cấp sớm sang Redis Lease:** Dùng Redis key `room:lease:{room_id}` để ghim pod sở hữu phòng, cho phép scale pod động mà không xáo trộn phòng đang chơi.
+  1. **Quy tắc vận hành cứng (tạm thời, `plan.md` Task 19):** Tuyệt đối KHÔNG scale-up/scale-down
+     Engine pod khi hệ thống đang chạy chế độ Modulo — có hiệu lực cho tới khi mục 2 triển khai
+     xong và được đo bằng chaos test thật.
+  2. **`RedisLeaseRoomOwnership` (đã chốt, `plan.md` Task 14):** `SET room:owner:{room_id}
+     "{pod_id}:{epoch}" EX <ttl> NX` để ghim pod sở hữu phòng, cho phép scale pod động mà không
+     xáo trộn phòng đang chơi. **Bắt buộc**: `ttl` ngắn (khuyến nghị 15–30s) kèm renew định kỳ +
+     fencing bằng `epoch` (dùng đúng `InternalHeader.epoch` đã có sẵn trên wire) — một TTL dài
+     cỡ độ dài phiên (ví dụ vài giờ) mà không renew sẽ tự gây split-brain ngay cả khi không pod
+     nào crash, vì lease tự hết hạn dưới một `RoomActor` vẫn đang sống.
 
 ---
 
@@ -918,6 +1060,5 @@ khỏi phần **đề xuất cho GĐ2** (cần ADR riêng, chưa được phép 
 | **3** | **Kafka lag làm block Engine** | 🔴 Cao | 🟢 Thấp | Cấu hình `max.block.ms=0`, đẩy event qua worker thread riêng biệt | Backend Dev |
 | **4** | **Lệch đồng hồ NTP làm hỏng Ticket** | 🟡 Vừa | 🟡 Vừa | Clock skew tolerance 5s tại Gateway; alert NTP sync | DevOps / SRE |
 | **5** | **Head-of-Line Blocking trên TCP** | 🟡 Vừa | 🟢 Thấp ở GĐ1 (snapshot đã < 5 KB) | GĐ1: giám sát `internal_frame_p99_latency`/cặp pod. GĐ2 (nếu đo thấy cần): pool 2–4 TCP + sửa ADR-001, không tự làm trước | Backend Dev |
-| **6** | **Scale pod làm vỡ Modulo Hash** | 🔴 Cao | 🟢 Thấp | Cấm scale Engine pod giữa trận đấu; chuẩn bị lộ trình lên Redis Lease | DevOps / SRE |
+| **6** | **Scale pod làm vỡ Modulo Hash** | 🔴 Cao | 🟢 Thấp | Tạm thời: cấm scale Engine pod giữa trận đấu (Task 19). Fix thật đã chốt: `RedisLeaseRoomOwnership` (Task 14, chưa triển khai) | Backend Dev / DevOps / SRE |
 | **7** | **Frontend thiếu RingBuffer (PH-3)** | 🔴 Cao | 🟡 Vừa | Ký hợp đồng kỹ thuật bắt buộc: RingBuffer 10 phần tử + phát `RESYNC` | Frontend Lead |
-

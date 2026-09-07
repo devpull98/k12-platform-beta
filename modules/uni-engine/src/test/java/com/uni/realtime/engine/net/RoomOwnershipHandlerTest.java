@@ -1,6 +1,7 @@
 package com.uni.realtime.engine.net;
 
 import com.uni.realtime.engine.room.ModuloRoomOwnership;
+import com.uni.realtime.engine.room.RoomOwnership;
 import com.uni.realtime.protocol.GameMessage;
 import com.uni.realtime.protocol.MessageType;
 import com.uni.realtime.protocol.RoutingStatus;
@@ -8,6 +9,7 @@ import io.netty.channel.embedded.EmbeddedChannel;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -50,6 +52,58 @@ class RoomOwnershipHandlerTest {
         assertThat(reply.getRoomId()).isEqualTo(foreignRoomId);
         assertThat(reply.getInternal().getRoutingStatus()).isEqualTo(RoutingStatus.NOT_OWNER);
         assertThat(reply.getInternal().getOwnerPodId()).isEqualTo("engine-b");
+    }
+
+    @Test
+    void should_dropSilently_when_ownerIsNotYetKnown() {
+        // Task 14: a lease-based RoomOwnership can have a genuine "acquisition in flight"
+        // window where neither isOwner nor a real ownerPodId is known yet.
+        RoomOwnership unresolved = new RoomOwnership() {
+            @Override
+            public boolean isOwner(String roomId) {
+                return false;
+            }
+
+            @Override
+            public String ownerPodId(String roomId) {
+                return "";
+            }
+        };
+        AtomicReference<GameMessage> forwarded = new AtomicReference<>();
+        EmbeddedChannel channel = new EmbeddedChannel(new RoomOwnershipHandler(unresolved, forwarded::set));
+
+        channel.writeInbound(messageFor("room-pending"));
+
+        assertThat(forwarded.get()).as("an unresolved room must never reach onOwnedMessage").isNull();
+        assertThat((GameMessage) channel.readOutbound())
+                .as("no NOT_OWNER reply -- a made-up owner would misroute the Gateway")
+                .isNull();
+    }
+
+    @Test
+    void should_callEnsureAcquired_beforeCheckingOwnership() {
+        AtomicInteger ensureAcquiredCalls = new AtomicInteger();
+        RoomOwnership counting = new RoomOwnership() {
+            @Override
+            public boolean isOwner(String roomId) {
+                return true;
+            }
+
+            @Override
+            public String ownerPodId(String roomId) {
+                return "engine-solo";
+            }
+
+            @Override
+            public void ensureAcquired(String roomId) {
+                ensureAcquiredCalls.incrementAndGet();
+            }
+        };
+        EmbeddedChannel channel = new EmbeddedChannel(new RoomOwnershipHandler(counting, message -> { }));
+
+        channel.writeInbound(messageFor("room-1"));
+
+        assertThat(ensureAcquiredCalls.get()).isEqualTo(1);
     }
 
     private static GameMessage messageFor(String roomId) {

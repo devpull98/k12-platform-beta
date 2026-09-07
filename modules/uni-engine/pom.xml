@@ -52,6 +52,16 @@
             <classifier>linux-x86_64</classifier>
         </dependency>
 
+        <!-- Task 14: RedisRoomLeaseStore (room ownership lease) + RedisSnapshotStore (Hot
+             Snapshot, remaining half of Task 14). Version managed transitively by
+             spring-boot-starter-parent's BOM, unpinned here, same convention as the Netty
+             dependencies above. NOT exercised against a real Redis instance by any test in
+             this repo (none available in this environment); see RedisRoomLeaseStore's javadoc. -->
+        <dependency>
+            <groupId>io.lettuce</groupId>
+            <artifactId>lettuce-core</artifactId>
+        </dependency>
+
         <!-- BehaviorTestKit + ManualTime: the room FSM and tick coalescing are tested
              without a network and without sleeping on a real clock. -->
         <dependency>
