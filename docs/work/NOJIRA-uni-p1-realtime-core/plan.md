@@ -268,16 +268,22 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
         pod nhận WS plaintext. Không thêm cờ config bật TLS tại pod ở GĐ1
   - [ ] Ràng buộc lên ingress phải ghi thành văn bản trong `docker-compose.dev.yml` / manifest:
         **passthrough WebSocket upgrade** và **idle-timeout > chu kỳ heartbeat** (30s),
-        nếu không connection sẽ bị LB cắt giữa chừng — **chưa làm**, `docker-compose.dev.yml`
-        chưa tồn tại trong repo (thuộc phạm vi Task 13 walking skeleton)
+        nếu không connection sẽ bị LB cắt giữa chừng — **vẫn chưa làm**. Cập nhật 2026-09-07
+        (Task 20): `docker-compose.dev.yml` **đã tồn tại**, nhưng đó là compose cho test cục bộ,
+        không có LB/ingress nào trong đó (Gateway nhận traffic trực tiếp) — AC này thực chất nói
+        về **manifest triển khai thật** (K8s ingress hoặc LB trước Gateway), thứ vẫn chưa tồn tại
+        ở bất kỳ đâu trong repo. Vẫn để `[ ]`.
 - **Verification:** `mvn -pl :uni-gateway test -Dtest=GatewayPipelineTest`. Case bắt buộc: gói có `room_id` giả mạo → channel bị đóng.
 - **Ghi chú quan trọng — thuật toán ký ticket KHÔNG được hiện thực ở đây:** tech-design.md
   G1a/G1c (thuật toán ký, phân phối khoá, dung sai lệch đồng hồ) **vẫn chưa chốt** — phải hỏi
   đội dịch vụ nền tảng, không tự bịa. `TicketAuthHandler` vì vậy nhận một `TicketVerifier`
-  (interface only, **không có implementation thật trong main code**) qua constructor;
+  (interface only, **không có implementation thật cho staging/production**) qua constructor;
   test dùng fake verifier. Khi G1a/G1c chốt, chỉ cần viết một implementation thật của
   `TicketVerifier` và wire vào `GatewayBootstrap` — không phải sửa `TicketAuthHandler`.
-  **Không dùng verifier tạm này ở staging/production.**
+  **Không dùng verifier tạm này ở staging/production.** Cập nhật 2026-09-07 (Task 20): đã có một
+  implementation **dev-only** (`DevTicketVerifier`, HMAC tự bịa cho test cục bộ, khoá kép bằng
+  Spring profile + property) để mở WS port test qua Docker — không liên quan gì tới thuật toán
+  ký thật G1a/G1c sẽ chốt, không đổi kết luận task này vẫn "một phần xong" vì chờ bên ngoài.
 - **Rollback nếu fail:** revert; nhánh T2/T4 không bị ảnh hưởng.
 
 ---
@@ -572,16 +578,28 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
   - [x] Submit lại cùng `sequence` → điểm không đổi (`replay.equals(ack)`), ACK cũ được trả lại
   - [x] Im lặng sau đó → **0 gói outbound** trong 500ms (chứng minh ADR-4 chạy thật qua socket
         thật, không chỉ trong unit test của Task 3)
-  - [ ] Chạy với ≥ 2 Engine pod: route cache học đúng `owner_pod_id` — **chưa test trong module
-        này** (logic đã có sẵn và đã test riêng ở `FrameChannelClientTest`, Task 5); chưa ghép
-        vào một kịch bản `uni-e2e` chung
+  - [x] Chạy với ≥ 2 Engine pod: route cache học đúng `owner_pod_id` — **Cập nhật 2026-09-07
+        (Task 20):** giờ đã ghép vào một kịch bản `uni-e2e` chung, qua Docker thật thay vì chỉ
+        đơn vị: `DockerComposeResyncIT` join 2 phòng băm về 2 pod khác nhau (`room-docker-a` →
+        `engine-0`, `room-docker-b` → `engine-1`) qua `docker-compose.dev.yml`, cả hai route đúng.
+        Nhân tiện lộ ra một giới hạn thật: JOIN_ROOM đầu tiên của phòng mới có thể trúng round-
+        robin sai pod (§4.5 bước 2, xem `RoomOwnershipHandler`'s javadoc) — client phải tự retry,
+        đã thêm `SimulatedStudentClient.joinRoomWithRetry` cho việc này, không sửa Gateway/Engine.
   - [ ] Giết một Engine pod → client nhận `CONNECTION_DEGRADED`, WebSocket không đóng (§9.7) —
         **cơ chế đã hiện thực** (`RouteCache.evictPod` trả về room bị ảnh hưởng,
         `FrameChannelClient.onPodDisconnected`, `EngineResponseRouter.broadcastConnectionDegraded`)
-        nhưng **chưa có test nào lắp cả chuỗi lại với nhau** để chứng minh bằng thực nghiệm
-  - [ ] `docker-compose.dev.yml` với 2 GW + 2 Engine thật — **không làm**, xem ghi chú Docker
+        nhưng **vẫn chưa có test nào lắp cả chuỗi lại với nhau** để chứng minh bằng thực nghiệm —
+        Task 20 dựng được hạ tầng đa pod thật nhưng không làm kịch bản giết pod (ngoài phạm vi
+        "test cục bộ" người dùng yêu cầu, thiên về chaos test)
+  - [ ] `docker-compose.dev.yml` với 2 GW + 2 Engine thật — **Cập nhật 2026-09-07 (Task 20):**
+        `docker-compose.dev.yml` giờ **đã tồn tại và chạy thật** (1 Gateway + 2 Engine pod + Redis
+        + Kafka) — nhưng AC gốc đòi **2 Gateway**, còn thực tế chỉ có 1 (không cần thiết cho mục
+        tiêu "test cục bộ" của Task 20, vốn tập trung vào đa pod phía Engine). Vẫn để `[ ]` vì
+        chưa khớp đúng nghĩa đen AC gốc.
 - **Verification:** `mvn -pl :uni-e2e -am test` (bắt buộc `-am`, xem ghi chú build). AC gốc đòi
-  `mvn -pl :uni-e2e verify` + `docker-compose.dev.yml` — **chưa làm được phần Docker**, xem dưới.
+  `mvn -pl :uni-e2e verify` + `docker-compose.dev.yml` — phần Docker giờ có (Task 20), nhưng chỉ
+  phủ 1 trong 3 sub-AC còn treo ở trên (route cache đa pod); 2 sub-AC còn lại (kill pod, 2 GW)
+  vẫn treo, xem chi tiết ngay trên.
 - **Ghi chú quan trọng — kiến trúc mới phải xây (Task 2/9 đều đã ghi rõ đây là việc của Task 13):**
   - **`RoomSupervisor`** (`modules/uni-engine/.../room/RoomSupervisor.java`, mới): actor duy nhất
     mỗi Engine pod, spawn `RoomActor` lười theo `room_id` lúc `JOIN_ROOM` đầu tiên, dịch
@@ -804,11 +822,17 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
         `ensureAcquired()` async tách biệt khỏi `isOwner`/`ownerPodId`
   - [x] Redis không khả dụng lúc giành lease lần đầu (lỗi kết nối) → fallback về
         `ModuloRoomOwnership`, log cảnh báo — test `should_fallBackToProvidedOwnership_when_theStoreFailsWithAnException`
-  - [ ] Scale thêm pod giữa ca thi: cơ chế `NOT_OWNER` phía Gateway không cần sửa (đã đúng từ
-        Task 5/10) — nhưng **chưa test end-to-end** vì `RedisLeaseRoomOwnership` chưa nối vào
-        `EngineNetworkLifecycle` (production vẫn chạy `ModuloRoomOwnership`)
-  - [ ] Pod crash thật → pod khác giành lại + nạp snapshot — **chưa làm** (phụ thuộc Hot
-        Snapshot, chưa nối wiring)
+  - [x] Scale thêm pod giữa ca thi: cơ chế `NOT_OWNER` phía Gateway không cần sửa (đã đúng từ
+        Task 5/10). **Cập nhật 2026-09-07 (Task 20):** `RedisLeaseRoomOwnership` **đã nối và chạy
+        thật** qua `docker-compose.dev.yml` (`ENGINE_REDIS_ENABLED=true`, không phải giả định nữa
+        — `EngineNetworkLifecycle` thật sự dựng `RedisLeaseRoomOwnership` khi cờ bật, xác nhận qua
+        `redis-cli KEYS "room:owner:*"` sau khi 2 pod thật chạy). Production mặc định (`application.yml`)
+        **vẫn** `ModuloRoomOwnership` — cờ chỉ bật ở compose test cục bộ, không đổi mặc định. Điều
+        CHƯA test: thêm pod thứ 3 **giữa lúc** 2 pod kia đang chạy phòng thật (mid-session
+        scale-up) — Task 20 khởi động cả 2 pod cùng lúc từ đầu, không mô phỏng scale động.
+  - [ ] Pod crash thật → pod khác giành lại + nạp snapshot — **vẫn chưa làm**. Task 20 xác nhận
+        Redis lease/snapshot ghi đúng dữ liệu thật, nhưng không giết container nào giữa chừng để
+        chứng minh pod khác giành lại lease + nạp lại snapshot — vẫn cần một chaos test riêng.
 - **Acceptance criteria — phần Hot Snapshot (2026-09-07, tiếp tục code):**
   - [x] Ghi async, không trong đường xử lý đồng bộ của `RoomActor`/Netty EventLoop —
         `RoomActor.maybeSnapshot()` gọi `snapshotStore.save(...)` (trả `CompletableFuture`) và
@@ -1273,15 +1297,28 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 
 - [x] Tất cả task pass verification (T6 chờ G1a/G1c ngoài tầm kiểm soát nội bộ; T9 có giới hạn
       kiến trúc đã ghi rõ; T13 một phần — xem ghi chú Task 13)
-- [x] `mvn clean install` sạch từ root (119 test, BUILD SUCCESS)
+- [x] `mvn clean install` sạch từ root (**180 test**, BUILD SUCCESS — cập nhật 2026-09-07, số
+      119 cũ đã lỗi thời từ trước Task 14; 2 test tích hợp Docker của Task 20 tách riêng, không
+      tính vào con số này vì không chạy trong build thường)
 - [x] Test suite chạy với `-Dio.netty.leakDetection.level=paranoid`, **không có leak**
-- [x] `grep -rn "client_timestamp_ms" modules/uni-engine/src/main --include=*.java` → **không hit nào trong đường chấm điểm**
-- [x] `grep -rn "\.retain()" modules/uni-gateway/src/main --include=*.java` → **không hit nào trong vòng fan-out**
+- [x] `grep -rn "client_timestamp_ms" modules/uni-engine/src/main --include=*.java` → **không hit nào trong đường chấm điểm** (tái xác nhận 2026-09-07)
+- [x] `grep -rn "\.retain()" modules/uni-gateway/src/main --include=*.java` → **không hit nào trong vòng fan-out** (tái xác nhận 2026-09-07)
 - [x] Không có TODO/FIXME chưa resolve trong code mới
 - [x] SPIKE đã có kết luận và T3 khớp với kết luận đó
 - [ ] `_context.md` cập nhật `dev_selftest` và `phase` — vẫn `phase: dev`, `dev_selftest: pending`
-      có chủ đích: T13 chưa xong theo đúng nghĩa đen AC gốc (thiếu Docker Compose + kịch bản
-      giết pod thực nghiệm), nên chưa tới điểm ship-ready
+      có chủ đích: T13 chưa xong theo đúng nghĩa đen AC gốc (kịch bản giết pod thực nghiệm + 2
+      Gateway pod thật vẫn thiếu — xem Task 13 đã cập nhật 2026-09-07), nên chưa tới điểm
+      ship-ready. Docker Compose (một phần AC gốc) **đã có** từ Task 20, nhưng đó một mình không
+      đủ để đổi `phase` — hai sub-AC còn lại (kill pod, 2 GW) mới là điều kiện thật.
+
+> [!NOTE]
+> **Cập nhật 2026-09-07:** framework kit (`scripts/governance-check.sh` và 5 gate con) **đã được
+> cài** (skill `onboarding`, xem `CLAUDE.md` mục Governance) và **chạy PASS cả 5** —
+> `bash scripts/governance-check.sh` xác nhận lại ngày này. Đoạn ghi chú gốc bên dưới ("không
+> chạy được") đã lỗi thời, viết từ trước khi kit được cài; giữ nguyên văn bên dưới chỉ để tránh
+> mất lịch sử, không phải hiện trạng. Lưu ý governance gate xanh **không thay thế** checklist
+> build/test thật ở trên — 2 gate (`trace`, `ship`) xanh phần lớn vì "chưa có gì để kiểm" (BDD
+> mới chỉ có cho INCLASS-GAME, chưa có `@trace` cho code GĐ1; ship gate chỉ đọc `phase=dev`).
 
 > [!NOTE]
 > **Các gate của framework kit không chạy được trong repo này** — `scripts/governance-check.sh`,
