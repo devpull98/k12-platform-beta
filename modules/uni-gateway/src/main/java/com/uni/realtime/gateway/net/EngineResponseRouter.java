@@ -42,7 +42,11 @@ public final class EngineResponseRouter {
         GameMessage forClient = message.toBuilder().clearInternal().build();
         ByteBuf frame = Unpooled.wrappedBuffer(forClient.toByteArray());
 
-        if (message.getType() == MessageType.ANSWER_ACK) {
+        // A non-empty student_id addresses this message to one student (AnswerAck always has
+        // one; RoomActor.onJoinRoom now stamps its personal full-snapshot reply the same way)
+        // -- everything else (coalescing flushes, GameOver, ...) is a genuine room broadcast and
+        // carries no student_id at all.
+        if (!message.getStudentId().isEmpty()) {
             sendToOneStudent(message.getRoomId(), message.getStudentId(), frame);
         } else {
             broadcaster.broadcast(message.getRoomId(), frame, message.getInternal().getDeliveryClass());
@@ -51,8 +55,12 @@ public final class EngineResponseRouter {
 
     /**
      * §9.7: an Engine pod connection dropping must degrade, never close, whichever WebSockets
-     * were routed through it. {@code CRITICAL} here means the usual backpressure rule still
-     * applies (a stuck client's own socket may close) -- this call itself never closes anything.
+     * were routed through it -- stamped {@code BEST_EFFORT}, not {@code CRITICAL}, specifically
+     * because {@link Broadcaster} closes a channel that is {@code !isWritable()} for
+     * {@code CRITICAL} traffic (the correct rule for everything else Critical, e.g. ANSWER_ACK,
+     * per §5.4). Applied to this message that rule would close exactly the socket §9.7 says to
+     * hold open, the instant a client that happens to be backed up needs it most. A dropped
+     * notice for a momentarily backed-up client is the acceptable trade here, not a closed one.
      */
     public void broadcastConnectionDegraded(Set<String> roomIds) {
         for (String roomId : roomIds) {
@@ -64,7 +72,7 @@ public final class EngineResponseRouter {
                             .setMessage("engine pod connection lost")
                             .setRetryable(true))
                     .build();
-            broadcaster.broadcast(roomId, Unpooled.wrappedBuffer(degraded.toByteArray()), DeliveryClass.CRITICAL);
+            broadcaster.broadcast(roomId, Unpooled.wrappedBuffer(degraded.toByteArray()), DeliveryClass.BEST_EFFORT);
         }
     }
 

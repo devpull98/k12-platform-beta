@@ -11,6 +11,9 @@ import com.uni.realtime.protocol.MessageType;
 import com.uni.realtime.protocol.RoomStateSnapshot;
 import com.uni.realtime.protocol.RoutingStatus;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import io.netty.buffer.Unpooled;
+import io.netty.channel.ChannelOption;
+import io.netty.channel.WriteBufferWaterMark;
 import io.netty.channel.embedded.EmbeddedChannel;
 import io.netty.handler.codec.http.websocketx.BinaryWebSocketFrame;
 import org.junit.jupiter.api.Test;
@@ -64,6 +67,27 @@ class EngineResponseRouterTest {
     }
 
     @Test
+    void should_deliverOnlyToTheJoiner_when_roomStateSnapshotCarriesAStudentId() throws Exception {
+        // RoomActor.onJoinRoom stamps its personal full-snapshot reply with the joiner's
+        // student_id specifically so this router does not mistake it for a room broadcast.
+        EmbeddedChannel alice = studentChannel("room-7", "student-alice");
+        EmbeddedChannel bob = studentChannel("room-7", "student-bob");
+
+        router.route(GameMessage.newBuilder()
+                .setType(MessageType.ROOM_STATE_SNAPSHOT)
+                .setRoomId("room-7")
+                .setStudentId("student-bob")
+                .setInternal(InternalHeader.newBuilder().setOwnerPodId("engine-1").setDeliveryClass(DeliveryClass.BEST_EFFORT))
+                .setRoomStateSnapshot(RoomStateSnapshot.newBuilder().setFull(true))
+                .build());
+
+        assertThat(decode(bob)).as("the joiner must receive their own full snapshot").isNotNull();
+        assertThat((BinaryWebSocketFrame) alice.readOutbound())
+                .as("a personal join reply must not reach every other student in the room")
+                .isNull();
+    }
+
+    @Test
     void should_stripInternalHeader_beforeReachingAClient() throws Exception {
         EmbeddedChannel alice = studentChannel("room-3", "student-alice");
 
@@ -103,6 +127,22 @@ class EngineResponseRouterTest {
         assertThat(decode(alice).getType()).isEqualTo(MessageType.CONNECTION_DEGRADED);
         assertThat(decode(bob).getType()).isEqualTo(MessageType.CONNECTION_DEGRADED);
         assertThat(alice.isOpen()).as("§9.7: degrade, never close, the client's own WebSocket").isTrue();
+    }
+
+    @Test
+    void should_notCloseABackpressuredChannel_when_broadcastingConnectionDegraded() {
+        EmbeddedChannel alice = studentChannel("room-8", "student-alice");
+        // Same technique as BackpressureTest (Task 9): an unflushed pending write trips the
+        // high watermark, making the channel genuinely !isWritable() without a real socket.
+        alice.config().setOption(ChannelOption.WRITE_BUFFER_WATER_MARK, new WriteBufferWaterMark(1, 2));
+        alice.write(Unpooled.wrappedBuffer(new byte[1000]));
+        assertThat(alice.isWritable()).as("test setup: channel must actually be backpressured").isFalse();
+
+        router.broadcastConnectionDegraded(Set.of("room-8"));
+
+        assertThat(alice.isOpen())
+                .as("§9.7: a backed-up client must not have its WebSocket closed by a degrade notice")
+                .isTrue();
     }
 
     private EmbeddedChannel studentChannel(String roomId, String studentId) {

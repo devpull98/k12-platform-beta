@@ -639,6 +639,44 @@
 - **File đụng tới:** xem danh sách đầy đủ ở `plan.md` Task 13 (>15 file, cả main lẫn test, cả
   hai module cộng module mới `uni-e2e`).
 
+## Task 13 (review pass) — 4 lỗi từ code review, đã sửa (2026-09-07)
+
+Chạy `code-review --level high` trên toàn bộ diff Task 3/7/13. 4 lỗi CONFIRMED đã sửa ngay
+(người dùng yêu cầu "fix 1-4 now"), 2 phát hiện còn lại (linear scan trong
+`sendToOneStudent`, `ConcurrentHashMap` thừa trong `RoomSupervisor`) là tối ưu/thẩm mỹ, chưa sửa.
+
+- **Race condition ở `IpAdmissionController`:** `TokenBucket.tryConsume()` sửa field thường
+  (`available`, `windowStartMillis`) không khoá. `RateLimitHandler` an toàn vì mỗi instance chỉ
+  1 thread/channel đụng vào; `IpAdmissionController` lại chia sẻ **1 bucket cho mỗi IP** giữa
+  nhiều connection/nhiều thread — đúng kịch bản DDoS mà L1 sinh ra để chặn. Sửa: thêm
+  `synchronized` vào `tryConsume()`. Prove-it: test mới 50 thread × 200 lần gọi đồng thời vào
+  cùng 1 IP (10.000 lần thử, ngân sách 4.000) — bỏ `synchronized` thì fail đều 5/5 lần chạy thử
+  (đếm dư quá 4.000), có `synchronized` thì đúng chính xác 4.000.
+- **`RoomSupervisor` không bao giờ dọn phòng đã kết thúc:** `RoomActor` dừng sau `EndGame`
+  nhưng không ai gỡ nó khỏi `roomsByRoomId`. Nếu `room_id` bị dùng lại (giáo viên mở lại đúng
+  session), `computeIfAbsent` trả về ActorRef đã chết → tin nhắn rơi vào dead letter, phòng
+  "chết" vĩnh viễn trên pod đó tới khi restart. Sửa: `getContext().watchWith(room,
+  RoomTerminated(roomId))` lúc spawn, gỡ khỏi `roomsByRoomId`/`subscribersByRoom` khi nhận được.
+  Prove-it: test mới join → `EndGame` → join lại cùng `room_id` → phải nhận full snapshot mới
+  (không phải im lặng) — tắt `watchWith` thì fail đúng như dự đoán.
+- **Full snapshot cá nhân lúc JOIN bị broadcast nhầm ra cả phòng:** `EngineResponseRouter.route()`
+  trước đây chỉ đặc cách `ANSWER_ACK` để gửi riêng 1 học sinh; full snapshot lúc join đi qua
+  cùng `replyTo` nhưng mang type `ROOM_STATE_SNAPSHOT` nên bị `broadcaster.broadcast()` gửi cho
+  cả phòng — không sai dữ liệu, nhưng triệt tiêu hẳn lý do dùng `replyTo` riêng thay vì đường
+  coalescing. Sửa: `RoomActor.onJoinRoom` đóng dấu `student_id` của người vừa join lên chính
+  message trả lời; `EngineResponseRouter` tổng quát hoá điều kiện gửi riêng từ "type ==
+  ANSWER_ACK" thành "student_id khác rỗng" (đúng quy ước `AnswerAck` đã có sẵn). Prove-it: test
+  mới ROOM_STATE_SNAPSHOT có `student_id` → chỉ người đó nhận — revert lại điều kiện cũ thì fail
+  đúng 1 test này.
+- **`CONNECTION_DEGRADED` gắn CRITICAL có thể đóng luôn socket nó phải giữ mở:** `Broadcaster`
+  có sẵn quy tắc "CRITICAL + `!isWritable()` → đóng channel" (đúng cho `ANSWER_ACK` v.v., §5.4)
+  nhưng áp lên `CONNECTION_DEGRADED` thì đóng đúng cái socket §9.7 bắt phải giữ mở, đúng lúc
+  client đang nghẽn — thời điểm dễ xảy ra nhất khi 1 engine pod chết. Sửa:
+  `broadcastConnectionDegraded` đổi sang `DeliveryClass.BEST_EFFORT` (chấp nhận rớt gói báo hiệu
+  cho 1 client đang nghẽn, đổi lấy việc không đóng socket — đúng tinh thần §9.7). Prove-it: test
+  mới ép channel `!isWritable()` (kỹ thuật giống `BackpressureTest`) rồi gọi
+  `broadcastConnectionDegraded` — bật lại CRITICAL thì channel bị đóng như dự đoán.
+
 ## Tóm tắt tiến độ
 
 - **11/12 task done đầy đủ (T1, T2, T3, T4, T5, T7, T8, T10, T11, T12) + T6, T9, T13 một phần. SPIKE đạt.**

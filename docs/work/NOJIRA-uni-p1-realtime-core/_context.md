@@ -249,7 +249,24 @@ progress: "T1, T2, T4, T5, T10 xong. T6 MOT PHAN xong (GatewayPipeline + WS hand
   RoomSupervisor.GetRoomActor (hook test/ops-only) de bat dau cau hoi; PAUSE/KICK_STUDENT/luong
   roi phong - log canh bao, khong wire. T9: xac nhan lai gioi han kien truc van dung sau khi
   noi day that (1 connection dung chung MOI phong giua 1 cap pod, khong doi tu ADR-001) - AC dau
-  tien cua T9 van [ ] co chu y."
+  tien cua T9 van [ ] co chu y.
+  2026-09-07 (review pass): chay code-review --level high tren toan bo diff T3/T7/T13, tim ra 4
+  loi CONFIRMED, sua ca 4 theo yeu cau nguoi dung. (1) Race condition IpAdmissionController:
+  TokenBucket.tryConsume() sua field thuong khong khoa, bi chia se 1 instance cho moi IP giua
+  nhieu thread - them synchronized, prove-it bang test 50 thread x 200 lan goi dong thoi (fail
+  5/5 lan khi chua sua, dung 4000 chinh xac sau khi sua). (2) RoomSupervisor khong don phong da
+  ket thuc: RoomActor dung sau EndGame nhung khong ai go khoi roomsByRoomId - room_id dung lai
+  se dead-letter vinh vien - them getContext().watchWith(room, RoomTerminated(roomId)) luc
+  spawn, go khoi map luc nhan duoc. (3) Full snapshot ca nhan luc JOIN bi broadcast nham ra ca
+  phong: EngineResponseRouter.route() truoc day chi dac cach ANSWER_ACK gui rieng - sua
+  RoomActor.onJoinRoom dong dau student_id cua nguoi vua join len message tra loi, tong quat
+  hoa dieu kien gui rieng trong EngineResponseRouter tu 'type==ANSWER_ACK' thanh 'student_id
+  khac rong'. (4) CONNECTION_DEGRADED gan CRITICAL co the dong socket no phai giu mo (vi pham
+  §9.7): Broadcaster dong channel khi CRITICAL+!isWritable(), dung cho ANSWER_ACK nhung sai cho
+  CONNECTION_DEGRADED - doi sang DeliveryClass.BEST_EFFORT. Ca 4 fix deu co test moi + prove-it
+  (tam revert fix, xac nhan dung test lien quan Red, roi tra lai Green). mvn clean install toan
+  reactor: BUILD SUCCESS. 2 phat hien con lai (linear scan sendToOneStudent, ConcurrentHashMap
+  thua trong RoomSupervisor) la toi uu/tham my, CHUA sua - nguoi dung chi yeu cau fix 1-4."
 dev_selftest: pending
 qc_status: pending
 trace: pending

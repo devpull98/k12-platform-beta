@@ -7,6 +7,11 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -60,6 +65,43 @@ class IpAdmissionControllerTest {
         clock.advanceMinutes(1);
 
         assertThat(controller.tryAdmit("1.2.3.4")).isTrue();
+    }
+
+    @Test
+    void should_neverAdmitMoreThanCapacity_when_concurrentConnectionsRaceFromTheSameIp() throws Exception {
+        // The exact pattern L1 exists to catch: a burst of connections from one IP landing on
+        // different Netty worker threads at once. The clock never advances here, so every
+        // admit must come from the same fixed window -- any count over CAPACITY means
+        // tryConsume()'s available-- raced instead of being properly serialized.
+        int threadCount = 50;
+        int attemptsPerThread = 200; // 10,000 total attempts against a 4,000 budget
+        ExecutorService pool = Executors.newFixedThreadPool(threadCount);
+        CountDownLatch start = new CountDownLatch(1);
+        AtomicInteger admitted = new AtomicInteger();
+        try {
+            for (int t = 0; t < threadCount; t++) {
+                pool.submit(() -> {
+                    try {
+                        start.await();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
+                    for (int i = 0; i < attemptsPerThread; i++) {
+                        if (controller.tryAdmit("1.2.3.4")) {
+                            admitted.incrementAndGet();
+                        }
+                    }
+                });
+            }
+            start.countDown();
+            pool.shutdown();
+            assertThat(pool.awaitTermination(10, TimeUnit.SECONDS)).as("threads did not finish in time").isTrue();
+        } finally {
+            pool.shutdownNow();
+        }
+
+        assertThat(admitted.get()).isEqualTo(CAPACITY);
     }
 
     private static final class MutableClock extends Clock {

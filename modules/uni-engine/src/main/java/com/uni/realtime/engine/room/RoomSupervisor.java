@@ -61,6 +61,9 @@ public final class RoomSupervisor extends AbstractBehavior<RoomSupervisor.Comman
 
     private record RoomBroadcast(GameMessage message) implements Command {}
 
+    /** A room's {@code RoomActor} stopped (e.g. {@code EndGame}) -- stop treating it as live. */
+    private record RoomTerminated(String roomId) implements Command {}
+
     public static Behavior<Command> create(
             RoomOwnership roomOwnership, ScoreCalculator scoreCalculator, EngineMetrics engineMetrics, Clock clock) {
         return Behaviors.setup(context ->
@@ -92,6 +95,7 @@ public final class RoomSupervisor extends AbstractBehavior<RoomSupervisor.Comman
                 .onMessage(ChannelClosed.class, this::onChannelClosed)
                 .onMessage(GetRoomActor.class, this::onGetRoomActor)
                 .onMessage(RoomBroadcast.class, this::onRoomBroadcast)
+                .onMessage(RoomTerminated.class, this::onRoomTerminated)
                 .build();
     }
 
@@ -145,9 +149,14 @@ public final class RoomSupervisor extends AbstractBehavior<RoomSupervisor.Comman
     private ActorRef<RoomActor.Command> spawnRoom(String roomId) {
         ActorRef<GameMessage> broadcastTarget =
                 getContext().messageAdapter(GameMessage.class, RoomBroadcast::new);
-        return getContext().spawn(
+        ActorRef<RoomActor.Command> room = getContext().spawn(
                 RoomActor.create(roomId, clock, scoreCalculator, engineMetrics, TickMode.COALESCE, broadcastTarget),
                 "room-" + roomId);
+        // Without this, a RoomActor that stops (EndGame) leaves a dead ActorRef behind in
+        // roomsByRoomId forever -- a later JOIN_ROOM for the same room_id would find it via
+        // computeIfAbsent and dead-letter into it instead of spawning a fresh room.
+        getContext().watchWith(room, new RoomTerminated(roomId));
+        return room;
     }
 
     private ActorRef<GameMessage> replyActorFor(Channel channel, String roomId) {
@@ -176,6 +185,12 @@ public final class RoomSupervisor extends AbstractBehavior<RoomSupervisor.Comman
         GameMessage message = command.message();
         Set<ActorRef<GameMessage>> subscribers = subscribersByRoom.getOrDefault(message.getRoomId(), Set.of());
         subscribers.forEach(subscriber -> subscriber.tell(message));
+        return this;
+    }
+
+    private Behavior<Command> onRoomTerminated(RoomTerminated command) {
+        roomsByRoomId.remove(command.roomId());
+        subscribersByRoom.remove(command.roomId());
         return this;
     }
 }

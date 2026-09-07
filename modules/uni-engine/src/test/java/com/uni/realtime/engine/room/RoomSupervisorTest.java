@@ -121,6 +121,34 @@ class RoomSupervisorTest {
                 .isNull();
     }
 
+    @Test
+    void should_spawnFreshRoom_when_roomIdReusedAfterThePreviousRoomEnded() throws Exception {
+        ActorRef<RoomSupervisor.Command> supervisor = spawnSupervisor();
+        FakeConnection first = new FakeConnection();
+        supervisor.tell(new RoomSupervisor.Dispatch(joinRoom("room-5", "student-1", "Alice"), first.channel));
+        first.drainSettled();
+
+        var probe = testKit.<ActorRef<RoomActor.Command>>createTestProbe();
+        supervisor.tell(new RoomSupervisor.GetRoomActor("room-5", probe.getRef()));
+        ActorRef<RoomActor.Command> firstRoom = probe.receiveMessage();
+        firstRoom.tell(new RoomActor.EndGame());
+
+        // Without Task 13's RoomTerminated cleanup, RoomSupervisor would still hold this dead
+        // ActorRef in roomsByRoomId, and the rejoin below would dead-letter instead of replying.
+        var terminationProbe = testKit.<Object>createTestProbe();
+        terminationProbe.expectTerminated(firstRoom, java.time.Duration.ofSeconds(3));
+
+        FakeConnection second = new FakeConnection();
+        supervisor.tell(new RoomSupervisor.Dispatch(joinRoom("room-5", "student-2", "Bob"), second.channel));
+
+        GameMessage reply = second.takeMatching("a fresh room's full snapshot",
+                m -> m.getType() == MessageType.ROOM_STATE_SNAPSHOT && m.getRoomStateSnapshot().getFull());
+        assertThat(reply.getRoomStateSnapshot().getPlayersList())
+                .as("a fresh RoomActor must not remember the previous room's roster")
+                .extracting(p -> p.getStudentId())
+                .containsExactly("student-2");
+    }
+
     private ActorRef<RoomSupervisor.Command> spawnSupervisor() {
         RoomOwnership ownsEverything = new ModuloRoomOwnership("engine-1", List.of("engine-1"));
         return testKit.spawn(RoomSupervisor.create(ownsEverything, FormulaScoreCalculator.binaryChoice(),

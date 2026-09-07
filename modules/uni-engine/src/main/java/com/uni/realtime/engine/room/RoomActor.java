@@ -151,7 +151,12 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
 
     private Behavior<Command> onJoinRoom(JoinRoom command) {
         GameMessage fullSnapshot = state.joinRoom(command.studentId(), command.displayName());
-        command.replyTo().tell(fullSnapshot);
+        // student_id addresses this reply to the joiner alone -- Gateway's EngineResponseRouter
+        // treats any server->client message with a non-empty student_id as personal delivery
+        // (the same convention AnswerAck already relies on), never a room-wide broadcast. Without
+        // this, the join reply travels the same replyTo as a coalescing flush and gets broadcast
+        // to the whole room by mistake.
+        command.replyTo().tell(fullSnapshot.toBuilder().setStudentId(command.studentId()).build());
         scheduleFlushIfDirty();
         return this;
     }

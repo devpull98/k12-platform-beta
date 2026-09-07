@@ -8,6 +8,12 @@ import java.time.Duration;
  * {@code refillPeriod}. Plan.md Task 7's "3/refill 1s" notation reads as a window, not a
  * gradual trickle rate -- a window is simpler to reason about and to test deterministically
  * with an injected {@link Clock}.
+ *
+ * <p>{@link #tryConsume()} is {@code synchronized}: {@code RateLimitHandler} only ever touches
+ * one instance from one channel's event-loop thread, but {@code IpAdmissionController} (§5.6
+ * L1) shares a single instance per IP across every connection from that IP, which can land on
+ * different worker threads concurrently -- exactly the burst this bucket exists to catch.
+ * Without the lock, concurrent callers race on the unguarded {@code available--}.
  */
 final class TokenBucket {
 
@@ -26,7 +32,7 @@ final class TokenBucket {
         this.windowStartMillis = clock.millis();
     }
 
-    boolean tryConsume() {
+    synchronized boolean tryConsume() {
         long now = clock.millis();
         if (now - windowStartMillis >= refillPeriodMillis) {
             available = capacity;
