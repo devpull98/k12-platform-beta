@@ -91,6 +91,20 @@ system-architecture.md §7.5 — Product/Business chưa trả lời.
 > Engine pod = các phòng trên pod đó **chết cho tới khi pod lên lại**. Đây là đánh đổi có chủ
 > đích ở mức 2–3k CCU, **phải bỏ trước Giai đoạn 2** và phải hiển thị rõ trên UI.
 
+## Phát hiện review kiến trúc (2026-09-07) — chưa có task xử lý
+
+| # | Phát hiện | Bằng chứng | Hệ quả |
+|---|---|---|---|
+| B1 | **Tài liệu tự mâu thuẫn về pod failure — và thực tế còn tệ hơn cả hai vế.** Cảnh báo ngay phía trên nói "phòng chết tới khi pod lên lại"; nhưng `system-architecture.md` ADR-002 (GĐ1-note) và §6.3 lại nói phòng "được phục hồi state từ Redis Snapshot (< 5 KB) sau 10–50ms" khi pod crash. Hai câu này mâu thuẫn nhau, và **grep code xác nhận cả hai đều chưa đúng theo hướng lạc quan**: chưa có một dòng nào ghi Redis snapshot trong repo — `RoomActor.flush()` chỉ gửi `state.flush()` tới `broadcastTarget` (client), không có nhánh persist nào. | Hiện trạng thật: pod crash = **mất 100% state của phòng đó**, không phải "10–50ms". Phải sửa `system-architecture.md` (bỏ câu "phục hồi 10–50ms" cho tới khi Redis snapshot có code thật), và không được lặp lại con số đó ở bất kỳ tài liệu/slide nào trước khi task ghi Redis snapshot tồn tại. |
+| B2 | **`ANSWER_ACK` gửi trước khi Hot Snapshot ghi Redis — cửa sổ mất dữ liệu ngầm, kể cả khi PH-3 xong.** §4.3 bước 4–5: `ANSWER_ACK` (Critical, hot path) gửi **ngay lập tức**; ghi Hot Snapshot lên Redis là async, "định kỳ mỗi 2–3s hoặc sau câu hỏi" — luôn xảy ra **sau** ACK. §4.7 bước 2: client xóa submission khỏi RingBuffer **ngay khi nhận ACK**. Nếu pod chết trong khoảng giữa hai mốc đó, câu trả lời đã được ACK nhưng chưa kịp persist bị mất vĩnh viễn — và client không còn gì trong RingBuffer để `RESYNC`. | Vi phạm ngầm cam kết "mất dữ liệu = 0" (ADR-003) **ngay cả khi PH-3 hoàn thành 100%** — đây là lỗ hổng ở phía server, không phải thiếu hụt phía client. **Fix không được vi phạm "Redis tuyệt đối không trên hot path"** (không được trì hoãn `ANSWER_ACK` tới sau khi Redis ghi xong — như vậy phá vỡ p99 < 100ms của §4.3 và luật RoomActor sync path). Hướng đúng: tách `ANSWER_ACK` (giữ tức thời, chỉ là optimistic ack) khỏi tín hiệu discard thật — thêm một message mới kiểu `COMMITTED_SEQ` gửi sau khi Redis ghi xong, client chỉ được xóa RingBuffer khi nhận `COMMITTED_SEQ`. Cần sửa protobuf schema (`uni-protocol`) **và** hợp đồng client (PH-3) — không tự đóng được chỉ bằng thay đổi server. |
+
+> [!CAUTION]
+> B1/B2 phát hiện qua review kiến trúc 2026-09-07, xác nhận bằng đọc code thật
+> (`RoomActor.java`, `ModuloRoomOwnership.java`, `DefinitionLoader.java`) chứ không chỉ đọc
+> tài liệu. Chưa có task nào trong `plan.md` giao việc sửa. Cần bổ sung task (Redis snapshot
+> thật cho B1; `COMMITTED_SEQ` + sửa điều kiện discard RingBuffer cho B2) trước khi công bố SLA
+> "mất dữ liệu = 0" hoặc bất kỳ con số phục hồi cụ thể nào (10–50ms) ra ngoài.
+
 ## Governance — trạng thái thật
 
 Kit đã cài (skill `onboarding`, 2026-09-06): `project-context.yaml`, `rules/spring/`,

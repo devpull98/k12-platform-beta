@@ -661,6 +661,93 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 
 ---
 
+### Task 14: Redis Hot Snapshot thật cho `RoomActor` — đóng phát hiện B1 — ⏳ CHƯA BẮT ĐẦU (thêm 2026-09-07)
+
+- **Mode:** sequential after [T13]
+- **Mô tả:** `_context.md` mục "Phát hiện review kiến trúc (2026-09-07)" (B1) ghi nhận: tài liệu
+  (ADR-002 GĐ1-note, §6.3) nói pod crash → phòng phục hồi từ Redis Snapshot trong 10–50ms, nhưng
+  **chưa có một dòng code nào ghi Redis snapshot** — `RoomActor.flush()` chỉ gửi
+  `state.flush()` tới `broadcastTarget` (client), không có nhánh persist. Task này làm cho câu đó
+  đúng: ghi Hot Snapshot (< 5 KB) lên Redis bất đồng bộ sau mỗi flush/câu hỏi (§4.3 bước 5), và
+  nạp lại khi `RoomActor` mới được `RoomSupervisor` spawn sau khi pod cũ chết.
+- **File dự kiến:** `modules/uni-engine/src/main/java/.../persistence/RedisSnapshotStore.java` (mới),
+  `RoomActor.java`/`RoomSupervisor.java` (sửa: gọi ghi async sau flush, nạp snapshot lúc spawn nếu có)
+- **Dependency:** Task 13 (cần `RoomSupervisor`/`RoomActor` đã nối dây thật)
+- **Acceptance criteria:**
+  - [ ] Ghi async trên thread pool/virtual thread riêng — **tuyệt đối không trong đường xử lý
+        đồng bộ của `RoomActor`, không trong Netty EventLoop** (§13.2, CLAUDE.md: "Redis Cluster
+        ... never inside a Netty EventLoop or on the synchronous RoomActor message path")
+  - [ ] Payload đóng gói đúng `{schema_version, epoch, crc32, payload}` (§5.8); `epoch` luôn `0` ở GĐ1
+  - [ ] Kích thước snapshot thực đo **< 5 KB** — test guard fail cứng nếu vượt (ràng buộc này là
+        lý do `missed_step_policy: ALLOW_LATE` bị cấm ở GĐ1 — xem Task 15/`DefinitionLoader`)
+  - [ ] `LastSeenSequenceTable` **bắt buộc nằm trong snapshot** (§5.2) — thiếu nó thì actor hồi
+        sinh sẽ chấp nhận trùng các gói replay từ client
+  - [ ] CRC32 sai hoặc snapshot thiếu → coi như state rỗng, phục hồi hoàn toàn dựa trên client
+        replay (§5.8) — **không throw, không crash actor**
+  - [ ] Redis không khả dụng (timeout/connection refused) → **không được chặn `ANSWER_ACK` hay
+        bất kỳ message nào trên hot path** — log + metric riêng, actor tiếp tục chạy không snapshot
+  - [ ] Sau khi có implementation thật: sửa `system-architecture.md` ADR-002 GĐ1-note và §6.3 —
+        câu "10–50ms" chỉ được giữ nguyên nếu có số đo thật; nếu chưa đo, ghi rõ đây là mục tiêu
+        chưa xác nhận (cùng tinh thần PH-1 với ngưỡng L1 IP)
+- **Verification:** Test giết actor giữa chừng (restart trong `ActorTestKit` hoặc thật), spawn
+  actor mới cùng `room_id`, xác nhận roster + score + `LastSeenSequenceTable` khớp state trước khi
+  chết. Đo thời gian nạp thật, đối chiếu với con số 10–50ms đang ghi trong tài liệu — lệch thì sửa
+  tài liệu, không sửa số đo.
+- **Ghi chú:** Lần đầu Redis chạm code thật ở GĐ1 — đúng phạm vi đã chốt ở `_context.md`
+  ("Redis Cluster (Ticket SETNX & Snapshot)" nằm trong scope GĐ1). Không mở rộng sang ticket
+  replay dedup (`SETNX`) trong task này trừ khi được giao riêng — đó là một điểm gắn khác
+  (handshake, không phải RoomActor).
+- **Rollback nếu fail:** revert; `RoomActor` tiếp tục chạy không snapshot (đúng hành vi hiện tại) —
+  không có gì regress vì tính năng chưa từng tồn tại trước task này.
+
+---
+
+### Task 15: `COMMITTED_SEQ` — tách tín hiệu discard RingBuffer khỏi `ANSWER_ACK` — đóng phát hiện B2 — ⏳ CHƯA BẮT ĐẦU (thêm 2026-09-07)
+
+- **Mode:** sequential after [T14] · phối hợp với PH-3 (hợp đồng client, ngoài phạm vi service này)
+- **Mô tả:** `_context.md` mục B2 ghi nhận: `ANSWER_ACK` gửi ngay lập tức (hot path, §4.3 bước 4),
+  còn Hot Snapshot ghi Redis là async và luôn xảy ra **sau** ACK (bước 5). Client xoá submission
+  khỏi RingBuffer ngay khi nhận ACK (§4.7 bước 2). Nếu pod chết giữa hai mốc đó, câu trả lời đã
+  ACK nhưng chưa persist bị mất vĩnh viễn — vi phạm ngầm "mất dữ liệu = 0" (ADR-003) **kể cả khi
+  PH-3 hoàn thành 100%**, vì đây là lỗ hổng phía server, không phải thiếu hụt phía client.
+  **`ANSWER_ACK` giữ nguyên tức thời, không được trì hoãn để chờ Redis** — trì hoãn nó vi phạm
+  trực tiếp "Redis tuyệt đối không trên hot path" và phá vỡ mục tiêu p99 < 100ms của §4.3 (đây là
+  sai lầm cụ thể mà review 2026-09-07 chỉ ra ở một trong hai sơ đồ đề xuất — xem `_context.md`).
+  Hướng đúng: thêm một tín hiệu riêng, gửi **sau** khi Task 14 xác nhận ghi Redis thành công, báo
+  cho client biết seq nào mới thật sự an toàn để xoá khỏi RingBuffer.
+- **File dự kiến:** `modules/uni-protocol/src/main/proto/game_message.proto` (thêm message/field
+  mới — hình dạng cụ thể **chưa chốt**, xem Acceptance criteria), `modules/uni-engine/.../room/RoomActor.java`
+  (gửi tín hiệu mới sau khi `RedisSnapshotStore` của Task 14 xác nhận ghi xong)
+- **Dependency:** Task 14 (cần sự kiện "ghi Redis xong" làm trigger); PH-3 (client phải đổi điều
+  kiện discard — nằm ngoài phạm vi GĐ1 server nhưng bắt buộc phối hợp trước khi công bố SLA)
+- **Acceptance criteria:**
+  - [ ] **`ANSWER_ACK` không bị trì hoãn dù chỉ một chút để chờ Redis** — đây là điều kiện fail
+        cứng, không thương lượng, xác nhận bằng test đo latency ACK không đổi so với trước Task 15
+  - [ ] Tín hiệu mới (`COMMITTED_SEQ` hoặc tên tương đương — quyết định hình dạng cụ thể trước khi
+        code, giống cách Task 3 chốt G2a/G2b trước khi implement) là Best-effort, không cần bypass
+        tick coalescing như Critical — mất một lần thì lần ghi Redis kế tiếp tự nâng
+        `committed_seq` cao hơn, tự lành, không cần cơ chế retry riêng
+  - [ ] `RoomActor` không tự gửi tín hiệu này nếu `RedisSnapshotStore` báo lỗi/timeout — im lặng
+        bỏ qua lượt đó, đợi lần flush kế tiếp thử lại
+  - [ ] Đổi `.proto` đi đúng quy trình đã ghi ở Rollback plan đầu file: PR riêng, codegen lại **cả
+        hai** service, không chỉ một bên
+  - [ ] Cập nhật `_context.md`/ADR-003: "mất dữ liệu = 0" chỉ đúng khi **cả hai** điều kiện đạt —
+        PH-3 xong **và** client dùng `committed_seq` (không phải việc nhận `ANSWER_ACK`) làm điều
+        kiện xoá RingBuffer
+- **Verification:** Test mô phỏng Redis lỗi (`RedisSnapshotStore` trả lỗi) → xác nhận
+  `COMMITTED_SEQ` không được gửi cho lượt đó. Test tích hợp (`uni-engine` hoặc `uni-e2e`) xác nhận
+  `COMMITTED_SEQ` cho một `sequence` luôn tới **sau** `ANSWER_ACK` cùng `sequence` đó, không bao
+  giờ tới trước hoặc thay thế nó.
+- **Ghi chú:** Đây là thay đổi hợp đồng giao thức, ảnh hưởng cả PH-3 (client) — không tự quyết
+  định hình dạng message mới trong lúc code, phải chốt trước (như G2a/G2b của Task 3). Nếu PH-3
+  chưa có đội nhận việc, task này vẫn nên hoàn thành phần server (phát tín hiệu) trước, nhưng
+  **không được công bố SLA "mất dữ liệu = 0" tới khi client đổi điều kiện discard theo đúng
+  `committed_seq`**.
+- **Rollback nếu fail:** revert; `ANSWER_ACK` vẫn là tín hiệu discard duy nhất như hiện tại —
+  quay lại đúng trạng thái B2 đang mở, không tệ hơn hiện trạng.
+
+---
+
 ## Pre-merge Checklist
 
 - [x] Tất cả task pass verification (T6 chờ G1a/G1c ngoài tầm kiểm soát nội bộ; T9 có giới hạn
