@@ -294,19 +294,4 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
             }
         });
     }
-
-    /** Default for callers with no Redis wiring yet (Phase 1 today) -- every write silently no-ops. */
-    private static final class NoopRoomSnapshotStore implements RoomSnapshotStore {
-        static final NoopRoomSnapshotStore INSTANCE = new NoopRoomSnapshotStore();
-
-        @Override
-        public CompletableFuture<Boolean> save(String roomId, long epoch, byte[] envelopeBytes) {
-            return CompletableFuture.completedFuture(true);
-        }
-
-        @Override
-        public CompletableFuture<Optional<byte[]>> load(String roomId) {
-            return CompletableFuture.completedFuture(Optional.empty());
-        }
-    }
 }

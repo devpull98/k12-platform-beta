@@ -39,4 +39,15 @@ public interface RoomOwnership {
     default void ensureAcquired(String roomId) {
         // Intentionally empty.
     }
+
+    /**
+     * The fencing generation this pod believes is current for {@code roomId} (Task 14, §5.8) --
+     * stamped into a Hot Snapshot write so a zombie actor's stale write can be rejected. {@code 0}
+     * by default: an algorithm with no notion of a lease (the modulo of Phase 1's default) has no
+     * fencing to offer, and {@code 0} is already what {@code InternalHeader.epoch} means
+     * "no fencing in effect" (ADR-007).
+     */
+    default long epochOf(String roomId) {
+        return 0L;
+    }
 }

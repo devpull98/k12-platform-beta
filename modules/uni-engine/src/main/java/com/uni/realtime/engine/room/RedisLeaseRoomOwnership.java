@@ -102,6 +102,7 @@ public final class RedisLeaseRoomOwnership implements RoomOwnership {
      * outage -- Phase 1 already treats {@code epoch = 0} as "no fencing in effect" (ADR-007),
      * which is the correct, conservative answer when the real epoch could not be confirmed.
      */
+    @Override
     public long epochOf(String roomId) {
         RoomLease lease = cache.get(roomId);
         return lease == null ? 0 : lease.epoch();

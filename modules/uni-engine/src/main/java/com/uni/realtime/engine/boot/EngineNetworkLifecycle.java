@@ -1,12 +1,20 @@
 package com.uni.realtime.engine.boot;
 
 import com.uni.realtime.engine.metrics.EngineMetrics;
+import com.uni.realtime.engine.net.FrameChannelServer;
+import com.uni.realtime.engine.persistence.RedisRoomLeaseStore;
+import com.uni.realtime.engine.persistence.RedisSnapshotStore;
 import com.uni.realtime.engine.room.ModuloRoomOwnership;
+import com.uni.realtime.engine.room.RedisLeaseRoomOwnership;
 import com.uni.realtime.engine.room.RoomOwnership;
+import com.uni.realtime.engine.room.RoomSnapshotStore;
 import com.uni.realtime.engine.room.RoomSupervisor;
 import com.uni.realtime.engine.scoring.FormulaScoreCalculator;
-import com.uni.realtime.engine.net.FrameChannelServer;
+import io.lettuce.core.RedisClient;
+import io.lettuce.core.api.StatefulRedisConnection;
 import org.apache.pekko.actor.typed.ActorSystem;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
@@ -14,7 +22,11 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.stereotype.Component;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.IntStream;
 
 /**
@@ -23,37 +35,94 @@ import java.util.stream.IntStream;
  * so explicitly: "neither is started yet"). Unlike the Gateway side (see {@code
  * GatewayNetworkLifecycle}), nothing here waits on an external decision -- {@link RoomOwnership}
  * needs only this pod's own configuration, not a signed-ticket format from another team.
+ *
+ * <p>Task 14 (2026-09-07): {@code uni.engine.redis.enabled} (default {@code false}) switches
+ * between {@link ModuloRoomOwnership} with no snapshotting (today's behavior, unchanged) and
+ * {@link RedisLeaseRoomOwnership} + {@link RedisSnapshotStore} (the fix for "scale/crash breaks
+ * the room_id % N hash", system-architecture.md §9.2 Rủi ro 4). Default OFF because neither
+ * {@link RedisRoomLeaseStore} nor {@link RedisSnapshotStore} has run against a real Redis
+ * instance -- see their javadoc. Flip it only after that verification (plan.md Task 14's
+ * remaining "chưa làm"), never as a side effect of this class compiling.
  */
 @Component
 public final class EngineNetworkLifecycle implements ApplicationRunner, DisposableBean {
+
+    private static final Logger log = LoggerFactory.getLogger(EngineNetworkLifecycle.class);
 
     private final EngineMetrics engineMetrics;
     private final String podId;
     private final int podCount;
     private final int framePort;
+    private final boolean redisEnabled;
+    private final String redisUri;
+    private final long leaseTtlSeconds;
 
     private ActorSystem<RoomSupervisor.Command> system;
     private FrameChannelServer frameChannelServer;
+    private RedisClient redisClient;
+    private StatefulRedisConnection<String, String> leaseConnection;
+    private StatefulRedisConnection<String, byte[]> snapshotConnection;
+    private ScheduledExecutorService leaseRenewalScheduler;
 
     public EngineNetworkLifecycle(EngineMetrics engineMetrics,
             @Value("${uni.engine.pod-id}") String podId,
             @Value("${uni.engine.pod-count}") int podCount,
-            @Value("${uni.engine.frame-port}") int framePort) {
+            @Value("${uni.engine.frame-port}") int framePort,
+            @Value("${uni.engine.redis.enabled}") boolean redisEnabled,
+            @Value("${uni.engine.redis.uri}") String redisUri,
+            @Value("${uni.engine.redis.lease-ttl-seconds}") long leaseTtlSeconds) {
         this.engineMetrics = engineMetrics;
         this.podId = podId;
         this.podCount = podCount;
         this.framePort = framePort;
+        this.redisEnabled = redisEnabled;
+        this.redisUri = redisUri;
+        this.leaseTtlSeconds = leaseTtlSeconds;
     }
 
     @Override
     public void run(ApplicationArguments args) throws Exception {
         // §7.5/decision B2: room_id % pod-count, isolated behind RoomOwnership. Pod naming
         // ("engine-0".."engine-{pod-count-1}") matches application.yml's ENGINE_POD_ID default.
+        // Kept even when Redis is enabled: it is RedisLeaseRoomOwnership's fallback for when
+        // the lease store is unreachable (Task 14 AC).
         List<String> podIds = IntStream.range(0, podCount).mapToObj(i -> "engine-" + i).toList();
-        RoomOwnership roomOwnership = new ModuloRoomOwnership(podId, podIds);
+        ModuloRoomOwnership modulo = new ModuloRoomOwnership(podId, podIds);
 
-        system = ActorSystem.create(
-                RoomSupervisor.create(roomOwnership, FormulaScoreCalculator.binaryChoice(), engineMetrics, Clock.systemUTC()),
+        RoomOwnership roomOwnership = modulo;
+        RoomSnapshotStore snapshotStore = null;
+
+        if (redisEnabled) {
+            redisClient = RedisClient.create(redisUri);
+            leaseConnection = redisClient.connect();
+            snapshotConnection = redisClient.connect(RedisSnapshotStore.CODEC);
+
+            RedisRoomLeaseStore leaseStore = new RedisRoomLeaseStore(leaseConnection.async());
+            RedisLeaseRoomOwnership leaseRoomOwnership = new RedisLeaseRoomOwnership(
+                    podId, leaseStore, Duration.ofSeconds(leaseTtlSeconds), modulo);
+            roomOwnership = leaseRoomOwnership;
+            snapshotStore = new RedisSnapshotStore(snapshotConnection.async());
+
+            long renewalIntervalSeconds = Math.max(1, leaseTtlSeconds / 3);
+            leaseRenewalScheduler = Executors.newSingleThreadScheduledExecutor(runnable -> {
+                Thread thread = new Thread(runnable, "engine-lease-renewal");
+                thread.setDaemon(true);
+                return thread;
+            });
+            leaseRenewalScheduler.scheduleAtFixedRate(leaseRoomOwnership::renewAll,
+                    renewalIntervalSeconds, renewalIntervalSeconds, TimeUnit.SECONDS);
+
+            log.info("pod {}: RedisLeaseRoomOwnership + Hot Snapshot ENABLED (ttl={}s, uri={}) -- "
+                            + "NOT verified against a real Redis instance in development, see "
+                            + "RedisRoomLeaseStore/RedisSnapshotStore javadoc before trusting this in staging",
+                    podId, leaseTtlSeconds, redisUri);
+        } else {
+            log.info("pod {}: uni.engine.redis.enabled=false -- ModuloRoomOwnership, no Hot Snapshot (Phase 1 default)", podId);
+        }
+
+        system = ActorSystem.create(snapshotStore == null
+                        ? RoomSupervisor.create(roomOwnership, FormulaScoreCalculator.binaryChoice(), engineMetrics, Clock.systemUTC())
+                        : RoomSupervisor.create(roomOwnership, FormulaScoreCalculator.binaryChoice(), engineMetrics, Clock.systemUTC(), snapshotStore),
                 "engine");
 
         frameChannelServer = new FrameChannelServer(framePort, roomOwnership,
@@ -65,11 +134,23 @@ public final class EngineNetworkLifecycle implements ApplicationRunner, Disposab
 
     @Override
     public void destroy() throws Exception {
+        if (leaseRenewalScheduler != null) {
+            leaseRenewalScheduler.shutdownNow();
+        }
         if (frameChannelServer != null) {
             frameChannelServer.shutdown();
         }
         if (system != null) {
             system.terminate();
+        }
+        if (leaseConnection != null) {
+            leaseConnection.close();
+        }
+        if (snapshotConnection != null) {
+            snapshotConnection.close();
+        }
+        if (redisClient != null) {
+            redisClient.shutdown();
         }
     }
 }

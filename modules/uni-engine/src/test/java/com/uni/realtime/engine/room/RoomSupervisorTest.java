@@ -19,9 +19,12 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Clock;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Predicate;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -149,10 +152,62 @@ class RoomSupervisorTest {
                 .containsExactly("student-2");
     }
 
+    @Test
+    void should_deliverAllQueuedJoins_afterOneSnapshotLoad_when_theyArriveBeforeItResolves() throws Exception {
+        RoomOwnership ownsEverything = new ModuloRoomOwnership("engine-1", List.of("engine-1"));
+        ControllableSnapshotStore store = new ControllableSnapshotStore();
+        ActorRef<RoomSupervisor.Command> supervisor = testKit.spawn(RoomSupervisor.create(
+                ownsEverything, FormulaScoreCalculator.binaryChoice(),
+                new EngineMetrics(new SimpleMeterRegistry()), Clock.systemUTC(), store));
+        FakeConnection alice = new FakeConnection();
+        FakeConnection bob = new FakeConnection();
+
+        supervisor.tell(new RoomSupervisor.Dispatch(joinRoom("room-6", "student-alice", "Alice"), alice.channel));
+        supervisor.tell(new RoomSupervisor.Dispatch(joinRoom("room-6", "student-bob", "Bob"), bob.channel));
+        awaitLoadCallsAtLeast(store, 1);
+        assertThat(store.loadCalls.get()).as("both joins for the same room must share ONE load").isEqualTo(1);
+        store.resolve(Optional.empty());
+
+        alice.takeMatching("Alice's full snapshot",
+                m -> m.getType() == MessageType.ROOM_STATE_SNAPSHOT && m.getRoomStateSnapshot().getFull());
+        bob.takeMatching("Bob's join reflected somewhere",
+                m -> m.getType() == MessageType.ROOM_STATE_SNAPSHOT);
+        assertThat(store.loadCalls.get()).as("resolving must not trigger a second load").isEqualTo(1);
+    }
+
+    private static void awaitLoadCallsAtLeast(ControllableSnapshotStore store, int expected) throws InterruptedException {
+        long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (store.loadCalls.get() < expected && System.nanoTime() < deadlineNanos) {
+            Thread.sleep(20);
+        }
+    }
+
     private ActorRef<RoomSupervisor.Command> spawnSupervisor() {
         RoomOwnership ownsEverything = new ModuloRoomOwnership("engine-1", List.of("engine-1"));
         return testKit.spawn(RoomSupervisor.create(ownsEverything, FormulaScoreCalculator.binaryChoice(),
                 new EngineMetrics(new SimpleMeterRegistry()), Clock.systemUTC()));
+    }
+
+    /** Load never resolves until the test calls {@link #resolve}, so joins queue up behind it deterministically. */
+    private static final class ControllableSnapshotStore implements RoomSnapshotStore {
+        private final AtomicInteger loadCalls = new AtomicInteger();
+        private CompletableFuture<Optional<byte[]>> pending;
+
+        @Override
+        public synchronized CompletableFuture<Boolean> save(String roomId, long epoch, byte[] envelopeBytes) {
+            return CompletableFuture.completedFuture(true);
+        }
+
+        @Override
+        public synchronized CompletableFuture<Optional<byte[]>> load(String roomId) {
+            loadCalls.incrementAndGet();
+            pending = new CompletableFuture<>();
+            return pending;
+        }
+
+        synchronized void resolve(Optional<byte[]> value) {
+            pending.complete(value);
+        }
     }
 
     private void startGameAndQuestion(ActorRef<RoomSupervisor.Command> supervisor, String roomId) throws Exception {

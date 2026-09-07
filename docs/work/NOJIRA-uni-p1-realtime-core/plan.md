@@ -700,16 +700,41 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
   `RoomStateSnapshotTest` (5) + `SnapshotEnvelopeTest` (6) + `RoomActorSnapshotTest` (5) = 16
   test, cả 2 đều có prove-it riêng (bug dedupe + gate 2s). `mvn clean install` toàn reactor:
   BUILD SUCCESS, **161 test, không leak**.
-- **Chưa làm (rõ ràng, không phải quên):** (1) Chưa nối `RedisLeaseRoomOwnership` +
-  `RedisSnapshotStore` vào `EngineNetworkLifecycle`/`RoomSupervisor` thật — production vẫn dùng
-  `ModuloRoomOwnership` + `NoopRoomSnapshotStore` (không snapshot) như cũ. Đây là lý do các AC
-  "Scale thêm pod"/"Pod crash thật" bên dưới vẫn để `[ ]` dù logic từng phần đã xong và test kỹ —
-  chưa ai chứng minh được bằng thực nghiệm (chaos test) vì chưa có gì chạy thật; (2) `renewAll()`
-  chưa có gì gọi định kỳ — cần một scheduler nối vào `EngineNetworkLifecycle`; (3) `RoomActor`
-  không tự dừng khi mất lease giữa chừng (epoch cố định lúc spawn) — `RoomSnapshotStore.save`
-  trả `false` khi bị fencing chỉ mới log cảnh báo, chưa có gì khiến actor tự `Behaviors.stopped()`;
-  (4) `RedisRoomLeaseStore`/`RedisSnapshotStore` chưa test được với Redis thật (không có
-  Redis/Docker trong môi trường này) — cùng caveat như `TicketVerifier`.
+- **Kết quả (wiring production — tiếp tục 2026-09-07):** Nối `RedisLeaseRoomOwnership` +
+  `RedisSnapshotStore` vào `EngineNetworkLifecycle` thật, sau cờ cấu hình mới
+  `uni.engine.redis.enabled` (mặc định **`false`** — `application.yml`). Lý do bắt buộc phải có
+  cờ này: `RedisClient.connect()` của Lettuce là **đồng bộ, throw nếu không kết nối được** — bật
+  vô điều kiện sẽ làm `EngineApplicationTests`/`mvn spring-boot:run` fail ngay trong chính môi
+  trường không có Redis này. Khi `false` (mặc định), hành vi **giống hệt trước Task 14**:
+  `ModuloRoomOwnership`, không snapshot — đã xác nhận bằng `EngineApplicationTests` (Spring
+  context thật) **và** chạy thật `mvn spring-boot:run` + `curl /actuator/health` +
+  `/actuator/prometheus` + `netstat` xác nhận cổng 9100 bind đúng, không chạm Redis. Khi `true`:
+  dựng `RedisClient`, 2 connection Lettuce (String cho lease, byte[] cho snapshot — dùng
+  `RedisSnapshotStore.CODEC`), `RedisLeaseRoomOwnership` (fallback `ModuloRoomOwnership`), một
+  `ScheduledExecutorService` daemon gọi `renewAll()` mỗi `ttl/3` giây (đóng nốt gap "chưa có gì
+  gọi renewAll định kỳ"), đóng hết trong `destroy()`.
+
+  **Phát hiện kiến trúc quan trọng khi nối dây, đã xử lý:** `RoomSupervisor.spawnRoom` chạy trên
+  chính actor thread của `RoomSupervisor` — load snapshot từ Redis ở đó cũng sẽ block y hệt lý
+  do `RoomOwnershipHandler` không được chạm Redis trên Netty EventLoop. Đã sửa
+  `RoomSupervisor`: `JOIN_ROOM` cho phòng chưa tồn tại giờ kích hoạt `snapshotStore.load(roomId)`
+  **bất đồng bộ** qua `getContext().pipeToSelf(...)` (không bao giờ `.get()`/`.join()`), các join
+  khác tới cùng lúc **xếp hàng** chờ chung 1 lần load (không load N lần), phòng chỉ thật sự spawn
+  (với bytes phục hồi nếu có) sau khi load xong — `onGetRoomActor` (hook test/ops-only) vẫn spawn
+  ngay không chờ load, đúng vai trò của nó. Test mới: 1 case trong
+  `RoomSupervisorTest` (dùng `ControllableSnapshotStore`, prove-it xác nhận dedupe đúng 1 test
+  Red). `RoomOwnership` thêm `epochOf()` default (trả `0`) để `RoomSupervisor` lấy epoch mà
+  không cần biết cụ thể là `RedisLeaseRoomOwnership`.
+
+  `mvn clean install` toàn reactor: BUILD SUCCESS, **162 test**, không leak.
+- **Chưa làm (rõ ràng, không phải quên):** (1) `RoomActor` không tự dừng khi mất lease giữa
+  chừng (epoch cố định lúc spawn) — `RoomSnapshotStore.save` trả `false` khi bị fencing chỉ mới
+  log cảnh báo, chưa có gì khiến actor tự `Behaviors.stopped()`; (2) `RedisRoomLeaseStore`/
+  `RedisSnapshotStore` **vẫn chưa test được với Redis thật** (không có Redis/Docker trong môi
+  trường này) — cùng caveat như `TicketVerifier`. Wiring đã sẵn sàng và bật được qua
+  `ENGINE_REDIS_ENABLED=true`, nhưng **DevOps/người có Redis thật phải verify trước khi bật ở
+  staging/production** — đây chính là điều kiện các AC "Scale thêm pod"/"Pod crash thật" phía
+  trên cần để chuyển từ `[ ]` sang `[x]` bằng chaos test thật, không phải chỉ đọc code.
 - **Mode:** sequential after [T13]
 - **Mô tả:** Gộp hai việc luôn phải đi cùng nhau: (1) Hot Snapshot thật lên Redis (B1 — tài liệu
   nói pod crash → phòng phục hồi trong 10–50ms từ Redis Snapshot, nhưng `RoomActor.flush()` hiện

@@ -17,8 +17,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Clock;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -67,16 +69,39 @@ public final class RoomSupervisor extends AbstractBehavior<RoomSupervisor.Comman
     /** A connection's {@link ChannelReplyActor} stopped, whether by {@link ChannelClosed} or an unexpected crash. */
     private record ReplyActorTerminated(Channel channel) implements Command {}
 
+    /**
+     * Task 14: {@code snapshotStore.load(roomId)} piped back to self (never awaited inline --
+     * this actor's own thread must never block on Redis any more than {@code RoomActor}'s may,
+     * §13.2). {@code snapshotBytes} is {@code null} both for "nothing stored" and for "the load
+     * failed" -- {@link RoomState#restore} is only ever worth calling with real bytes, and a
+     * failed load is exactly as safe to treat as a brand-new room as a genuinely empty one.
+     */
+    private record SnapshotLoaded(String roomId, byte[] snapshotBytes) implements Command {}
+
+    private record PendingJoin(GameMessage message, Channel sourceChannel) {}
+
     public static Behavior<Command> create(
             RoomOwnership roomOwnership, ScoreCalculator scoreCalculator, EngineMetrics engineMetrics, Clock clock) {
+        return create(roomOwnership, scoreCalculator, engineMetrics, clock, NoopRoomSnapshotStore.INSTANCE);
+    }
+
+    /**
+     * Task 14 (Hot Snapshot): the full-featured constructor, kept separate from the four-arg
+     * {@link #create} above for the same reason {@code RoomActor} added an overload rather than
+     * changing its signature -- every existing caller with no snapshot store to offer
+     * ({@code RoomSupervisorTest}, {@code WalkingSkeletonTest}) keeps compiling unchanged.
+     */
+    public static Behavior<Command> create(RoomOwnership roomOwnership, ScoreCalculator scoreCalculator,
+            EngineMetrics engineMetrics, Clock clock, RoomSnapshotStore snapshotStore) {
         return Behaviors.setup(context ->
-                new RoomSupervisor(context, roomOwnership, scoreCalculator, engineMetrics, clock));
+                new RoomSupervisor(context, roomOwnership, scoreCalculator, engineMetrics, clock, snapshotStore));
     }
 
     private final RoomOwnership roomOwnership;
     private final ScoreCalculator scoreCalculator;
     private final EngineMetrics engineMetrics;
     private final Clock clock;
+    private final RoomSnapshotStore snapshotStore;
 
     // Plain HashMap/LinkedHashSet, not concurrent collections: RoomSupervisor is a single actor
     // (AbstractBehavior) and the actor model guarantees only its own dispatcher thread ever
@@ -85,14 +110,17 @@ public final class RoomSupervisor extends AbstractBehavior<RoomSupervisor.Comman
     private final Map<String, ActorRef<RoomActor.Command>> roomsByRoomId = new HashMap<>();
     private final Map<Channel, ActorRef<GameMessage>> replyActorsByChannel = new HashMap<>();
     private final Map<String, Set<ActorRef<GameMessage>>> subscribersByRoom = new HashMap<>();
+    /** room_id -> joins received while that room's snapshot load is still in flight (Task 14). */
+    private final Map<String, List<PendingJoin>> pendingJoinsByRoom = new HashMap<>();
 
     private RoomSupervisor(ActorContext<Command> context, RoomOwnership roomOwnership,
-            ScoreCalculator scoreCalculator, EngineMetrics engineMetrics, Clock clock) {
+            ScoreCalculator scoreCalculator, EngineMetrics engineMetrics, Clock clock, RoomSnapshotStore snapshotStore) {
         super(context);
         this.roomOwnership = roomOwnership;
         this.scoreCalculator = scoreCalculator;
         this.engineMetrics = engineMetrics;
         this.clock = clock;
+        this.snapshotStore = snapshotStore;
     }
 
     @Override
@@ -104,6 +132,7 @@ public final class RoomSupervisor extends AbstractBehavior<RoomSupervisor.Comman
                 .onMessage(RoomBroadcast.class, this::onRoomBroadcast)
                 .onMessage(RoomTerminated.class, this::onRoomTerminated)
                 .onMessage(ReplyActorTerminated.class, this::onReplyActorTerminated)
+                .onMessage(SnapshotLoaded.class, this::onSnapshotLoaded)
                 .build();
     }
 
@@ -112,13 +141,7 @@ public final class RoomSupervisor extends AbstractBehavior<RoomSupervisor.Comman
         String roomId = message.getRoomId();
 
         switch (message.getPayloadCase()) {
-            case JOIN_ROOM -> {
-                ActorRef<RoomActor.Command> room = roomsByRoomId.computeIfAbsent(roomId, this::spawnRoom);
-                ActorRef<GameMessage> replyTo = replyActorFor(command.sourceChannel(), roomId);
-                subscribersByRoom.computeIfAbsent(roomId, unused -> new LinkedHashSet<>()).add(replyTo);
-                room.tell(new RoomActor.JoinRoom(message.getStudentId(), message.getJoinRoom().getDisplayName(), replyTo));
-                engineMetrics.recordMessageEnqueued();
-            }
+            case JOIN_ROOM -> handleJoin(roomId, message, command.sourceChannel());
             case SUBMIT_ANSWER -> {
                 ActorRef<RoomActor.Command> room = roomsByRoomId.get(roomId);
                 if (room == null) {
@@ -154,16 +177,65 @@ public final class RoomSupervisor extends AbstractBehavior<RoomSupervisor.Comman
         }
     }
 
-    private ActorRef<RoomActor.Command> spawnRoom(String roomId) {
+    /**
+     * Task 14: a join for a room this pod has not spawned yet is buffered rather than dropped
+     * (unlike {@code SUBMIT_ANSWER}, there is no established client-retry contract for a lost
+     * {@code JOIN_ROOM} -- PH-3 status unresolved). The very first join for a given room_id
+     * triggers an async {@link RoomSnapshotStore#load}; every join that arrives while that load
+     * is still in flight just joins the queue for the same room instead of starting a second one.
+     */
+    private void handleJoin(String roomId, GameMessage message, Channel sourceChannel) {
+        ActorRef<RoomActor.Command> room = roomsByRoomId.get(roomId);
+        if (room != null) {
+            deliverJoin(room, message, sourceChannel);
+            return;
+        }
+        List<PendingJoin> pending = pendingJoinsByRoom.computeIfAbsent(roomId, unused -> new ArrayList<>());
+        pending.add(new PendingJoin(message, sourceChannel));
+        if (pending.size() > 1) {
+            // Prove-it (2026-09-07): removing this guard turned exactly this scenario's test red
+            // (1 expected load call, got 2) -- confirms the test actually exercises the dedupe.
+            return; // a load for this room is already in flight -- this join just queued behind it
+        }
+        getContext().pipeToSelf(snapshotStore.load(roomId), (loaded, failure) ->
+                new SnapshotLoaded(roomId, failure != null ? null : loaded.orElse(null)));
+    }
+
+    private Behavior<Command> onSnapshotLoaded(SnapshotLoaded command) {
+        ActorRef<RoomActor.Command> room = spawnRoom(command.roomId(), command.snapshotBytes());
+        List<PendingJoin> pending = pendingJoinsByRoom.remove(command.roomId());
+        if (pending != null) {
+            pending.forEach(join -> deliverJoin(room, join.message(), join.sourceChannel()));
+        }
+        return this;
+    }
+
+    private void deliverJoin(ActorRef<RoomActor.Command> room, GameMessage message, Channel sourceChannel) {
+        String roomId = message.getRoomId();
+        ActorRef<GameMessage> replyTo = replyActorFor(sourceChannel, roomId);
+        subscribersByRoom.computeIfAbsent(roomId, unused -> new LinkedHashSet<>()).add(replyTo);
+        room.tell(new RoomActor.JoinRoom(message.getStudentId(), message.getJoinRoom().getDisplayName(), replyTo));
+        engineMetrics.recordMessageEnqueued();
+    }
+
+    /**
+     * @param snapshotBytes bytes from a prior {@link RoomSnapshotStore#load}, or {@code null} to
+     *     spawn empty -- see {@link #onGetRoomActor}, the one caller that intentionally skips the
+     *     load (test/ops hook, not part of the real join path).
+     */
+    private ActorRef<RoomActor.Command> spawnRoom(String roomId, byte[] snapshotBytes) {
         ActorRef<GameMessage> broadcastTarget =
                 getContext().messageAdapter(GameMessage.class, RoomBroadcast::new);
+        long epoch = roomOwnership.epochOf(roomId);
         ActorRef<RoomActor.Command> room = getContext().spawn(
-                RoomActor.create(roomId, clock, scoreCalculator, engineMetrics, TickMode.COALESCE, broadcastTarget),
+                RoomActor.create(roomId, clock, scoreCalculator, engineMetrics, TickMode.COALESCE, broadcastTarget,
+                        snapshotStore, epoch, snapshotBytes),
                 "room-" + roomId);
         // Without this, a RoomActor that stops (EndGame) leaves a dead ActorRef behind in
         // roomsByRoomId forever -- a later JOIN_ROOM for the same room_id would find it via
         // computeIfAbsent and dead-letter into it instead of spawning a fresh room.
         getContext().watchWith(room, new RoomTerminated(roomId));
+        roomsByRoomId.put(roomId, room);
         return room;
     }
 
@@ -204,7 +276,12 @@ public final class RoomSupervisor extends AbstractBehavior<RoomSupervisor.Comman
     }
 
     private Behavior<Command> onGetRoomActor(GetRoomActor command) {
-        command.replyTo().tell(roomsByRoomId.computeIfAbsent(command.roomId(), this::spawnRoom));
+        // Test/ops-only hook (see the class javadoc): spawns synchronously with no snapshot load,
+        // unlike the real join path in handleJoin/onSnapshotLoaded. Callers of this hook
+        // (WalkingSkeletonTest, RoomSupervisorTest) need a room to exist right now, not Task 14
+        // recovery behavior -- that is covered separately by RoomActorSnapshotTest.
+        ActorRef<RoomActor.Command> room = roomsByRoomId.get(command.roomId());
+        command.replyTo().tell(room != null ? room : spawnRoom(command.roomId(), null));
         return this;
     }
 
