@@ -1,0 +1,186 @@
+package com.uni.realtime.engine.room;
+
+import com.uni.realtime.engine.metrics.EngineMetrics;
+import com.uni.realtime.engine.scoring.FormulaScoreCalculator;
+import com.uni.realtime.protocol.GameMessage;
+import com.uni.realtime.protocol.JoinRoom;
+import com.uni.realtime.protocol.MessageType;
+import com.uni.realtime.protocol.SubmitAnswer;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.ChannelOutboundHandlerAdapter;
+import io.netty.channel.ChannelPromise;
+import io.netty.channel.embedded.EmbeddedChannel;
+import org.apache.pekko.actor.testkit.typed.javadsl.ActorTestKit;
+import org.apache.pekko.actor.typed.ActorRef;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+
+import java.time.Clock;
+import java.util.List;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Predicate;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/**
+ * Task 13 verification: the wiring that Task 2's note and Task 9's note both deferred here --
+ * spawning a {@code RoomActor} on first join, routing a reply back to the connection a message
+ * arrived on, and fanning a broadcast out to every connection subscribed to a room.
+ *
+ * <p>Uses a real {@link ActorTestKit} (RoomActor's timers are real, per Task 3) with plain
+ * {@link ModuloRoomOwnership} for a single pod. Each "connection" is an {@link EmbeddedChannel}
+ * whose outbound writes are captured into a {@link BlockingQueue} via a small interceptor --
+ * needed because {@code RoomSupervisor} writes to it from an actor dispatcher thread, not the
+ * test thread, so a direct {@code channel.readOutbound()} would race.
+ *
+ * <p>A join is followed by exactly two messages to the joiner's own connection: the direct full
+ * snapshot ({@code JoinRoom}'s reply) and, moments later, that same join's own coalescing flush
+ * (Task 3's {@code onJoinRoom} always calls {@code scheduleFlushIfDirty()}, and the joiner is
+ * also now a broadcast subscriber for that room) -- a real but harmless redundancy, not a bug
+ * this task introduces. {@link FakeConnection#takeMatching} looks past it instead of assuming a
+ * fixed message count or order.
+ */
+class RoomSupervisorTest {
+
+    private static ActorTestKit testKit;
+
+    @BeforeAll
+    static void initSystem() {
+        testKit = ActorTestKit.create();
+    }
+
+    @AfterAll
+    static void shutdownSystem() {
+        testKit.shutdownTestKit();
+    }
+
+    @Test
+    void should_spawnRoomAndReplyFullSnapshot_when_joinRoomDispatched() throws Exception {
+        ActorRef<RoomSupervisor.Command> supervisor = spawnSupervisor();
+        FakeConnection connection = new FakeConnection();
+
+        supervisor.tell(new RoomSupervisor.Dispatch(joinRoom("room-1", "student-1", "Alice"), connection.channel));
+
+        GameMessage reply = connection.takeMatching("a full snapshot",
+                m -> m.getType() == MessageType.ROOM_STATE_SNAPSHOT && m.getRoomStateSnapshot().getFull());
+        assertThat(reply.getInternal().getOwnerPodId()).isEqualTo("engine-1");
+    }
+
+    @Test
+    void should_routeAnswerAck_toTheConnectionThatSubmitted() throws Exception {
+        ActorRef<RoomSupervisor.Command> supervisor = spawnSupervisor();
+        FakeConnection connection = new FakeConnection();
+        supervisor.tell(new RoomSupervisor.Dispatch(joinRoom("room-2", "student-1", "Alice"), connection.channel));
+        connection.drainSettled();
+        startGameAndQuestion(supervisor, "room-2");
+
+        supervisor.tell(new RoomSupervisor.Dispatch(submitAnswer("room-2", "student-1", 1L, "q-1"), connection.channel));
+
+        GameMessage ack = connection.takeMatching("an ANSWER_ACK", m -> m.getType() == MessageType.ANSWER_ACK);
+        assertThat(ack.getAnswerAck().getAccepted()).isTrue();
+        assertThat(ack.getInternal().getDeliveryClass().name()).isEqualTo("CRITICAL");
+    }
+
+    @Test
+    void should_fanOutBroadcast_toEveryConnectionSubscribedToTheRoom() throws Exception {
+        ActorRef<RoomSupervisor.Command> supervisor = spawnSupervisor();
+        FakeConnection alice = new FakeConnection();
+        FakeConnection bob = new FakeConnection();
+        supervisor.tell(new RoomSupervisor.Dispatch(joinRoom("room-3", "student-alice", "Alice"), alice.channel));
+        alice.drainSettled();
+
+        supervisor.tell(new RoomSupervisor.Dispatch(joinRoom("room-3", "student-bob", "Bob"), bob.channel));
+
+        // Bob joining is a roster change Alice's connection must also learn about (§6.2) --
+        // proof that broadcast fan-out, not just direct reply, is wired.
+        GameMessage aliceSawBobJoin = alice.takeMatching("Bob's join reflected to Alice",
+                m -> m.getType() == MessageType.ROOM_STATE_SNAPSHOT
+                        && m.getRoomStateSnapshot().getPlayersList().stream()
+                                .anyMatch(p -> p.getStudentId().equals("student-bob")));
+        assertThat(aliceSawBobJoin.getRoomStateSnapshot().getFull()).isFalse();
+    }
+
+    @Test
+    void should_stopFanningOutToAConnection_when_itsChannelCloses() throws Exception {
+        ActorRef<RoomSupervisor.Command> supervisor = spawnSupervisor();
+        FakeConnection alice = new FakeConnection();
+        FakeConnection bob = new FakeConnection();
+        supervisor.tell(new RoomSupervisor.Dispatch(joinRoom("room-4", "student-alice", "Alice"), alice.channel));
+        alice.drainSettled();
+
+        supervisor.tell(new RoomSupervisor.ChannelClosed(alice.channel));
+        supervisor.tell(new RoomSupervisor.Dispatch(joinRoom("room-4", "student-bob", "Bob"), bob.channel));
+        bob.drainSettled();
+
+        assertThat(alice.queue.poll(500, TimeUnit.MILLISECONDS))
+                .as("a closed connection must not still be fanned out to")
+                .isNull();
+    }
+
+    private ActorRef<RoomSupervisor.Command> spawnSupervisor() {
+        RoomOwnership ownsEverything = new ModuloRoomOwnership("engine-1", List.of("engine-1"));
+        return testKit.spawn(RoomSupervisor.create(ownsEverything, FormulaScoreCalculator.binaryChoice(),
+                new EngineMetrics(new SimpleMeterRegistry()), Clock.systemUTC()));
+    }
+
+    private void startGameAndQuestion(ActorRef<RoomSupervisor.Command> supervisor, String roomId) throws Exception {
+        var probe = testKit.<ActorRef<RoomActor.Command>>createTestProbe();
+        supervisor.tell(new RoomSupervisor.GetRoomActor(roomId, probe.getRef()));
+        ActorRef<RoomActor.Command> room = probe.receiveMessage();
+        room.tell(new RoomActor.StartGame());
+        room.tell(new RoomActor.StartQuestion("q-1", 25_000, List.of("a")));
+    }
+
+    private static GameMessage joinRoom(String roomId, String studentId, String displayName) {
+        return GameMessage.newBuilder()
+                .setType(MessageType.JOIN_ROOM)
+                .setRoomId(roomId)
+                .setStudentId(studentId)
+                .setJoinRoom(JoinRoom.newBuilder().setDisplayName(displayName))
+                .build();
+    }
+
+    private static GameMessage submitAnswer(String roomId, String studentId, long sequence, String questionId) {
+        return GameMessage.newBuilder()
+                .setType(MessageType.SUBMIT_ANSWER)
+                .setRoomId(roomId)
+                .setStudentId(studentId)
+                .setSequence(sequence)
+                .setSubmitAnswer(SubmitAnswer.newBuilder().setQuestionId(questionId).addAnswerIds("a"))
+                .build();
+    }
+
+    /** One fake Gateway-pod connection: an {@link EmbeddedChannel} whose outbound writes land in a queue. */
+    private static final class FakeConnection {
+        final BlockingQueue<GameMessage> queue = new LinkedBlockingQueue<>();
+        final EmbeddedChannel channel = new EmbeddedChannel(new ChannelOutboundHandlerAdapter() {
+            @Override
+            public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) {
+                queue.add((GameMessage) msg);
+                promise.setSuccess();
+            }
+        });
+
+        GameMessage takeMatching(String description, Predicate<GameMessage> predicate) throws InterruptedException {
+            long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+            while (System.nanoTime() < deadlineNanos) {
+                GameMessage message = queue.poll(200, TimeUnit.MILLISECONDS);
+                if (message != null && predicate.test(message)) {
+                    return message;
+                }
+            }
+            throw new AssertionError("expected " + description + " within 2s, none arrived");
+        }
+
+        /** Waits for in-flight messages to land, then discards everything currently queued. */
+        void drainSettled() throws InterruptedException {
+            while (queue.poll(300, TimeUnit.MILLISECONDS) != null) {
+                // keep discarding until nothing new arrives for a full window
+            }
+        }
+    }
+}

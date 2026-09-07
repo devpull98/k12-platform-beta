@@ -23,6 +23,7 @@
         <module>modules/uni-observability</module>
         <module>modules/uni-gateway</module>
         <module>modules/uni-engine</module>
+        <module>modules/uni-e2e</module>
     </modules>
 
     <properties>
@@ -58,6 +59,16 @@
             <dependency>
                 <groupId>com.uni</groupId>
                 <artifactId>uni-observability</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.uni</groupId>
+                <artifactId>uni-gateway</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.uni</groupId>
+                <artifactId>uni-engine</artifactId>
                 <version>${project.version}</version>
             </dependency>
         </dependencies>

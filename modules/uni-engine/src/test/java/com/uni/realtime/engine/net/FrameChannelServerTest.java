@@ -36,7 +36,8 @@ class FrameChannelServerTest {
         BlockingQueue<GameMessage> received = new LinkedBlockingQueue<>();
         ModuloRoomOwnership ownsEverything = new ModuloRoomOwnership("engine-1", List.of("engine-1"));
         FrameChannelServer server = new FrameChannelServer(
-                0, ownsEverything, received::add, new EngineMetrics(new SimpleMeterRegistry()));
+                0, ownsEverything, (channel, message) -> received.add(message), channel -> { },
+                new EngineMetrics(new SimpleMeterRegistry()));
         server.start();
 
         EventLoopGroup clientGroup = new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());

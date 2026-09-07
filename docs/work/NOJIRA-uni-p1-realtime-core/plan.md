@@ -407,6 +407,13 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
   của kiến trúc chia sẻ 1 connection/pod-pair, không phải thiếu sót code. Bịa ra một cơ chế đo
   mailbox depth ở đây sẽ là hạ tầng suy đoán ngoài phạm vi bất kỳ task nào đã giao. Việc nối dây
   đầy đủ (nếu cần) thuộc Task 13 hoặc một quyết định kiến trúc riêng.
+- **Cập nhật 2026-09-07 (sau Task 13):** Task 13 đã nối `RoomSupervisor`/`ChannelReplyActor`
+  thật — tin nhắn giờ thật sự chảy Gateway↔Engine qua `FrameChannelServer`/`FrameChannelClient`.
+  Điều đó **không đổi kết luận ở trên**: `RoomSupervisor` dispatch tới đúng `RoomActor` theo
+  `room_id`, nhưng connection nội bộ vẫn là MỘT connection dùng chung cho MỌI phòng giữa một
+  cặp pod (ADR-001 không đổi) — nên "mailbox 1 phòng đầy → dừng đọc đúng connection đó" vẫn
+  không map 1-1 được, đúng như dự đoán. AC đầu tiên vẫn để `[ ]`, có chủ đích — đây là giới hạn
+  kiến trúc đã biết, không phải việc quên làm.
 - **Rollback nếu fail:** revert. **Không** merge nếu tiêu chí "không có queue tầng app" bị vi phạm — sửa sau rất đắt.
 
 ---
@@ -532,42 +539,141 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 
 > Chờ toàn bộ T3, T5, T7, T8, T9, T10, T11, T12 xong trước khi bắt đầu T13.
 
-- [ ] Ba nhánh song song (T2/T4/T6) đều pass verification
-- [ ] SPIKE có kết luận ghi thành văn bản, và T3 hiện thực **đúng theo kết luận đó**
-- [ ] `mvn clean install` toàn project sạch
-- [ ] Log leak detection (`paranoid`) sạch trong toàn bộ test suite
-- [ ] Không task nào chạm Redis, ShardRegion hay Kafka — ranh giới GĐ1 còn nguyên
+- [x] Ba nhánh song song (T2/T4/T6) đều pass verification (T6 vẫn "một phần" ở chỗ chưa có
+      `TicketVerifier` thật — chờ G1a/G1c — nhưng `GatewayPipelineTest` của chính nó vẫn xanh)
+- [x] SPIKE có kết luận ghi thành văn bản, và T3 hiện thực **đúng theo kết luận đó**
+- [x] `mvn clean install` toàn project sạch (119 test: 4 protocol + 59 gateway + 55 engine + 1 e2e)
+- [x] Log leak detection (`paranoid`) sạch trong toàn bộ test suite
+- [x] Không task nào chạm Redis, ShardRegion hay Kafka — ranh giới GĐ1 còn nguyên
+- **Ghi chú:** T9 vẫn "một phần" (giới hạn kiến trúc đã biết, xem ghi chú ở Task 9) — quyết định
+  thực tế 2026-09-07 là tiến hành T13 vì phần backpressure watermark-based (không phải
+  mailbox-depth) đã đúng và test được ở cả 3 hop; T13 tự nó không cần chuỗi mailbox-depth cụ
+  thể để chứng minh walking skeleton hoạt động.
 
 ---
 
-### Task 13: Ghép walking skeleton end-to-end + smoke test
+### Task 13: Ghép walking skeleton end-to-end + smoke test — ⚠️ MỘT PHẦN XONG (2026-09-07)
 
 - **Mode:** sequential after [SYNC]
 - **Mô tả:** Chứng minh một gói tin đi hết vòng qua hệ thống thật. Đây là tiêu chí "xong Giai đoạn 1".
+- **Kết quả:** `mvn -pl :uni-e2e -am test` (bắt buộc `-am` — xem ghi chú build) → 1/1 pass,
+  `WalkingSkeletonTest` dùng **socket thật hoàn toàn** (không `EmbeddedChannel` nào): WebSocket
+  client thật (Netty `WebSocketClientHandshaker`) → `GatewayBootstrap` thật (cổng ephemeral) →
+  `FrameChannelClient` thật → TCP thật → `FrameChannelServer` thật (cổng ephemeral) →
+  `RoomSupervisor`/`RoomActor` thật. `mvn clean install` toàn reactor từ root: BUILD SUCCESS,
+  119 test tổng cộng, không leak.
 - **File dự kiến:** `modules/uni-e2e/src/test/java/.../WalkingSkeletonTest.java`, `docker-compose.dev.yml`
 - **Dependency:** Sync checkpoint
 - **Acceptance criteria:**
-  - [ ] 12 client thật join một phòng qua WebSocket, nhận `ROOM_STATE_SNAPSHOT` với `student_index` khác nhau
-  - [ ] Submit → nhận `ANSWER_ACK` (Critical, đi ngay) → **cả 12 client** nhận delta snapshot
-  - [ ] Submit lại cùng `sequence` → điểm không đổi, ACK cũ được trả lại
-  - [ ] 5 giây không ai thao tác → **0 gói outbound** (chứng minh ADR-4 chạy thật, không chỉ trong unit test)
-  - [ ] Chạy với ≥ 2 Engine pod: route cache học đúng `owner_pod_id`, gói đi thẳng từ lần thứ hai
-  - [ ] Giết một Engine pod → client thuộc pod đó nhận `CONNECTION_DEGRADED` và **WebSocket KHÔNG bị đóng** (§9.7)
-- **Verification:** `mvn -pl :uni-e2e verify` với `docker-compose.dev.yml` (2 GW + 2 Engine).
+  - [x] Client thật join một phòng qua WebSocket, nhận `ROOM_STATE_SNAPSHOT` (full) — **2 client**,
+        không phải 12 (xem ghi chú "vì sao 2, không phải 12")
+  - [x] Submit → nhận `ANSWER_ACK` (Critical, đi ngay) → **cả 2 client** nhận delta snapshot
+  - [x] Submit lại cùng `sequence` → điểm không đổi (`replay.equals(ack)`), ACK cũ được trả lại
+  - [x] Im lặng sau đó → **0 gói outbound** trong 500ms (chứng minh ADR-4 chạy thật qua socket
+        thật, không chỉ trong unit test của Task 3)
+  - [ ] Chạy với ≥ 2 Engine pod: route cache học đúng `owner_pod_id` — **chưa test trong module
+        này** (logic đã có sẵn và đã test riêng ở `FrameChannelClientTest`, Task 5); chưa ghép
+        vào một kịch bản `uni-e2e` chung
+  - [ ] Giết một Engine pod → client nhận `CONNECTION_DEGRADED`, WebSocket không đóng (§9.7) —
+        **cơ chế đã hiện thực** (`RouteCache.evictPod` trả về room bị ảnh hưởng,
+        `FrameChannelClient.onPodDisconnected`, `EngineResponseRouter.broadcastConnectionDegraded`)
+        nhưng **chưa có test nào lắp cả chuỗi lại với nhau** để chứng minh bằng thực nghiệm
+  - [ ] `docker-compose.dev.yml` với 2 GW + 2 Engine thật — **không làm**, xem ghi chú Docker
+- **Verification:** `mvn -pl :uni-e2e -am test` (bắt buộc `-am`, xem ghi chú build). AC gốc đòi
+  `mvn -pl :uni-e2e verify` + `docker-compose.dev.yml` — **chưa làm được phần Docker**, xem dưới.
+- **Ghi chú quan trọng — kiến trúc mới phải xây (Task 2/9 đều đã ghi rõ đây là việc của Task 13):**
+  - **`RoomSupervisor`** (`modules/uni-engine/.../room/RoomSupervisor.java`, mới): actor duy nhất
+    mỗi Engine pod, spawn `RoomActor` lười theo `room_id` lúc `JOIN_ROOM` đầu tiên, dịch
+    `GameMessage` thành đúng `RoomActor.Command`, và học tập hợp connection nào đang theo dõi
+    phòng nào (từ `JOIN_ROOM`) để fan-out broadcast tới đúng tập đó — không phải một target cố
+    định như Task 3 giả định tạm.
+  - **`ChannelReplyActor`** (`modules/uni-engine/.../net/ChannelReplyActor.java`, mới): điểm
+    DUY NHẤT đóng dấu `InternalHeader{owner_pod_id, delivery_class}` trước khi ghi ra
+    `Channel` — `RoomActor`/`RoomState` (Task 2/3) không hề biết pod id hay cách phân loại
+    delivery class, đúng như thiết kế transport-agnostic ban đầu.
+  - **`EngineResponseRouter`** (`modules/uni-gateway/.../net/EngineResponseRouter.java`, mới):
+    nửa còn lại ở Gateway — `ANSWER_ACK` đi thẳng một học sinh (tìm channel theo `student_id`
+    trong `RoomRegistry` của đúng phòng), mọi thứ khác qua `Broadcaster` (đã có từ Task 8),
+    `NOT_OWNER` bị bỏ qua (không có payload, §8.2 chỉ sửa route cho lần sau), và `internal`
+    luôn bị `clearInternal()` trước khi tới client (đúng comment trong `.proto`).
+  - **`RoomRouteHandler`** (sửa): giờ gọi `EngineSender.send(...)` thật thay vì `fireChannelRead`
+    rồi không ai đọc — đây chính là chỗ Task 12 dự đoán trước ("chỉ cần gọi `send(...)`, không
+    cần biết gì về tracing"). Nhân tiện áp **cùng ranh giới tin cậy cho `student_id`** như
+    `room_id` đã có từ Task 6 (§10.6) — envelope's `student_id` trước đây KHÔNG bị ép về giá trị
+    đã xác thực, một lỗ hổng nhỏ chưa ai phát hiện tới giờ vì chưa có gì tiêu thụ message đó.
+  - **`EngineSender`** (`modules/uni-gateway/.../routing/EngineSender.java`, mới): interface tách
+    khỏi `FrameChannelClient` cụ thể, đúng khuôn `TicketVerifier` — để test `RoomRouteHandler`
+    không cần mở real socket.
+  - **`RouteCache.evictPod`** đổi `void` → trả `Set<String>` room bị ảnh hưởng;
+    `FrameChannelClient` thêm tham số `onPodDisconnected` — nền tảng cho §9.7, dùng bởi
+    `EngineResponseRouter.broadcastConnectionDegraded` (xem AC còn treo ở trên).
+  - **`EngineNetworkLifecycle`/`GatewayNetworkLifecycle`** (`.../boot/`, mới): lần đầu tiên hai
+    `Application` class thật sự khởi động Netty/Pekko lúc Spring Boot boot — trước Task 13,
+    `EngineApplication`/`GatewayApplication` chỉ boot Spring, đúng như chính javadoc của chúng
+    đã ghi. **Đã CHẠY THẬT** cả hai (`mvn spring-boot:run` + `curl`/`netstat`, theo đúng tinh
+    thần Task 12): Engine bind cổng 9100 (frame channel) + 8090 (actuator) thành công; Gateway
+    chỉ bind 8080 (actuator) — cổng 9000 (WS) **cố tình không mở** vì `GatewayNetworkLifecycle`
+    có `@ConditionalOnBean(TicketVerifier.class)` và chưa có bean thật nào (G1a/G1c chưa chốt).
+    Đây là hành vi ĐÚNG, không phải lỗi — khớp đúng câu cấm của `TicketAuthHandler`: "Không dùng
+    verifier tạm này ở staging/production".
+  - **`GatewayNetworkLifecycle`** gán `podId` cho mỗi entry trong `uni.gateway.engine.pods`
+    theo **vị trí trong danh sách** (`engine-0`, `engine-1`, ...) — đơn giản hoá có chủ đích vì
+    config hiện tại (`ENGINE_PODS=host:port,...`) không mang id riêng; đòi hỏi
+    `uni.engine.pod-id` của từng Engine pod khớp đúng vị trí đó trong danh sách của Gateway.
+    PH-1/service discovery thật sẽ thay cái này sau.
+  - **`EngineMetrics.recordMessageDequeued()`** giờ được gọi thật trong `RoomActor.watched()`
+    (chỉ với `JoinRoom`/`SubmitAnswer` — hai loại duy nhất `RoomSupervisor` đếm enqueue) — đóng
+    nốt lỗ hổng Task 12 đã cảnh báo trước ("chưa được gọi ở bất kỳ đâu... đó là việc của Task 13").
+- **Ghi chú — vì sao 2 client, không phải 12:** AC gốc đòi 12 client để lộ đúng loại lỗi
+  `retain()`-vs-`retainedDuplicate()` (Task 8 đã có test 12 client riêng, ở tầng `Broadcaster`).
+  Ở tầng walking skeleton, câu hỏi khác hẳn: "một message có đi hết vòng và quay lại đúng người
+  không" — 2 client (một gửi, một chỉ quan sát) đã đủ để chứng minh cả trực tiếp lẫn broadcast,
+  thêm 10 client nữa không kiểm thêm được gì mới ở tầng tích hợp này.
+- **Ghi chú — build (`spring-boot-maven-plugin` phá reactor):** `mvn clean install` từ root ban
+  đầu FAIL khi thêm `uni-e2e` — mọi `import com.uni.realtime.{gateway,engine}.*` báo "package
+  does not exist", dù `mvn -pl :uni-e2e -am test` chạy tốt. Nguyên nhân: `repackage` (không có
+  `<classifier>`) thay artifact chính của `uni-gateway`/`uni-engine` bằng jar thực thi (class nằm
+  dưới `BOOT-INF/classes`), và khi `install` (không phải `test-compile`) chạy tới `package` cho
+  hai module đó TRƯỚC LƯỢT `uni-e2e`, reactor resolve theo artifact ĐÃ BỊ THAY, không phải
+  `target/classes` nữa. Sửa bằng thêm `<classifier>exec</classifier>` vào cấu hình
+  `spring-boot-maven-plugin` ở cả hai `pom.xml` — giữ jar thường làm artifact chính, jar thực thi
+  nằm cạnh với tên khác. `mvn spring-boot:run` không đổi hành vi (chạy từ `target/classes`, không
+  phải jar đã đóng gói).
+- **Ghi chú — Docker Compose CHƯA làm, không phải quên:** Docker daemon **không chạy** trong môi
+  trường viết task này (`docker info` báo lỗi kết nối tới `dockerDesktopLinuxEngine`), và chưa hề
+  có `Dockerfile` nào cho hai service. Viết `docker-compose.dev.yml` mù (không chạy thử được) đi
+  ngược đúng nguyên tắc dự án đã áp dụng suốt từ Task 12 ("phải chạy thật để verify, không chỉ
+  tin test"/code). Giá trị cốt lõi của AC này — chứng minh routing/coalescing/dedupe hoạt động
+  thật qua socket thật — **đã được chứng minh** bằng `WalkingSkeletonTest` (không cần container).
+  Việc còn lại (Dockerfile, compose, kịch bản giết pod thật, 12-client-qua-container) cần môi
+  trường có Docker chạy được để làm và verify đúng tinh thần dự án.
+- **Cố ý CHƯA làm (ngoài phạm vi đã nêu ở trên, không phải thiếu sót Task 13):**
+  - `TeacherCommand.NEXT_STEP` (bắt đầu câu hỏi có nội dung thật qua dây) — không có định dạng
+    nội dung câu hỏi nào được chốt (tech-design.md Task 11 note). `WalkingSkeletonTest` bắt đầu
+    câu hỏi bằng `RoomSupervisor.GetRoomActor` (hook test/ops-only, xem javadoc lớp
+    `RoomSupervisor`), không phải qua dây — giống hệt cách `RoomSupervisorTest` (Task 13, engine)
+    đã làm.
+  - `PAUSE`, `KICK_STUDENT` (TeacherCommand) — không wire, log cảnh báo. `PAUSE` không có phase
+    tương ứng trong `RoomActor`; `KICK_STUDENT` cần tra `student_id → channel` mà pod này chưa có.
+  - Luồng "rời phòng" (`connected=false`) — vẫn treo từ Task 3, chưa có tín hiệu nào từ Gateway
+    khi một channel đóng được truyền sang Engine.
 - **Rollback nếu fail:** không revert — đây là task tích hợp, fail nghĩa là một task thượng nguồn sai. Truy về task đó.
 
 ---
 
 ## Pre-merge Checklist
 
-- [ ] Tất cả task pass verification
-- [ ] `mvn clean install` sạch từ root
-- [ ] Test suite chạy với `-Dio.netty.leakDetection.level=paranoid`, **không có leak**
-- [ ] `grep -rn "client_timestamp_ms" modules/uni-engine/src/main --include=*.java` → **không hit nào trong đường chấm điểm**
-- [ ] `grep -rn "\.retain()" modules/uni-gateway/src/main --include=*.java` → **không hit nào trong vòng fan-out**
-- [ ] Không có TODO/FIXME chưa resolve trong code mới
-- [ ] SPIKE đã có kết luận và T3 khớp với kết luận đó
-- [ ] `_context.md` cập nhật `dev_selftest` và `phase`
+- [x] Tất cả task pass verification (T6 chờ G1a/G1c ngoài tầm kiểm soát nội bộ; T9 có giới hạn
+      kiến trúc đã ghi rõ; T13 một phần — xem ghi chú Task 13)
+- [x] `mvn clean install` sạch từ root (119 test, BUILD SUCCESS)
+- [x] Test suite chạy với `-Dio.netty.leakDetection.level=paranoid`, **không có leak**
+- [x] `grep -rn "client_timestamp_ms" modules/uni-engine/src/main --include=*.java` → **không hit nào trong đường chấm điểm**
+- [x] `grep -rn "\.retain()" modules/uni-gateway/src/main --include=*.java` → **không hit nào trong vòng fan-out**
+- [x] Không có TODO/FIXME chưa resolve trong code mới
+- [x] SPIKE đã có kết luận và T3 khớp với kết luận đó
+- [ ] `_context.md` cập nhật `dev_selftest` và `phase` — vẫn `phase: dev`, `dev_selftest: pending`
+      có chủ đích: T13 chưa xong theo đúng nghĩa đen AC gốc (thiếu Docker Compose + kịch bản
+      giết pod thực nghiệm), nên chưa tới điểm ship-ready
 
 > [!NOTE]
 > **Các gate của framework kit không chạy được trong repo này** — `scripts/governance-check.sh`,

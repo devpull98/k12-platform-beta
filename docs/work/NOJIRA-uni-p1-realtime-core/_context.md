@@ -210,7 +210,46 @@ progress: "T1, T2, T4, T5, T10 xong. T6 MOT PHAN xong (GatewayPipeline + WS hand
   se la tu them pham vi. Khong them metric Prometheus rieng cho luot tu choi L1 (chi log.warn,
   dung khuon TicketAuthHandler xu ly ticket bi tu choi). Task sach con lai: Task 13 (cho Sync
   checkpoint - chi con T9 dong han, T3/T7/T11 da xong). Task 6 van cho G1a/G1c tu doi dich vu nen
-  tang - khong tu quyet duoc trong noi bo."
+  tang - khong tu quyet duoc trong noi bo.
+  2026-09-07 (tiep 2): T13 (walking skeleton) MOT PHAN xong. Xay moi RoomSupervisor (engine) -
+  spawn RoomActor luoi theo room_id luc JOIN_ROOM dau tien, dich GameMessage thanh
+  RoomActor.Command, hoc subscriber-set moi phong tu JOIN_ROOM de fan-out dung tap connection
+  (thay vi 1 target co dinh nhu T3 gia dinh tam). ChannelReplyActor (engine, moi) - diem DUY
+  NHAT dong dau InternalHeader{owner_pod_id, delivery_class} truoc khi ghi ra Channel -
+  RoomActor/RoomState van khong biet gi ve pod id/delivery class, dung thiet ke
+  transport-agnostic cua T3. EngineResponseRouter (gateway, moi) - ANSWER_ACK di thang 1 hoc
+  sinh (tra RoomRegistry theo student_id), con lai qua Broadcaster co san, NOT_OWNER bi bo qua
+  (khong payload), luon clearInternal() truoc khi toi client. RoomRouteHandler sua - goi
+  EngineSender.send() that thay vi fireChannelRead roi khong ai doc (dung nhu T12 da du doan
+  truoc); tien the ap them ranh gioi tin cay cho student_id giong room_id (T6 §10.6) - lo hong
+  nho truoc day (envelope student_id khong bi ep ve gia tri da xac thuc) chua ai phat hien vi
+  chua co gi tieu thu message do. RouteCache.evictPod doi void -> Set<String> (room bi anh
+  huong); FrameChannelClient them onPodDisconnected - nen tang cho §9.7 CONNECTION_DEGRADED (co
+  che co roi, CHUA test thanh 1 chuoi hoan chinh). EngineNetworkLifecycle/
+  GatewayNetworkLifecycle (.../boot/, moi) - lan dau Spring Boot that su khoi dong Netty/Pekko -
+  DA CHAY THAT (spring-boot:run + curl/netstat): Engine bind that 9100+8090; Gateway chi bind
+  8080 - cong WS 9000 CO CHU Y khong mo vi GatewayNetworkLifecycle co
+  @ConditionalOnBean(TicketVerifier.class) va chua co bean that (G1a/G1c chua chot) - dung hanh
+  vi mong muon, dung theo dung cam cua TicketAuthHandler ve verifier tam. Test moi
+  WalkingSkeletonTest (modules/uni-e2e, module MOI) dung socket that hoan toan (WS client that
+  qua Netty WebSocketClientHandshaker, khong EmbeddedChannel nao) - join+full snapshot, submit+
+  AnswerAck+delta ca 2 client, im lang -> 0 goi, replay cung sequence -> khong doi. Phat hien va
+  sua giua chung: spring-boot-maven-plugin repackage (khong classifier) thay artifact chinh cua
+  uni-gateway/uni-engine bang jar thuc thi (class duoi BOOT-INF/classes), lam mvn clean install
+  TU ROOT fail voi 'package khong ton tai' cho MOI class (dung -pl :uni-e2e -am test-compile thi
+  khong sao vi dung truoc phase package) - sua bang them <classifier>exec</classifier> vao ca
+  hai pom.xml. mvn clean install toan reactor tu root: BUILD SUCCESS, 119 test (4 protocol + 59
+  gateway + 55 engine + 1 e2e), khong leak. Prove-it: RoomSupervisorTest (bo qua subscriber set)
+  + EngineResponseRouterTest (luon broadcast thay vi gui rieng ACK) - ca hai xac nhan dung 1
+  test Red truoc khi Green. CHUA lam (co chu y, khong phai quen): Docker Compose that (2 GW + 2
+  Engine) - Docker daemon KHONG chay trong moi truong nay (docker info loi ket noi
+  dockerDesktopLinuxEngine), chua co Dockerfile nao - khong viet mu thu khong verify duoc; kich
+  ban da-pod/giet-pod ghep thanh 1 test uni-e2e (co che co san, chua ghep); TeacherCommand.
+  NEXT_STEP/noi dung cau hoi qua day (khong co dinh dang nao duoc chot - T11 note) - test dung
+  RoomSupervisor.GetRoomActor (hook test/ops-only) de bat dau cau hoi; PAUSE/KICK_STUDENT/luong
+  roi phong - log canh bao, khong wire. T9: xac nhan lai gioi han kien truc van dung sau khi
+  noi day that (1 connection dung chung MOI phong giua 1 cap pod, khong doi tu ADR-001) - AC dau
+  tien cua T9 van [ ] co chu y."
 dev_selftest: pending
 qc_status: pending
 trace: pending

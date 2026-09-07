@@ -17,6 +17,7 @@ import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
 /**
@@ -25,6 +26,14 @@ import java.util.function.Consumer;
  * class bootstraps Netty, applies {@link FrameCodec}, then hands every decoded
  * {@link GameMessage} to {@link RoomOwnershipHandler} (Task 10) to decide whether it belongs
  * to this pod.
+ *
+ * <p>Task 13: {@code onOwnedMessage} carries the {@link Channel} it arrived on (not just the
+ * message) because a reply has to go back out on that exact connection -- {@link
+ * RoomOwnershipHandler} itself stays {@code Consumer}-only unchanged, this class just closes
+ * over {@code ch} when building the per-channel lambda it hands to that handler. {@code
+ * onChannelClosed} lets {@code RoomSupervisor} stop treating a dead connection as a broadcast
+ * subscriber the instant it drops, mirroring how the Gateway's {@code RoomRouteHandler} reacts
+ * to {@code channelInactive} (Task 8).
  */
 public final class FrameChannelServer {
 
@@ -33,18 +42,20 @@ public final class FrameChannelServer {
 
     private final int port;
     private final RoomOwnership roomOwnership;
-    private final Consumer<GameMessage> onOwnedMessage;
+    private final BiConsumer<Channel, GameMessage> onOwnedMessage;
+    private final Consumer<Channel> onChannelClosed;
     private final EngineMetrics engineMetrics;
 
     private EventLoopGroup bossGroup;
     private EventLoopGroup workerGroup;
     private Channel serverChannel;
 
-    public FrameChannelServer(int port, RoomOwnership roomOwnership, Consumer<GameMessage> onOwnedMessage,
-            EngineMetrics engineMetrics) {
+    public FrameChannelServer(int port, RoomOwnership roomOwnership, BiConsumer<Channel, GameMessage> onOwnedMessage,
+            Consumer<Channel> onChannelClosed, EngineMetrics engineMetrics) {
         this.port = port;
         this.roomOwnership = roomOwnership;
         this.onOwnedMessage = onOwnedMessage;
+        this.onChannelClosed = onChannelClosed;
         this.engineMetrics = engineMetrics;
     }
 
@@ -67,7 +78,8 @@ public final class FrameChannelServer {
                         for (ChannelHandler handler : FrameCodec.newHandlers()) {
                             ch.pipeline().addLast(handler);
                         }
-                        ch.pipeline().addLast(new RoomOwnershipHandler(roomOwnership, onOwnedMessage));
+                        ch.pipeline().addLast(new RoomOwnershipHandler(roomOwnership, message -> onOwnedMessage.accept(ch, message)));
+                        ch.closeFuture().addListener(future -> onChannelClosed.accept(ch));
                     }
                 });
 

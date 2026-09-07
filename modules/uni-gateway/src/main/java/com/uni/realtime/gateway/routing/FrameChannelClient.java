@@ -15,6 +15,7 @@ import io.netty.channel.socket.nio.NioSocketChannel;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -31,10 +32,11 @@ import java.util.function.Consumer;
  * {@code RoomOwnership} (Task 10); the day it changes to Cluster Sharding, nothing here needs
  * to change.
  */
-public final class FrameChannelClient {
+public final class FrameChannelClient implements EngineSender {
 
     private final RouteCache routeCache;
     private final Consumer<GameMessage> onResponse;
+    private final Consumer<Set<String>> onPodDisconnected;
     private final EventLoopGroup eventLoopGroup;
     private final GatewayMetrics gatewayMetrics;
 
@@ -42,10 +44,17 @@ public final class FrameChannelClient {
     private final List<String> knownPods = new CopyOnWriteArrayList<>();
     private final AtomicInteger roundRobinCursor = new AtomicInteger();
 
-    public FrameChannelClient(RouteCache routeCache, Consumer<GameMessage> onResponse, EventLoopGroup eventLoopGroup,
-            GatewayMetrics gatewayMetrics) {
+    /**
+     * @param onPodDisconnected receives the room ids {@link RouteCache#evictPod} just orphaned
+     *     (§9.7, Task 13) -- whoever is still connected to those rooms lost their route and needs
+     *     {@code CONNECTION_DEGRADED} without their WebSocket being closed. Empty when the pod
+     *     had no rooms cached yet (nothing to degrade).
+     */
+    public FrameChannelClient(RouteCache routeCache, Consumer<GameMessage> onResponse,
+            Consumer<Set<String>> onPodDisconnected, EventLoopGroup eventLoopGroup, GatewayMetrics gatewayMetrics) {
         this.routeCache = routeCache;
         this.onResponse = onResponse;
+        this.onPodDisconnected = onPodDisconnected;
         this.eventLoopGroup = eventLoopGroup;
         this.gatewayMetrics = gatewayMetrics;
     }
@@ -119,6 +128,9 @@ public final class FrameChannelClient {
     private void handleDisconnect(String podId) {
         podChannels.remove(podId);
         knownPods.remove(podId);
-        routeCache.evictPod(podId);
+        Set<String> affectedRoomIds = routeCache.evictPod(podId);
+        if (!affectedRoomIds.isEmpty()) {
+            onPodDisconnected.accept(affectedRoomIds);
+        }
     }
 }

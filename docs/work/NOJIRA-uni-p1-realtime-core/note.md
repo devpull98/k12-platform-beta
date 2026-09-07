@@ -587,15 +587,68 @@
   - `modules/uni-gateway/src/test/java/com/uni/realtime/gateway/net/IpAdmissionControllerTest.java` (mới)
   - `modules/uni-gateway/src/test/java/com/uni/realtime/gateway/net/IpAdmissionHandlerTest.java` (mới)
 
+## Task 13 — Walking skeleton end-to-end (một phần)
+
+- **Trạng thái:** một phần xong (2026-09-07) — lõi wiring + happy path chứng minh được qua
+  socket thật; Docker Compose và kịch bản giết pod thực nghiệm chưa làm. Chi tiết đầy đủ ở
+  `plan.md` (phần này chỉ tóm tắt).
+- **Verification:** `mvn -pl :uni-e2e -am test` (bắt buộc `-am`) → 1/1 pass. `mvn clean install`
+  toàn reactor từ root: BUILD SUCCESS, 119 test (4 protocol + 59 gateway + 55 engine + 1 e2e),
+  không leak.
+- **Vấn đề build phát hiện giữa chừng:** `mvn clean install` từ root FAIL lúc mới thêm `uni-e2e`
+  — `spring-boot-maven-plugin`'s `repackage` (không classifier) thay artifact chính của
+  `uni-gateway`/`uni-engine` bằng jar thực thi (class nằm dưới `BOOT-INF/classes`), khiến
+  `uni-e2e` không resolve được class nào khi `install` (đụng `package`) chạy trước nó trong
+  cùng reactor — dù `-pl :uni-e2e -am test-compile` (dừng trước `package`) vẫn ổn. Sửa: thêm
+  `<classifier>exec</classifier>` vào cấu hình plugin ở cả hai `pom.xml`.
+- **Phạm vi đã làm (kiến trúc mới, Task 2/9 đã dự đoán trước là việc của Task 13):**
+  - `RoomSupervisor` (engine, mới) — spawn `RoomActor` lười theo `room_id`, dịch `GameMessage`
+    thành `RoomActor.Command`, học tập subscriber-set mỗi phòng từ `JOIN_ROOM` để fan-out broadcast
+    đúng tập connection (không phải 1 target cố định như giả định tạm của Task 3).
+  - `ChannelReplyActor` (engine, mới) — điểm duy nhất đóng dấu `InternalHeader{owner_pod_id,
+    delivery_class}` trước khi ghi ra `Channel`; `RoomActor`/`RoomState` vẫn không biết gì về
+    pod id hay delivery class, đúng thiết kế transport-agnostic của Task 3.
+  - `EngineResponseRouter` (gateway, mới) — `ANSWER_ACK` đi thẳng 1 học sinh (tra `RoomRegistry`
+    theo `student_id`), còn lại qua `Broadcaster` có sẵn; `NOT_OWNER` bị bỏ qua (không payload);
+    luôn `clearInternal()` trước khi tới client.
+  - `RoomRouteHandler` (sửa) — gọi `EngineSender.send(...)` thật thay vì `fireChannelRead` rồi
+    không ai đọc. Tiện thể áp ranh giới tin cậy cho `student_id` giống `room_id` đã có từ Task 6
+    (§10.6) — lỗ hổng nhỏ trước đây (envelope student_id không bị ép về giá trị đã xác thực)
+    chưa ai phát hiện vì chưa có gì thật sự tiêu thụ message đó.
+  - `RouteCache.evictPod` đổi `void` → `Set<String>` (room bị ảnh hưởng); `FrameChannelClient`
+    thêm `onPodDisconnected` — nền tảng cho §9.7 CONNECTION_DEGRADED (cơ chế có, chưa test
+    thành chuỗi hoàn chỉnh — xem "chưa làm" ở `plan.md`).
+  - `EngineNetworkLifecycle`/`GatewayNetworkLifecycle` (`.../boot/`, mới) — lần đầu Spring Boot
+    thật sự khởi động Netty/Pekko. **Đã chạy thật** (`spring-boot:run` + `curl`/`netstat`):
+    Engine bind 9100+8090; Gateway chỉ bind 8080 — cổng WS 9000 **cố tình không mở** vì
+    `GatewayNetworkLifecycle` có `@ConditionalOnBean(TicketVerifier.class)` và chưa có bean thật
+    (G1a/G1c chưa chốt) — đúng hành vi mong muốn, không phải lỗi.
+  - `EngineMetrics.recordMessageDequeued()` giờ được gọi thật trong `RoomActor.watched()` (chỉ
+    `JoinRoom`/`SubmitAnswer`) — đóng nốt cảnh báo Task 12 để lại.
+- **Prove-it:** `RoomSupervisorTest` (bỏ qua subscriber set khi broadcast) và
+  `EngineResponseRouterTest` (luôn broadcast thay vì gửi riêng ANSWER_ACK) — cả hai xác nhận
+  đúng 1 test Red trước khi trả lại Green.
+- **Cố ý CHƯA làm:**
+  - Docker Compose (2 GW + 2 Engine thật) — Docker daemon không chạy trong môi trường này
+    (`docker info` lỗi kết nối), chưa có `Dockerfile` nào. Không viết mù thứ không verify được.
+  - Kịch bản đa-pod + giết pod bằng `uni-e2e` thực nghiệm — cơ chế đã có (routing đã test riêng
+    ở Task 5, CONNECTION_DEGRADED đã wire) nhưng chưa ghép thành 1 test.
+  - `TeacherCommand.NEXT_STEP`/nội dung câu hỏi qua dây — không có định dạng nào được chốt (Task
+    11 note). Test dùng `RoomSupervisor.GetRoomActor` (hook test/ops-only) để bắt đầu câu hỏi.
+  - `PAUSE`, `KICK_STUDENT`, luồng rời phòng (`connected=false`) — log cảnh báo, không wire.
+- **File đụng tới:** xem danh sách đầy đủ ở `plan.md` Task 13 (>15 file, cả main lẫn test, cả
+  hai module cộng module mới `uni-e2e`).
+
 ## Tóm tắt tiến độ
 
-- **11/12 task done đầy đủ (T1, T2, T3, T4, T5, T7, T8, T10, T11, T12) + T6, T9 một phần. SPIKE đạt.**
-- **Đang làm tiếp:** Với T3 và T7 xong, task "sạch" duy nhất còn lại không bị chặn bởi câu hỏi kỹ
-  thuật/Product treo là Task 13 (walking skeleton) — nhưng Task 13 tự nó phụ thuộc Sync checkpoint
-  (chờ T9 đóng hẳn — T3/T7/T11 đã xong). Lựa chọn thực tế: quay lại chốt G1a/G1c (Task 6) với đội
-  dịch vụ nền tảng để mở khoá nốt, hoặc dừng ở đây chờ quyết định bên ngoài.
+- **11/12 task done đầy đủ (T1, T2, T3, T4, T5, T7, T8, T10, T11, T12) + T6, T9, T13 một phần. SPIKE đạt.**
+- **Đang làm tiếp:** Lõi walking skeleton (Task 13) đã chứng minh được qua socket thật trong
+  một JVM. Việc còn lại để Task 13 "xong đúng nghĩa đen AC": Docker Compose (cần môi trường có
+  Docker chạy được) và kịch bản đa-pod/giết-pod ghép thành test. Task 6 vẫn chờ G1a/G1c từ đội
+  dịch vụ nền tảng — ngoài tầm quyết định nội bộ.
 - **Block:**
   - Task 6 **không đóng hẳn được** — chờ G1a/G1c (thuật toán ký + dung sai đồng hồ) từ đội dịch vụ nền tảng.
-  - Task 9 thiếu chuỗi mailbox-depth-driven cụ thể (giới hạn kiến trúc 1-connection-nhiều-phòng, không phải bug).
+  - Task 9 thiếu chuỗi mailbox-depth-driven cụ thể (giới hạn kiến trúc 1-connection-nhiều-phòng, không phải bug — Task 13 xác nhận lại giới hạn này vẫn đúng sau khi nối dây thật).
+  - Task 13 thiếu Docker Compose thật (môi trường không có Docker daemon chạy) và kịch bản đa-pod/giết-pod ghép thành test.
   - ~~`ScoreCalculator` thật và công thức điểm trong `GameDefinition` đều chờ chung 1 quyết định Product (§9.2 câu 1).~~
     **Đã đóng 2026-09-06** — xem mục "ScoreCalculator thật" ở trên. Không còn block nào cho Task 2.

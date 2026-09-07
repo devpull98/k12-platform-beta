@@ -71,6 +71,12 @@
                          relative logs/ path and Promtail mounts the root one; without this
                          the log file lands under modules/ and nothing ships to Loki. -->
                     <workingDirectory>${session.executionRootDirectory}</workingDirectory>
+                    <!-- Task 13: see the identical note in uni-gateway/pom.xml. Without a
+                         classifier, `repackage` swaps this module's main artifact for the
+                         executable fat jar (classes under BOOT-INF/classes), which broke
+                         uni-e2e's dependency on this module during a bare `mvn clean install`
+                         from root. -->
+                    <classifier>exec</classifier>
                 </configuration>
             </plugin>
         </plugins>

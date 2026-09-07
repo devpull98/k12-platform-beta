@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.uni</groupId>
+        <artifactId>uni-realtime</artifactId>
+        <version>0.0.1-SNAPSHOT</version>
+        <relativePath>../../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>uni-e2e</artifactId>
+    <name>uni-e2e</name>
+    <description>
+        Task 13 walking skeleton: real GatewayBootstrap + real FrameChannelServer/RoomSupervisor
+        wired together in one JVM over real loopback sockets, driven by a real WebSocket client.
+        No main sources -- this module exists to run the test in src/test/java.
+    </description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.uni</groupId>
+            <artifactId>uni-protocol</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.uni</groupId>
+            <artifactId>uni-gateway</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.uni</groupId>
+            <artifactId>uni-engine</artifactId>
+        </dependency>
+        <!-- TestProbe: drives RoomSupervisor.GetRoomActor to start a question directly (no
+             wire message exists for it yet, see this module's WalkingSkeletonTest javadoc). -->
+        <dependency>
+            <groupId>org.apache.pekko</groupId>
+            <artifactId>pekko-actor-testkit-typed_${scala.binary.version}</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

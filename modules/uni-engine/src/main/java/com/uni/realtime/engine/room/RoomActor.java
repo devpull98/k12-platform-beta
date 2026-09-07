@@ -83,6 +83,7 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
     private final Clock clock;
     private final RoomState state;
     private final Timer processingTimer;
+    private final EngineMetrics engineMetrics;
     private final TimerScheduler<Command> timers;
     private final ActorRef<GameMessage> broadcastTarget;
 
@@ -97,6 +98,7 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
         this.clock = clock;
         this.state = new RoomState(roomId, clock, scoreCalculator);
         this.processingTimer = engineMetrics.processingLatencyTimer();
+        this.engineMetrics = engineMetrics;
         this.broadcastTarget = broadcastTarget;
     }
 
@@ -114,6 +116,12 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
 
     private <C extends Command> Function<C, Behavior<Command>> watched(Function<C, Behavior<Command>> handler) {
         return command -> {
+            // Only commands RoomSupervisor (Task 13) counted as enqueued get decremented here --
+            // StartGame/EndGame/Flush were never counted in, so decrementing for them too would
+            // run the gauge negative (exactly what EngineMetrics' javadoc warns against).
+            if (command instanceof JoinRoom || command instanceof SubmitAnswer) {
+                engineMetrics.recordMessageDequeued();
+            }
             long startNanos = System.nanoTime();
             try {
                 return handler.apply(command);

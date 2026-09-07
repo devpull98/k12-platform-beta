@@ -38,7 +38,8 @@ class FrameChannelClientTest {
         FakeEnginePod podB = new FakeEnginePod("engine-b").start();
         EventLoopGroup clientGroup = new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
         try {
-            FrameChannelClient client = new FrameChannelClient(new RouteCache(), ignored -> {}, clientGroup, new GatewayMetrics(new SimpleMeterRegistry()));
+            FrameChannelClient client = new FrameChannelClient(new RouteCache(), ignored -> {}, ignored -> {},
+                    clientGroup, new GatewayMetrics(new SimpleMeterRegistry()));
             client.connect(podA.podId, "localhost", podA.port());
             client.connect(podB.podId, "localhost", podB.port());
 
@@ -62,7 +63,8 @@ class FrameChannelClientTest {
         try {
             RouteCache routeCache = new RouteCache();
             BlockingQueue<GameMessage> responses = new LinkedBlockingQueue<>();
-            FrameChannelClient client = new FrameChannelClient(routeCache, responses::add, clientGroup, new GatewayMetrics(new SimpleMeterRegistry()));
+            FrameChannelClient client = new FrameChannelClient(routeCache, responses::add, ignored -> {},
+                    clientGroup, new GatewayMetrics(new SimpleMeterRegistry()));
             client.connect(podA.podId, "localhost", podA.port());
             client.connect(podB.podId, "localhost", podB.port());
 
@@ -90,7 +92,9 @@ class FrameChannelClientTest {
         EventLoopGroup clientGroup = new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
         try {
             RouteCache routeCache = new RouteCache();
-            FrameChannelClient client = new FrameChannelClient(routeCache, ignored -> {}, clientGroup, new GatewayMetrics(new SimpleMeterRegistry()));
+            BlockingQueue<java.util.Set<String>> disconnectedRoomIds = new LinkedBlockingQueue<>();
+            FrameChannelClient client = new FrameChannelClient(routeCache, ignored -> {}, disconnectedRoomIds::add,
+                    clientGroup, new GatewayMetrics(new SimpleMeterRegistry()));
             client.connect(podA.podId, "localhost", podA.port());
             client.connect(podB.podId, "localhost", podB.port());
 
@@ -100,6 +104,9 @@ class FrameChannelClientTest {
 
             podA.stop(); // drop the connection out from under the client
             awaitRouteEvicted(routeCache, "room-1");
+
+            // §9.7: whoever was routed to A needs CONNECTION_DEGRADED, not a closed WebSocket.
+            assertThat(disconnectedRoomIds.poll(2, TimeUnit.SECONDS)).containsExactly("room-1");
 
             client.send(messageFor("room-1")); // must not still think A owns it
             assertThat(podB.receive().getRoomId()).isEqualTo("room-1");

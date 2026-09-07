@@ -56,6 +56,17 @@
                          relative logs/ path and Promtail mounts the root one; without this
                          the log file lands under modules/ and nothing ships to Loki. -->
                     <workingDirectory>${session.executionRootDirectory}</workingDirectory>
+                    <!-- Task 13: without a classifier, `repackage` replaces this module's main
+                         artifact with the executable fat jar, whose classes live nested under
+                         BOOT-INF/classes, invisible to a plain dependency declaration. uni-e2e
+                         depends on this module directly, so a bare `mvn clean install` from
+                         root (which reaches `package` for this module before uni-e2e compiles)
+                         broke with "package ... does not exist" for every class here. A
+                         classifier keeps the plain jar as the main artifact and puts the
+                         executable jar alongside it under a different name; `mvn spring-boot:run`
+                         is unaffected either way since it runs from target/classes, not the
+                         packaged jar. -->
+                    <classifier>exec</classifier>
                 </configuration>
             </plugin>
         </plugins>

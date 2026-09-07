@@ -3,6 +3,7 @@ package com.uni.realtime.gateway.net;
 import com.uni.realtime.gateway.auth.TicketVerifier;
 import com.uni.realtime.gateway.fanout.RoomRegistry;
 import com.uni.realtime.gateway.metrics.GatewayMetrics;
+import com.uni.realtime.gateway.routing.EngineSender;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelInitializer;
@@ -28,6 +29,7 @@ public final class GatewayBootstrap {
     private final RoomRegistry roomRegistry;
     private final GatewayMetrics gatewayMetrics;
     private final IpAdmissionController ipAdmissionController;
+    private final EngineSender engineSender;
 
     private EventLoopGroup eventLoopGroup;
     private Channel serverChannel;
@@ -40,15 +42,18 @@ public final class GatewayBootstrap {
      * {@code gatewayMetrics} is likewise one shared instance (Task 12) so its metrics are
      * registered once, eagerly, rather than re-registered per connection. {@code
      * ipAdmissionController} (Task 7, §5.6 L1) is shared for the same reason: it counts
-     * handshake attempts per IP across every connection, not just one.
+     * handshake attempts per IP across every connection, not just one. {@code engineSender}
+     * (Task 13) is the pod's one {@code FrameChannelClient} -- every connection's {@code
+     * RoomRouteHandler} forwards through the same set of Engine-pod connections, never one each.
      */
     public GatewayBootstrap(int port, TicketVerifier ticketVerifier, RoomRegistry roomRegistry,
-            GatewayMetrics gatewayMetrics, IpAdmissionController ipAdmissionController) {
+            GatewayMetrics gatewayMetrics, IpAdmissionController ipAdmissionController, EngineSender engineSender) {
         this.port = port;
         this.ticketVerifier = ticketVerifier;
         this.roomRegistry = roomRegistry;
         this.gatewayMetrics = gatewayMetrics;
         this.ipAdmissionController = ipAdmissionController;
+        this.engineSender = engineSender;
     }
 
     public void start() throws InterruptedException {
@@ -62,7 +67,7 @@ public final class GatewayBootstrap {
                 .childHandler(new ChannelInitializer<SocketChannel>() {
                     @Override
                     protected void initChannel(SocketChannel ch) {
-                        GatewayPipeline.addTo(ch.pipeline(), ticketVerifier, roomRegistry, gatewayMetrics, ipAdmissionController);
+                        GatewayPipeline.addTo(ch.pipeline(), ticketVerifier, roomRegistry, gatewayMetrics, ipAdmissionController, engineSender);
                     }
                 });
 

@@ -4,6 +4,7 @@ import com.uni.realtime.gateway.auth.TicketAuthHandler;
 import com.uni.realtime.gateway.auth.TicketVerifier;
 import com.uni.realtime.gateway.fanout.RoomRegistry;
 import com.uni.realtime.gateway.metrics.GatewayMetrics;
+import com.uni.realtime.gateway.routing.EngineSender;
 import io.netty.channel.ChannelPipeline;
 import io.netty.handler.codec.http.HttpObjectAggregator;
 import io.netty.handler.codec.http.HttpServerCodec;
@@ -32,7 +33,7 @@ public final class GatewayPipeline {
     private GatewayPipeline() {}
 
     public static void addTo(ChannelPipeline pipeline, TicketVerifier ticketVerifier, RoomRegistry roomRegistry,
-            GatewayMetrics gatewayMetrics, IpAdmissionController ipAdmissionController) {
+            GatewayMetrics gatewayMetrics, IpAdmissionController ipAdmissionController, EngineSender engineSender) {
         // Outermost gate: reject an over-budget IP before it costs this pod anything else.
         pipeline.addLast(new IpAdmissionHandler(ipAdmissionController));
         // Writability is a transport-level concern orthogonal to auth/decoding, and must
@@ -44,6 +45,6 @@ public final class GatewayPipeline {
         pipeline.addLast(new TicketAuthHandler(ticketVerifier, roomRegistry, gatewayMetrics));
         pipeline.addLast(new RateLimitHandler());
         pipeline.addLast(new GameMessageDecoder());
-        pipeline.addLast(new RoomRouteHandler(roomRegistry));
+        pipeline.addLast(new RoomRouteHandler(roomRegistry, engineSender));
     }
 }

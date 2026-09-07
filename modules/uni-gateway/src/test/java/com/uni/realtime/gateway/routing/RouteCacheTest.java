@@ -47,6 +47,15 @@ class RouteCacheTest {
     }
 
     @Test
+    void should_returnAffectedRoomIds_when_podEvicted() {
+        cache.learn("room-1", "engine-a");
+        cache.learn("room-2", "engine-a");
+        cache.learn("room-3", "engine-b");
+
+        assertThat(cache.evictPod("engine-a")).containsExactlyInAnyOrder("room-1", "room-2");
+    }
+
+    @Test
     void should_doNothing_when_evictingAPodWithNoEntries() {
         cache.learn("room-1", "engine-a");
 
