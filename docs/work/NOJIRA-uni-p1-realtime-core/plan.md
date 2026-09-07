@@ -748,6 +748,80 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 
 ---
 
+### Task 16: `broadcast_seq` trên `RoomStateSnapshot` — đóng phát hiện B3 — ⏳ CHƯA BẮT ĐẦU (thêm 2026-09-07)
+
+- **Mode:** sequential after [T3] (tick coalescing đã có luồng flush) · phối hợp với PH-3
+- **Mô tả:** `_context.md` mục B3 ghi nhận: trường `sequence` trong envelope (`game_message.proto`
+  dòng 34-36) là counter do **client** gán cho `SubmitAnswer` (dedupe, §5.2) — không phải số thứ
+  tự do server gắn lên broadcast. `RoomStateSnapshot` hiện không mang bất kỳ số thứ tự/version
+  nào, nên FE (kể cả sau khi PH-3 xong) không có cách nào tự phát hiện một gói delta broadcast bị
+  rớt giữa đường (khác hẳn `SubmitAnswer`, đã có `sequence` + `ANSWER_ACK` để đối chiếu). Task này
+  thêm một số thứ tự **do server gắn**, tăng dần mỗi lần phòng flush, để PH-3 có cơ sở thiết kế
+  cơ chế phát hiện gap cho broadcast.
+- **File dự kiến:** `modules/uni-protocol/src/main/proto/game_message.proto` (thêm field
+  `broadcast_seq` vào `RoomStateSnapshot`), `modules/uni-engine/.../room/RoomState.java` (bộ đếm
+  tăng dần mỗi lần `flush()`/`joinRoom()` phát ra một bản ghi)
+- **Dependency:** Task 3 (cần luồng coalescing flush đã tồn tại để gắn số thứ tự vào đúng chỗ)
+- **Acceptance criteria:**
+  - [ ] `RoomStateSnapshot.broadcast_seq` tăng dần đơn điệu **mỗi phòng riêng** (không chia sẻ
+        giữa các phòng), tăng ở cả full snapshot (join/resync) lẫn delta (flush thường)
+  - [ ] Đổi `.proto` đi đúng quy trình đã ghi ở Rollback plan đầu file: PR riêng, codegen lại
+        **cả hai** service
+  - [ ] Không đổi ngữ nghĩa `sequence` hiện có (vẫn là counter do client gán cho `SubmitAnswer`) —
+        `broadcast_seq` là trường **mới**, không tái dùng/đổi tên trường cũ để tránh phá dedupe
+        đang hoạt động đúng (§5.2)
+  - [ ] Test xác nhận: bỏ qua N lần flush liên tiếp (mô phỏng gói bị rớt) → `broadcast_seq` của
+        gói kế tiếp nhận được lớn hơn gói trước đó đúng N+1, đủ để client tự tính được đã mất bao
+        nhiêu gói
+- **Verification:** `mvn -pl :uni-engine test -Dtest=TickCoalescingTest` mở rộng — case mới xác
+  nhận `broadcast_seq` tăng đúng thứ tự qua nhiều lần flush liên tiếp và không reset giữa full
+  snapshot với delta.
+- **Ghi chú:** Đây là điều kiện cần, không phải đủ, cho RESYNC broadcast — PH-3 vẫn phải tự thiết
+  kế phía client dùng `broadcast_seq` thế nào (gửi `RESYNC` khi phát hiện gap, hay chỉ chờ full
+  snapshot định kỳ theo N=10 của G2a). Task này chỉ đảm bảo server có gì đó để client bám vào;
+  không tự quyết định giao thức RESYNC cho broadcast thay PH-3.
+- **Rollback nếu fail:** revert; hành vi hiện tại (không có số thứ tự trên broadcast) không đổi.
+
+---
+
+### Task 17: Nối `missed_step_policy` vào `RoomState`/`RoomActor` — đóng phát hiện B4 — ⏳ CHƯA BẮT ĐẦU (thêm 2026-09-07)
+
+- **Mode:** sequential after [T11] (Game Definition đã có `MissedStepPolicy` trong schema)
+- **Mô tả:** `_context.md` mục B4 ghi nhận: `RoomActor`/`RoomState` không hề tham chiếu
+  `GameDefinition`/`MissedStepPolicy` — hành vi "0 điểm khi hết giờ không trả lời" hiện tại chỉ là
+  tình cờ (điểm khởi tạo mặc định = 0), không phải policy `ZERO` được thực thi có chủ đích. Nếu
+  cấu hình `SKIP` hoặc `ALLOW_LATE`, engine vẫn luôn hành xử như `ZERO`. Task này nối
+  `GameDefinition.missedStepPolicy` vào logic chuyển câu thật.
+- **File dự kiến:** `modules/uni-engine/src/main/java/.../room/RoomActor.java`,
+  `.../room/RoomState.java` (đọc `missedStepPolicy` lúc chuyển sang câu kế tiếp/kết thúc game)
+- **Dependency:** Task 11 (`GameDefinition`/`MissedStepPolicy` đã có trong schema)
+- **Acceptance criteria:**
+  - [ ] GĐ1 **chỉ hiện thực `ZERO`** (mặc định) — làm đúng, có chủ đích, thay vì tình cờ đúng như
+        hiện tại. `RoomState` phải thật sự đọc `missedStepPolicy` và áp dụng, không chỉ nhận tham
+        số rồi bỏ qua.
+  - [ ] `SKIP`/`ALLOW_LATE` **fail-fast lúc nạp definition** ở GĐ1 — thêm guard vào
+        `DefinitionLoader` theo đúng pattern đã dùng cho `tick_mode: FIXED` (Task 3 quyết định #4).
+        Đây là điều kiện bắt buộc **trước hoặc cùng** task này, không để lọt qua rồi mới phát hiện
+        không hoạt động đúng lúc chạy — đặc biệt vì `ALLOW_LATE` còn phá luôn ràng buộc snapshot
+        < 5 KB (system-architecture.md §4.8, xem thêm Task 14)
+  - [ ] Test xác nhận: học sinh không nộp bài trước deadline → điểm giữ nguyên 0 cho câu đó **vì
+        `RoomState` áp dụng `ZERO`**, có test kiểm tra rõ ràng field/nhánh code chạy qua, không chỉ
+        kiểm tra kết quả điểm số trùng hợp bằng 0
+  - [ ] Test xác nhận: definition khai `missed_step_policy: SKIP` hoặc `ALLOW_LATE` → bị
+        `DefinitionLoader` từ chối lúc nạp, không lọt tới `RoomActor`
+- **Verification:** `mvn -pl :uni-engine test -Dtest=DefinitionLoaderTest` (case mới: reject
+  `SKIP`/`ALLOW_LATE`) + `mvn -pl :uni-engine test -Dtest=RoomActorTest` (case mới: không trả lời
+  trước deadline → 0 điểm qua đúng nhánh `missedStepPolicy`, không phải qua giá trị mặc định tình
+  cờ).
+- **Ghi chú:** Không mở rộng sang hiện thực `SKIP`/`ALLOW_LATE` thật ở GĐ1 — `_context.md` §7.5
+  câu 1 (`missed_step_policy` mặc định) vẫn còn treo phía Product, và `ALLOW_LATE` bị cấm dùng
+  trong thi đấu theo chính tài liệu (§4.8). Task này chỉ đảm bảo `ZERO` chạy đúng nghĩa và các
+  giá trị khác không lọt qua trong im lặng.
+- **Rollback nếu fail:** revert; hành vi hiện tại ("0 điểm" tình cờ do giá trị mặc định) không đổi
+  — không regress vì `ZERO` vẫn là kết quả quan sát được giống hệt trước task.
+
+---
+
 ## Pre-merge Checklist
 
 - [x] Tất cả task pass verification (T6 chờ G1a/G1c ngoài tầm kiểm soát nội bộ; T9 có giới hạn

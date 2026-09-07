@@ -97,13 +97,23 @@ system-architecture.md §7.5 — Product/Business chưa trả lời.
 |---|---|---|---|
 | B1 | **Tài liệu tự mâu thuẫn về pod failure — và thực tế còn tệ hơn cả hai vế.** Cảnh báo ngay phía trên nói "phòng chết tới khi pod lên lại"; nhưng `system-architecture.md` ADR-002 (GĐ1-note) và §6.3 lại nói phòng "được phục hồi state từ Redis Snapshot (< 5 KB) sau 10–50ms" khi pod crash. Hai câu này mâu thuẫn nhau, và **grep code xác nhận cả hai đều chưa đúng theo hướng lạc quan**: chưa có một dòng nào ghi Redis snapshot trong repo — `RoomActor.flush()` chỉ gửi `state.flush()` tới `broadcastTarget` (client), không có nhánh persist nào. | Hiện trạng thật: pod crash = **mất 100% state của phòng đó**, không phải "10–50ms". Phải sửa `system-architecture.md` (bỏ câu "phục hồi 10–50ms" cho tới khi Redis snapshot có code thật), và không được lặp lại con số đó ở bất kỳ tài liệu/slide nào trước khi task ghi Redis snapshot tồn tại. |
 | B2 | **`ANSWER_ACK` gửi trước khi Hot Snapshot ghi Redis — cửa sổ mất dữ liệu ngầm, kể cả khi PH-3 xong.** §4.3 bước 4–5: `ANSWER_ACK` (Critical, hot path) gửi **ngay lập tức**; ghi Hot Snapshot lên Redis là async, "định kỳ mỗi 2–3s hoặc sau câu hỏi" — luôn xảy ra **sau** ACK. §4.7 bước 2: client xóa submission khỏi RingBuffer **ngay khi nhận ACK**. Nếu pod chết trong khoảng giữa hai mốc đó, câu trả lời đã được ACK nhưng chưa kịp persist bị mất vĩnh viễn — và client không còn gì trong RingBuffer để `RESYNC`. | Vi phạm ngầm cam kết "mất dữ liệu = 0" (ADR-003) **ngay cả khi PH-3 hoàn thành 100%** — đây là lỗ hổng ở phía server, không phải thiếu hụt phía client. **Fix không được vi phạm "Redis tuyệt đối không trên hot path"** (không được trì hoãn `ANSWER_ACK` tới sau khi Redis ghi xong — như vậy phá vỡ p99 < 100ms của §4.3 và luật RoomActor sync path). Hướng đúng: tách `ANSWER_ACK` (giữ tức thời, chỉ là optimistic ack) khỏi tín hiệu discard thật — thêm một message mới kiểu `COMMITTED_SEQ` gửi sau khi Redis ghi xong, client chỉ được xóa RingBuffer khi nhận `COMMITTED_SEQ`. Cần sửa protobuf schema (`uni-protocol`) **và** hợp đồng client (PH-3) — không tự đóng được chỉ bằng thay đổi server. |
+| B3 | **`RoomStateSnapshot` (broadcast) không mang số thứ tự nào — FE không có gì để phát hiện gói bị rớt, kể cả khi PH-3 xong.** `game_message.proto` field `sequence` (envelope, dòng 34-36) là "Monotonic per-student counter, **assigned by the client**" — chỉ dùng cho dedupe `SubmitAnswer` (§5.2), **không** phải số thứ tự do server gắn lên broadcast. `RoomStateSnapshot` (server → client, dòng 138-147) không có trường sequence/version nào cả — grep `RoomState.java` xác nhận không có `broadcast_seq`/`delta_seq` ở bất kỳ đâu. | Đây là lỗ hổng **schema/server**, không thuần là nợ kỹ thuật phía FE: dù PH-3 có làm Ring Buffer + RESYNC cho FE, FE vẫn không có cách nào tự phát hiện một gói delta broadcast bị rớt (khác hẳn với việc phát hiện `SubmitAnswer` bị rớt, đã có `sequence`/ACK). Cần thêm một số thứ tự do **server gắn** lên mỗi lần flush (ví dụ `broadcast_seq` tăng dần mỗi phòng) trước khi PH-3 có thể thiết kế đúng cơ chế phát hiện gap cho broadcast. |
+| B4 | **`missed_step_policy` chưa được `RoomActor`/`RoomState` đọc — "0 điểm" khi hết giờ không trả lời là tình cờ, không phải policy được thực thi.** Grep `RoomActor.java`/`RoomState.java` xác nhận **không có tham chiếu nào** tới `GameDefinition`/`MissedStepPolicy` — khớp đúng ghi chú Task 11: "RoomActor (Task 2) chưa được nối với nó". Hành vi "0 điểm" hiện tại chỉ là hệ quả của điểm số khởi tạo mặc định bằng 0, không phải do policy `ZERO` (mặc định trong schema) được engine thực thi có chủ đích. | Nếu sau này Product cấu hình `SKIP` (loại câu đã qua khỏi mẫu số xếp hạng) hoặc `ALLOW_LATE`, **engine vẫn luôn hành xử như `ZERO`** vì không đọc field này ở đâu cả — `missed_step_policy` trong Game Definition hiện là giấy tờ thuần, không có tác dụng thật lúc chạy. Cần nối `GameDefinition.missedStepPolicy` vào logic chuyển câu của `RoomState`/`RoomActor` trước khi policy khác `ZERO` được cho phép dùng thật. |
 
 > [!CAUTION]
-> B1/B2 phát hiện qua review kiến trúc 2026-09-07, xác nhận bằng đọc code thật
-> (`RoomActor.java`, `ModuloRoomOwnership.java`, `DefinitionLoader.java`) chứ không chỉ đọc
-> tài liệu. Chưa có task nào trong `plan.md` giao việc sửa. Cần bổ sung task (Redis snapshot
-> thật cho B1; `COMMITTED_SEQ` + sửa điều kiện discard RingBuffer cho B2) trước khi công bố SLA
-> "mất dữ liệu = 0" hoặc bất kỳ con số phục hồi cụ thể nào (10–50ms) ra ngoài.
+> B1–B4 phát hiện qua review kiến trúc 2026-09-07, xác nhận bằng đọc code thật
+> (`RoomActor.java`, `RoomState.java`, `RoomSupervisor.java`, `ModuloRoomOwnership.java`,
+> `DefinitionLoader.java`, `game_message.proto`) chứ không chỉ đọc tài liệu. Chưa có task nào
+> trong `plan.md` giao việc sửa B1/B2 trước phiên này. Cần bổ sung task (Redis snapshot thật cho
+> B1; `COMMITTED_SEQ` + sửa điều kiện discard RingBuffer cho B2; `broadcast_seq` trên
+> `RoomStateSnapshot` cho B3; nối `missed_step_policy` vào `RoomState` cho B4) trước khi công bố
+> SLA "mất dữ liệu = 0", bất kỳ con số phục hồi cụ thể nào (10–50ms), hoặc dùng policy khác
+> `ZERO` ở production.
+>
+> Cùng phiên review này còn xác nhận hai điểm **đã biết từ trước, không phải phát hiện mới**:
+> `TicketVerifier` chưa có implementation thật (chặn bởi G1a/G1c, xem Task 6) và
+> `TeacherCommand.PAUSE`/`KICK_STUDENT`/luồng rời phòng (`connected=false`) chưa wire trong
+> `RoomSupervisor`/`RoomActor` (xem ghi chú Task 13) — không thêm bảng riêng vì đã có chỗ ghi.
 
 ## Governance — trạng thái thật
 
