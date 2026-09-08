@@ -11,7 +11,7 @@ import java.net.SocketAddress;
 /**
  * L1 admission control (system-architecture.md §5.6): the outermost gate in {@link
  * GatewayPipeline}, ahead of everything else, so an IP over budget never spends a CPU cycle on
- * HTTP parsing, the WS upgrade, or ticket verification. Runs at {@link #channelActive} -- each
+ * HTTP parsing, the WS upgrade, or join token verification. Runs at {@link #channelActive} -- each
  * new TCP connection to this pod counts as one handshake attempt against {@link
  * IpAdmissionController}, which is the cheapest point available to reject at, before any of the
  * real handshake work happens.
@@ -25,7 +25,7 @@ import java.net.SocketAddress;
  * silently pass every school through the LB's own bucket. Fixing this requires knowing the
  * actual ingress technology (PROXY protocol support, {@code X-Forwarded-For}, or an L4
  * passthrough config) -- none of which this codebase controls or has been told, the same kind
- * of external-team question G1a/G1c already is for the ticket format. Not fixed here; needs
+ * of external-team question G1a/G1c already is for the join token format. Not fixed here; needs
  * confirmation from whoever owns the ingress before this control can be trusted in that
  * environment.
  */

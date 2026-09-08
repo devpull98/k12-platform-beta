@@ -13,7 +13,7 @@ import java.time.Duration;
 /**
  * Per-connection token buckets keyed conceptually by {@code student_id} (§5.6, §10.1) --
  * {@link GatewayPipeline} builds a fresh handler instance per channel, and a channel belongs
- * to exactly one student once {@code TicketAuthHandler} has bound it, so no shared map across
+ * to exactly one student once {@code JoinTokenAuthHandler} has bound it, so no shared map across
  * connections is needed here.
  *
  * <p>Deliberately never keyed by IP: a school behind one NAT IP can put 500+ students on it,

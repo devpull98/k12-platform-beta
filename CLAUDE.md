@@ -38,8 +38,8 @@ for context.
   `/actuator/prometheus`, send OTLP traces to `localhost:4318`, and write JSON logs to
   `logs/<spring.application.name>.log` for Promtail. See `observability/README.md`.
 
-Phase 1 has **no datastore on the hot path** — no MySQL. Valkey Cluster (one-time ticket
-guard via `SET ticket:{jti} 1 EX 30 NX`, Hot Snapshot < 5 KB) and Kafka Cluster
+Phase 1 has **no datastore on the hot path** — no MySQL. Valkey Cluster (one-time join token
+guard via `SET join-token:{jti} 1 EX 30 NX`, Hot Snapshot < 5 KB) and Kafka Cluster
 (`game.events.v1` event streaming after scoring) **are** in scope per the 2026-09-05 decision
 in `_context.md` — both live in the async backplane, never inside a Netty EventLoop or on
 the synchronous `RoomActor` message path. If a task reaches for a *synchronous* DB/Valkey/Kafka
@@ -92,7 +92,7 @@ modules/uni-protocol/            game_message.proto + generated Java. Depended o
 modules/uni-observability/       Plumbing shared by both services: Prometheus/OTLP wiring, JSON
                                   logging, Kafka log appender (prod profile only), Alertmanager
                                   webhook relay. Inherited from the removed project.
-modules/uni-websocket-gateway/   WebSocket edge: handshake, ticket auth, rate limiting, room
+modules/uni-websocket-gateway/   WebSocket edge: handshake, join-token auth, rate limiting, room
                                   registry, zero-copy fan-out, backpressure, learned routing.
 modules/uni-game-engine/         Game engine: RoomActor FSM, scoring, dedupe, tick coalescing,
                                   room ownership, internal frame channel server.
@@ -146,7 +146,7 @@ code that passes a naive test and breaks in production.
 
 - No Cluster Sharding: losing an engine pod kills its rooms until the pod returns. Accepted
   at 2–3k CCU, **must go before Phase 2**, and the UI has to show it.
-- No `RESYNCING` state, no dashboard fan-in, no LZ4. Valkey Cluster (ticket dedup + Hot
+- No `RESYNCING` state, no dashboard fan-in, no LZ4. Valkey Cluster (join-token dedup + Hot
   Snapshot) and Kafka Cluster (event streaming) **are** in Phase 1 scope, off the hot path —
   see the note above; this used to say "no Redis, no Kafka" before the 2026-09-05 decision
   (and "Redis Cluster" rather than "Valkey Cluster" before the 2026-09-07 Valkey switch).

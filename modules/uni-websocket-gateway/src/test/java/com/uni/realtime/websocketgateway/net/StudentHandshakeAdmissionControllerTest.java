@@ -12,7 +12,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * §5.6 L2 verification: the student_id-keyed handshake budget itself, independent of Netty --
- * same shape as {@link IpAdmissionControllerTest} (L1), but keyed by the identity a ticket has
+ * same shape as {@link IpAdmissionControllerTest} (L1), but keyed by the identity a join token has
  * just verified rather than by IP, specifically so one student reconnecting too often never
  * exhausts a budget shared with classmates behind the same NAT IP (§5.6).
  */

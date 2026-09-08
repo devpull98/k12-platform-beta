@@ -203,7 +203,7 @@ public final class RoomSupervisor extends AbstractBehavior<RoomSupervisor.Comman
 
     /**
      * PH-3 / §9.3: assumes the channel already joined this room via a prior {@code JOIN_ROOM} on
-     * this same reconnect ({@code TicketAuthHandler} requires JOIN_ROOM as the first frame of
+     * this same reconnect ({@code JoinTokenAuthHandler} requires JOIN_ROOM as the first frame of
      * every new connection), so {@code replyActorFor} below finds/reuses the same subscriber
      * {@code deliverJoin} already registered -- no extra subscription bookkeeping needed, same
      * as the {@code SUBMIT_ANSWER} branch above.

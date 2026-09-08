@@ -46,7 +46,7 @@ modules/
   uni-protocol/             game_message.proto + code sinh ra. Cả hai service cùng phụ thuộc
   uni-observability/        observability dùng chung: Prometheus/OTLP, log JSON, Kafka log
                              appender, relay webhook Alertmanager
-  uni-websocket-gateway/    biên WebSocket: handshake, ticket auth, rate limit, fan-out,
+  uni-websocket-gateway/    biên WebSocket: handshake, join-token auth, rate limit, fan-out,
                              backpressure, định tuyến học được từ engine
   uni-game-engine/          RoomActor FSM, chấm điểm, dedupe, tick coalescing, sở hữu phòng
 docs/

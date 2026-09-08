@@ -96,9 +96,9 @@ message InternalHeader {
 // ---------------------------------------------------------------------------
 
 message JoinRoom {
-  // Short-lived signed ticket issued by POST /session/{id}/join. Verified once at
+  // Short-lived signed join token issued by POST /session/{id}/join. Verified once at
   // handshake; the auth handler then removes itself from the pipeline.
-  string ticket = 1;
+  string join_token = 1;
   string display_name = 2;
   string client_version = 3;
 }

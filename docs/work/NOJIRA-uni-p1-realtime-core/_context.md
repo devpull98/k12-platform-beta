@@ -29,9 +29,9 @@
 - **Rules:** `rules/spring/` (cài 2026-09-06) — viết theo Netty/Pekko/Protobuf thật, **không** phải convention Spring MVC/JPA mặc định của kit
 
 ## Impact radius
-- **Stores:** Valkey Cluster (chặn replay ticket lúc handshake, lưu Hot Snapshot < 5 KB bất đồng bộ). Tuyệt đối không nằm trên hot path.
+- **Stores:** Valkey Cluster (chặn replay join token lúc handshake, lưu Hot Snapshot < 5 KB bất đồng bộ). Tuyệt đối không nằm trên hot path.
 - **Messaging:** Kafka Cluster (async event streaming sau khi nộp bài cho Teacher Dashboard & DB writer).
-- **APIs:** `WS /ws` (biên realtime) · `POST /session/{id}/join` (cấp ticket, đã có ở dịch vụ nền tảng)
+- **APIs:** `WS /ws` (biên realtime) · `POST /session/{id}/join` (cấp join token, đã có ở dịch vụ nền tảng)
 
 ## Phạm vi đã chốt
 
@@ -43,7 +43,7 @@
 | Tick coalescing (§6.2) | ADR-4, quyết định hình dạng đường broadcast |
 | Lazy-learned routing (§8.2) | **PH-2** — làm ngay thì Giai đoạn 2 không phải sửa Gateway |
 | FSM `LOBBY → PLAYING → FINISHED` | Tối thiểu để chơi được một ván |
-| **Valkey Cluster (Ticket SETNX & Snapshot)** | Hạ tầng có sẵn: chặn ticket replay và bảo hiểm Zero Data Loss cho Engine |
+| **Valkey Cluster (Join token SETNX & Snapshot)** | Hạ tầng có sẵn: chặn join token replay và bảo hiểm Zero Data Loss cho Engine |
 | **Kafka Cluster (Event Streaming)** | Hạ tầng có sẵn: đẩy sự kiện sau trận cho Dashboard và PostgreSQL |
 
 **Ngoài Giai đoạn 1:** Cluster Sharding đa node + SBR (§9.1) · trạng thái `RESYNCING` đa node tự động · nén LZ4.
@@ -131,8 +131,8 @@ system-architecture.md §7.5 — Product/Business chưa trả lời.
 > đóng hẳn, nhưng "chưa từng chạm Redis/Kafka thật" không còn là lý do hoãn nữa.
 >
 > Cùng phiên review này còn xác nhận hai điểm **đã biết từ trước, không phải phát hiện mới**:
-> `TicketVerifier` chưa có implementation THẬT cho staging/production (vẫn chặn bởi G1a/G1c, xem
-> Task 6) — Task 20 chỉ thêm một implementation **dev-only** (`DevTicketVerifier`, khoá kép profile
+> `JoinTokenVerifier` chưa có implementation THẬT cho staging/production (vẫn chặn bởi G1a/G1c, xem
+> Task 6) — Task 20 chỉ thêm một implementation **dev-only** (`DevJoinTokenVerifier`, khoá kép profile
 > + property, không liên quan gì tới thuật toán ký thật) để mở WS port cho test cục bộ — và
 > `TeacherCommand.PAUSE`/`KICK_STUDENT`/luồng rời phòng (`connected=false`) chưa wire trong
 > `RoomSupervisor`/`RoomActor` (xem ghi chú Task 13) — không thêm bảng riêng vì đã có chỗ ghi.
@@ -158,7 +158,7 @@ track: standard
 last_skill: tdd
 next_skill: tdd
 progress: "T1, T2, T4, T5, T10 xong. T6 MOT PHAN xong (GatewayPipeline + WS handshake +
-  ChannelAttributes + room_id trust boundary - 7/7 test); TicketVerifier van la interface
+  ChannelAttributes + room_id trust boundary - 7/7 test); JoinTokenVerifier van la interface
   KHONG CO implementation that vi G1a/G1c chua chot - khong duoc tu bien verifier gia dua len
   staging/production. T5 = RouteCache (lazy-learned, khong TTL) + FrameChannelClient (round-robin
   -> hoc tu owner_pod_id -> gui thang, evict khi pod dut ket noi) - 15/15 test o uni-websocket-gateway.
@@ -170,8 +170,8 @@ progress: "T1, T2, T4, T5, T10 xong. T6 MOT PHAN xong (GatewayPipeline + WS hand
   IP admission control (300 handshake/phut) CHUA lam vi chua co diem gan trong repo. T8 xong:
   RoomRegistry (Map room_id -> Set Channel, ConcurrentHashMap) + Broadcaster
   (retainedDuplicate() - da prove-it bang cach doi tam sang retain() de xac nhan FanoutTest
-  thuc su Red truoc khi tin Green) - noi day that vao TicketAuthHandler (add khi join) +
-  RoomRouteHandler (remove khi channelInactive, vi TicketAuthHandler tu go khoi pipeline sau
+  thuc su Red truoc khi tin Green) - noi day that vao JoinTokenAuthHandler (add khi join) +
+  RoomRouteHandler (remove khi channelInactive, vi JoinTokenAuthHandler tu go khoi pipeline sau
   join). T9 MOT PHAN xong: BackpressureHandler (channelWritabilityChanged -> toggle autoRead +
   Counter channel_not_writable_total) ap dung dong nhat o ca 3 hop (WS client, GW->Engine,
   Engine accepted channel), WRITE_BUFFER_WATER_MARK 32/64KB; Broadcaster mo rong DeliveryClass
@@ -193,7 +193,7 @@ progress: "T1, T2, T4, T5, T10 xong. T6 MOT PHAN xong (GatewayPipeline + WS hand
   chi tin unit test), phat hien va sua 2 lo hong: (1) BackpressureHandler dang ky metric lazy
   moi khi co connection moi -> khong hien dien luc pod moi start; (2) EngineMetrics/
   GatewayMetrics chua he la Spring bean -> khong ai khoi tao trong app that. Them
-  MetricsConfiguration (@Bean) ca 2 module. trace_id sinh tai TicketAuthHandler luc handshake,
+  MetricsConfiguration (@Bean) ca 2 module. trace_id sinh tai JoinTokenAuthHandler luc handshake,
   RoomRouteHandler dong dau vao InternalHeader cho MOI message forward - toi bien Gateway,
   chua toi Engine that (cho Task 13 noi FrameChannelClient.send). 88/88 test (46 gateway + 42
   engine), toan reactor xanh. Ke tiep: T1/T2/T4/T5/T8/T10/T11/T12 xong + SPIKE dat - task sach
@@ -254,7 +254,7 @@ progress: "T1, T2, T4, T5, T10 xong. T6 MOT PHAN xong (GatewayPipeline + WS hand
   (khoa theo student_id, 10 handshake/phut) hay L3 (admission control toan pod, §6.5) - ca hai
   co trong system-architecture.md §5.6 nhung khong nam trong AC goc cua plan.md Task 7, mo rong
   se la tu them pham vi. Khong them metric Prometheus rieng cho luot tu choi L1 (chi log.warn,
-  dung khuon TicketAuthHandler xu ly ticket bi tu choi). Task sach con lai: Task 13 (cho Sync
+  dung khuon JoinTokenAuthHandler xu ly join token bi tu choi). Task sach con lai: Task 13 (cho Sync
   checkpoint - chi con T9 dong han, T3/T7/T11 da xong). Task 6 van cho G1a/G1c tu doi dich vu nen
   tang - khong tu quyet duoc trong noi bo.
   2026-09-07 (tiep 2): T13 (walking skeleton) MOT PHAN xong. Xay moi RoomSupervisor (engine) -
@@ -275,8 +275,8 @@ progress: "T1, T2, T4, T5, T10 xong. T6 MOT PHAN xong (GatewayPipeline + WS hand
   GatewayNetworkLifecycle (.../boot/, moi) - lan dau Spring Boot that su khoi dong Netty/Pekko -
   DA CHAY THAT (spring-boot:run + curl/netstat): Engine bind that 9100+8090; Gateway chi bind
   8080 - cong WS 9000 CO CHU Y khong mo vi GatewayNetworkLifecycle co
-  @ConditionalOnBean(TicketVerifier.class) va chua co bean that (G1a/G1c chua chot) - dung hanh
-  vi mong muon, dung theo dung cam cua TicketAuthHandler ve verifier tam. Test moi
+  @ConditionalOnBean(JoinTokenVerifier.class) va chua co bean that (G1a/G1c chua chot) - dung hanh
+  vi mong muon, dung theo dung cam cua JoinTokenAuthHandler ve verifier tam. Test moi
   WalkingSkeletonTest (modules/uni-e2e, module MOI) dung socket that hoan toan (WS client that
   qua Netty WebSocketClientHandshaker, khong EmbeddedChannel nao) - join+full snapshot, submit+
   AnswerAck+delta ca 2 client, im lang -> 0 goi, replay cung sequence -> khong doi. Phat hien va
@@ -324,7 +324,7 @@ progress: "T1, T2, T4, T5, T10 xong. T6 MOT PHAN xong (GatewayPipeline + WS hand
   'mot co che backpressure duy nhat' (§10.2) - them Broadcaster.sendToOne(channel, frame,
   deliveryClass) ap dung quy tac drop/close giong broadcast(). (7) linear scan sendToOneStudent -
   RoomRegistry them overload add(roomId, studentId, channel) + channelFor() O(1),
-  TicketAuthHandler doi sang dung. (8) ConcurrentHashMap thua trong RoomSupervisor - doi ca 3
+  JoinTokenAuthHandler doi sang dung. (8) ConcurrentHashMap thua trong RoomSupervisor - doi ca 3
   map sang HashMap thuong (single-actor-thread, khong can concurrent). (10) synchronized
   TokenBucket - THU HEP lai: bo synchronized khoi TokenBucket (RateLimitHandler goi tren duong
   nong nhat he thong ma khong tranh chap that), chuyen khoa vao dung IpAdmissionController.tryAdmit()
@@ -346,7 +346,7 @@ progress: "T1, T2, T4, T5, T10 xong. T6 MOT PHAN xong (GatewayPipeline + WS hand
   phien qua governance-check.sh) nhung chua tung commit. mvn clean install toan reactor: BUILD
   SUCCESS, khong leak. Grep bat buoc van sach.
   2026-09-08: dong not cac task-code con lai cua Phase 1 KHONG bi chan boi quyet dinh ben ngoai
-  (Task 6 TicketVerifier that/G1a-c, Task 15 PH-3, Task 17 late-join, TeacherCommand.PAUSE deu
+  (Task 6 JoinTokenVerifier that/G1a-c, Task 15 PH-3, Task 17 late-join, TeacherCommand.PAUSE deu
   van de nguyen, co ly do ro trong plan.md). Viec 1: luong roi phong (connected=false) - them
   MessageType.STUDENT_LEFT (khong payload), RoomRouteHandler.channelInactive gui cho Engine neu
   channel da JOIN_ROOM, RoomState.markDisconnected() moi. Viec 2: TeacherCommand.KICK_STUDENT wire

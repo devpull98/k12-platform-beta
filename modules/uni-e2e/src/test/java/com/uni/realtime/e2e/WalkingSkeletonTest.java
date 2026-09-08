@@ -8,9 +8,9 @@ import com.uni.realtime.gameengine.room.RoomOwnership;
 import com.uni.realtime.gameengine.room.RoomSupervisor;
 import com.uni.realtime.gameengine.scoring.FormulaScoreCalculator;
 import com.uni.realtime.e2e.support.SimulatedStudentClient;
-import com.uni.realtime.websocketgateway.auth.TicketClaims;
-import com.uni.realtime.websocketgateway.auth.TicketRejectedException;
-import com.uni.realtime.websocketgateway.auth.TicketVerifier;
+import com.uni.realtime.websocketgateway.auth.JoinTokenClaims;
+import com.uni.realtime.websocketgateway.auth.JoinTokenRejectedException;
+import com.uni.realtime.websocketgateway.auth.JoinTokenVerifier;
 import com.uni.realtime.websocketgateway.fanout.Broadcaster;
 import com.uni.realtime.websocketgateway.fanout.RoomRegistry;
 import com.uni.realtime.websocketgateway.metrics.GatewayMetrics;
@@ -43,9 +43,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Task 13, plan.md's stated criterion for "Giai đoạn 1 xong": a real packet travels the whole
  * loop -- WebSocket client → Gateway → internal frame channel → Engine's {@code RoomSupervisor}
  * → {@code RoomActor} → back out the same path. Everything here is a real socket (no {@code
- * EmbeddedChannel}); the only thing not real is the ticket, because G1a/G1c (the signing
- * algorithm) is still an open question for the platform team -- {@link FakeTicketVerifier}
- * below is explicitly a test-only stand-in, exactly as {@code TicketAuthHandler}'s own javadoc
+ * EmbeddedChannel}); the only thing not real is the joinToken, because G1a/G1c (the signing
+ * algorithm) is still an open question for the platform team -- {@link FakeJoinTokenVerifier}
+ * below is explicitly a test-only stand-in, exactly as {@code JoinTokenAuthHandler}'s own javadoc
  * requires ("Không dùng verifier tạm này ở staging/production").
  *
  * <p>Starting a question has no wire message at all in Phase 1's schema (no game-definition
@@ -92,8 +92,8 @@ class WalkingSkeletonTest {
 
         clientA = SimulatedStudentClient.connect(gatewayPort);
         clientB = SimulatedStudentClient.connect(gatewayPort);
-        clientA.send(joinRoom("ticket:student-a:room-1", "Alice"));
-        clientB.send(joinRoom("ticket:student-b:room-1", "Bob"));
+        clientA.send(joinRoom("join-token:student-a:room-1", "Alice"));
+        clientB.send(joinRoom("join-token:student-b:room-1", "Bob"));
         assertThat(clientA.takeMatching("Alice's full snapshot",
                 m -> m.getType() == MessageType.ROOM_STATE_SNAPSHOT && m.getRoomStateSnapshot().getFull())).isNotNull();
         assertThat(clientB.takeMatching("Bob's full snapshot",
@@ -136,7 +136,7 @@ class WalkingSkeletonTest {
                 responseRouter::broadcastConnectionDegraded, gatewayClientGroup, gatewayMetrics);
         frameChannelClient.connect("engine-0", "localhost", enginePort);
 
-        gatewayBootstrap = new GatewayBootstrap(0, new FakeTicketVerifier(), roomRegistry, gatewayMetrics,
+        gatewayBootstrap = new GatewayBootstrap(0, new FakeJoinTokenVerifier(), roomRegistry, gatewayMetrics,
                 new IpAdmissionController(), new StudentHandshakeAdmissionController(), frameChannelClient);
         gatewayBootstrap.start();
         return gatewayBootstrap.boundPort();
@@ -156,10 +156,10 @@ class WalkingSkeletonTest {
                 && message.getRoomStateSnapshot().getPlayersList().stream().anyMatch(p -> p.getStudentId().equals(studentId));
     }
 
-    private static GameMessage joinRoom(String ticket, String displayName) {
+    private static GameMessage joinRoom(String joinToken, String displayName) {
         return GameMessage.newBuilder()
                 .setType(MessageType.JOIN_ROOM)
-                .setJoinRoom(JoinRoom.newBuilder().setTicket(ticket).setDisplayName(displayName))
+                .setJoinRoom(JoinRoom.newBuilder().setJoinToken(joinToken).setDisplayName(displayName))
                 .build();
     }
 
@@ -173,18 +173,18 @@ class WalkingSkeletonTest {
     }
 
     /**
-     * Test-only stand-in for the real ticket format G1a/G1c has not settled yet. Ticket shape:
-     * {@code "ticket:<student_id>:<room_id>"} -- nothing more than what {@link TicketClaims}
+     * Test-only stand-in for the real joinToken format G1a/G1c has not settled yet. JoinToken shape:
+     * {@code "join-token:<student_id>:<room_id>"} -- nothing more than what {@link JoinTokenClaims}
      * needs, invented here because there is nothing real to call instead.
      */
-    private static final class FakeTicketVerifier implements TicketVerifier {
+    private static final class FakeJoinTokenVerifier implements JoinTokenVerifier {
         @Override
-        public TicketClaims verify(String ticket) throws TicketRejectedException {
-            String[] parts = ticket.split(":");
-            if (parts.length != 3 || !parts[0].equals("ticket")) {
-                throw new TicketRejectedException("malformed test ticket: " + ticket);
+        public JoinTokenClaims verify(String joinToken) throws JoinTokenRejectedException {
+            String[] parts = joinToken.split(":");
+            if (parts.length != 3 || !parts[0].equals("join-token")) {
+                throw new JoinTokenRejectedException("malformed test joinToken: " + joinToken);
             }
-            return new TicketClaims(parts[1], parts[2], "session-" + parts[1], List.of("student"));
+            return new JoinTokenClaims(parts[1], parts[2], "session-" + parts[1], List.of("student"));
         }
     }
 }

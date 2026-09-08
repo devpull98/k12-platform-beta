@@ -247,20 +247,20 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 
 ---
 
-### Task 6: Netty pipeline Gateway + WS handshake + ticket auth — ⚠️ MỘT PHẦN XONG (2026-09-06)
+### Task 6: Netty pipeline Gateway + WS handshake + join-token auth — ⚠️ MỘT PHẦN XONG (2026-09-06)
 
 - **Mode:** sequential after [T1] · parallel with [T2, T4]
 - **Mô tả:** Biên WebSocket. Spring Boot chỉ lo bootstrap/actuator, đường đi gói tin là Netty thuần (quyết định A1).
 - **Kết quả:** `mvn -pl :uni-websocket-gateway test -Dtest=GatewayPipelineTest` 6/6 pass (`EmbeddedChannel`),
   toàn module 7/7, không leak, không deprecation warning. Chi tiết: `note.md`.
-- **File dự kiến:** `modules/uni-websocket-gateway/src/main/java/.../net/GatewayBootstrap.java`, `.../auth/TicketAuthHandler.java`, `.../net/RoomRouteHandler.java`
+- **File dự kiến:** `modules/uni-websocket-gateway/src/main/java/.../net/GatewayBootstrap.java`, `.../auth/JoinTokenAuthHandler.java`, `.../net/RoomRouteHandler.java`
 - **Dependency:** Task 1
 - **Acceptance criteria:**
-  - [x] Pipeline đúng thứ tự: `HttpServerCodec → HttpObjectAggregator(50KB) → WebSocketServerProtocolHandler → TicketAuthHandler → RateLimitHandler → ProtobufDecoder → RoomRouteHandler`
+  - [x] Pipeline đúng thứ tự: `HttpServerCodec → HttpObjectAggregator(50KB) → WebSocketServerProtocolHandler → JoinTokenAuthHandler → RateLimitHandler → ProtobufDecoder → RoomRouteHandler`
         (cập nhật 2026-09-06: cap chung mọi gói WS chốt ở 50KB — system-architecture.md §1.1/§7.5 —
         thay cho 8KB tạm ban đầu)
-  - [x] `TicketAuthHandler` **tự gỡ khỏi pipeline** sau handshake — mỗi gói sau đó không verify lại chữ ký
-  - [x] Ticket hợp lệ → ghi `ChannelAttributes{student_id, room_id, session_id}`
+  - [x] `JoinTokenAuthHandler` **tự gỡ khỏi pipeline** sau handshake — mỗi gói sau đó không verify lại chữ ký
+  - [x] Join token hợp lệ → ghi `ChannelAttributes{student_id, room_id, session_id}`
   - [x] **`room_id` luôn đọc từ `ChannelAttributes`, không bao giờ từ payload** (§10.6)
   - [x] Payload mang `room_id` khác attribute → **đóng channel + log cảnh báo bảo mật**
   - [x] Netty EventLoop cố định = cores × 2; **không** DB/Redis/HTTP call nào trong EventLoop (§13.2)
@@ -274,14 +274,14 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
         về **manifest triển khai thật** (K8s ingress hoặc LB trước Gateway), thứ vẫn chưa tồn tại
         ở bất kỳ đâu trong repo. Vẫn để `[ ]`.
 - **Verification:** `mvn -pl :uni-websocket-gateway test -Dtest=GatewayPipelineTest`. Case bắt buộc: gói có `room_id` giả mạo → channel bị đóng.
-- **Ghi chú quan trọng — thuật toán ký ticket KHÔNG được hiện thực ở đây:** tech-design.md
+- **Ghi chú quan trọng — thuật toán ký join token KHÔNG được hiện thực ở đây:** tech-design.md
   G1a/G1c (thuật toán ký, phân phối khoá, dung sai lệch đồng hồ) **vẫn chưa chốt** — phải hỏi
-  đội dịch vụ nền tảng, không tự bịa. `TicketAuthHandler` vì vậy nhận một `TicketVerifier`
+  đội dịch vụ nền tảng, không tự bịa. `JoinTokenAuthHandler` vì vậy nhận một `JoinTokenVerifier`
   (interface only, **không có implementation thật cho staging/production**) qua constructor;
   test dùng fake verifier. Khi G1a/G1c chốt, chỉ cần viết một implementation thật của
-  `TicketVerifier` và wire vào `GatewayBootstrap` — không phải sửa `TicketAuthHandler`.
+  `JoinTokenVerifier` và wire vào `GatewayBootstrap` — không phải sửa `JoinTokenAuthHandler`.
   **Không dùng verifier tạm này ở staging/production.** Cập nhật 2026-09-07 (Task 20): đã có một
-  implementation **dev-only** (`DevTicketVerifier`, HMAC tự bịa cho test cục bộ, khoá kép bằng
+  implementation **dev-only** (`DevJoinTokenVerifier`, HMAC tự bịa cho test cục bộ, khoá kép bằng
   Spring profile + property) để mở WS port test qua Docker — không liên quan gì tới thuật toán
   ký thật G1a/G1c sẽ chốt, không đổi kết luận task này vẫn "một phần xong" vì chờ bên ngoài.
 - **Rollback nếu fail:** revert; nhánh T2/T4 không bị ảnh hưởng.
@@ -303,7 +303,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 - **Acceptance criteria:**
   - [x] Bucket riêng theo loại: `SUBMIT_ANSWER` 3/refill 1s · `UPDATE_DRAFT` 10/refill 10s · `HEARTBEAT` 2/refill 1 mỗi 30s
   - [x] Khoá bucket là `student_id` lấy từ `ChannelAttributes` (cụ thể: mỗi connection/`RateLimitHandler`
-        đã gắn với đúng 1 student_id sau `TicketAuthHandler`, nên bucket state per-instance = per-student_id)
+        đã gắn với đúng 1 student_id sau `JoinTokenAuthHandler`, nên bucket state per-instance = per-student_id)
   - [x] L1 theo IP đặt **4.000 handshake/phút** (cập nhật: quyết định Business 2026-09-06 nâng từ
         300 → 4.000, xem system-architecture.md §5.6 — con số trong AC gốc của plan.md đã lỗi
         thời trước khi Task 7 được hiện thực đầy đủ). Hiện thực ở `IpAdmissionController` +
@@ -338,9 +338,9 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
   - **Cập nhật 2026-09-07 — L2 (khoá theo `student_id`, 10 handshake/phút) nay đã hiện thực:**
     `StudentHandshakeAdmissionController` (cùng khuôn `IpAdmissionController` — một
     `TokenBucket`/`student_id`, chia sẻ qua `ConcurrentHashMap` toàn pod, capacity=10,
-    refill=1 phút), chạy trong `TicketAuthHandler` **ngay sau** `ticketVerifier.verify(...)`
+    refill=1 phút), chạy trong `JoinTokenAuthHandler` **ngay sau** `joinTokenVerifier.verify(...)`
     thành công (lúc `student_id` vừa xác định được) và **trước** khi bind `ChannelAttributes` —
-    vượt ngưỡng thì đóng channel, cùng kiểu xử lý với ticket bị từ chối. Phát hiện khi người dùng
+    vượt ngưỡng thì đóng channel, cùng kiểu xử lý với join token bị từ chối. Phát hiện khi người dùng
     hỏi lại "NAT hoạt động thế nào" và soát lại thấy AC này có trong tài liệu nhưng chưa từng có
     code — không phải việc quên từ trước, mà là khoảng trống thật sự tồn tại từ Task 7 gốc tới
     giờ. Test mới: `StudentHandshakeAdmissionControllerTest` (3 case, cùng khuôn
@@ -360,7 +360,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 - **Kết quả:** `mvn -pl :uni-websocket-gateway test -Dtest=FanoutTest` 4/4 pass — **đã chủ động đổi tạm
   sang `.retain()` để xác nhận test thật sự Red** (client thứ 2 nhận mảng byte rỗng), rồi
   trả lại `.retainedDuplicate()` để Green — không chỉ tin code đúng vì test pass ngay lần đầu.
-  `RoomRegistryTest` 5/5 pass. Nối dây thật vào `TicketAuthHandler`/`RoomRouteHandler`/
+  `RoomRegistryTest` 5/5 pass. Nối dây thật vào `JoinTokenAuthHandler`/`RoomRouteHandler`/
   `GatewayPipeline`/`GatewayBootstrap` — `GatewayPipelineTest` thêm 2 case xác nhận add-on-join
   và remove-on-channelInactive qua đúng pipeline thật. Toàn module 35/35, toàn reactor xanh,
   `-Dio.netty.leakDetection.level=paranoid` sạch (đã bật sẵn toàn cục qua Surefire).
@@ -374,11 +374,11 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
   - [x] Engine gửi **một gói cho mỗi GW pod**, Gateway mới nhân bản (quyết định B1) — thoả mãn
         theo đúng hình dạng `Broadcaster.broadcast(roomId, mộtFrame)`, không cần code thêm gì
 - **Verification:** `mvn -pl :uni-websocket-gateway test -Dtest=FanoutTest` với **12 `EmbeddedChannel`** — kiểm **từng client nhận đủ số byte**, không chỉ client đầu. Chạy kèm `-Dio.netty.leakDetection.level=paranoid`, log leak phải sạch.
-- **Ghi chú:** `TicketAuthHandler` (Task 6) đăng ký channel vào `RoomRegistry` ngay khi bind
+- **Ghi chú:** `JoinTokenAuthHandler` (Task 6) đăng ký channel vào `RoomRegistry` ngay khi bind
   `ChannelAttributes` (đây là chỗ duy nhất biết `room_id`), nhưng nó tự gỡ khỏi pipeline sau
   đó — nên việc gỡ đăng ký (`channelInactive`) đặt ở `RoomRouteHandler` (handler duy nhất còn
   sống suốt vòng đời connection). `RoomRegistry` phải là **một instance chia sẻ** cho cả pod
-  (khác với `TicketAuthHandler`/`RateLimitHandler` — mỗi channel một instance riêng) —
+  (khác với `JoinTokenAuthHandler`/`RateLimitHandler` — mỗi channel một instance riêng) —
   `GatewayBootstrap` nhận nó qua constructor và truyền xuống `GatewayPipeline.addTo` cho mọi
   channel. Chưa nối `Broadcaster` với `FrameChannelClient.onResponse` (Task 5) — việc "gắn dây"
   toàn luồng Engine→Gateway→client là Task 13.
@@ -543,7 +543,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
     tình không wire nửa vời (chỉ decrement mà không increment) vì sẽ làm gauge chạy âm ngay khi
     `RoomActorTest` tự gửi message — một giá trị sai còn tệ hơn một giá trị 0 trung thực.
   - `RoomRouteHandler` giờ luôn đóng dấu `InternalHeader.trace_id` (đọc từ
-    `ChannelAttributes.TRACE_ID`, sinh bằng `UUID.randomUUID()` tại `TicketAuthHandler` lúc
+    `ChannelAttributes.TRACE_ID`, sinh bằng `UUID.randomUUID()` tại `JoinTokenAuthHandler` lúc
     handshake) vào MỌI message trước khi forward — kể cả khi chưa có
     `FrameChannelClient.send(...)` nào tiêu thụ nó thật sự. Đây là điểm đúng về mặt kiến trúc để
     dừng lại (đã CHỐT xong phần Gateway); Task 13 chỉ cần gọi `send(...)` với message đã chuẩn
@@ -557,7 +557,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 > Chờ toàn bộ T3, T5, T7, T8, T9, T10, T11, T12 xong trước khi bắt đầu T13.
 
 - [x] Ba nhánh song song (T2/T4/T6) đều pass verification (T6 vẫn "một phần" ở chỗ chưa có
-      `TicketVerifier` thật — chờ G1a/G1c — nhưng `GatewayPipelineTest` của chính nó vẫn xanh)
+      `JoinTokenVerifier` thật — chờ G1a/G1c — nhưng `GatewayPipelineTest` của chính nó vẫn xanh)
 - [x] SPIKE có kết luận ghi thành văn bản, và T3 hiện thực **đúng theo kết luận đó**
 - [x] `mvn clean install` toàn project sạch (119 test: 4 protocol + 59 gateway + 55 engine + 1 e2e)
 - [x] Log leak detection (`paranoid`) sạch trong toàn bộ test suite
@@ -635,7 +635,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
     `room_id` đã có từ Task 6 (§10.6) — envelope's `student_id` trước đây KHÔNG bị ép về giá trị
     đã xác thực, một lỗ hổng nhỏ chưa ai phát hiện tới giờ vì chưa có gì tiêu thụ message đó.
   - **`EngineSender`** (`modules/uni-websocket-gateway/.../routing/EngineSender.java`, mới): interface tách
-    khỏi `FrameChannelClient` cụ thể, đúng khuôn `TicketVerifier` — để test `RoomRouteHandler`
+    khỏi `FrameChannelClient` cụ thể, đúng khuôn `JoinTokenVerifier` — để test `RoomRouteHandler`
     không cần mở real socket.
   - **`RouteCache.evictPod`** đổi `void` → trả `Set<String>` room bị ảnh hưởng;
     `FrameChannelClient` thêm tham số `onPodDisconnected` — nền tảng cho §9.7, dùng bởi
@@ -646,8 +646,8 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
     đã ghi. **Đã CHẠY THẬT** cả hai (`mvn spring-boot:run` + `curl`/`netstat`, theo đúng tinh
     thần Task 12): Engine bind cổng 9100 (frame channel) + 8090 (actuator) thành công; Gateway
     chỉ bind 8080 (actuator) — cổng 9000 (WS) **cố tình không mở** vì `GatewayNetworkLifecycle`
-    có `@ConditionalOnBean(TicketVerifier.class)` và chưa có bean thật nào (G1a/G1c chưa chốt).
-    Đây là hành vi ĐÚNG, không phải lỗi — khớp đúng câu cấm của `TicketAuthHandler`: "Không dùng
+    có `@ConditionalOnBean(JoinTokenVerifier.class)` và chưa có bean thật nào (G1a/G1c chưa chốt).
+    Đây là hành vi ĐÚNG, không phải lỗi — khớp đúng câu cấm của `JoinTokenAuthHandler`: "Không dùng
     verifier tạm này ở staging/production".
   - **`GatewayNetworkLifecycle`** gán `podId` cho mỗi entry trong `uni.gateway.engine.pods`
     theo **vị trí trong danh sách** (`engine-0`, `engine-1`, ...) — đơn giản hoá có chủ đích vì
@@ -731,7 +731,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
   frame đó thay vì trả lời `NOT_OWNER` bịa chủ phòng. `DistributedRoomLeaseStore` (Lettuce, 2 key
   `room:owner:{id}`/`room:epoch:{id}`, Lua script cho renew atomic) — **CHƯA verify được với
   Redis thật** (không có Redis/Docker trong môi trường viết code này, giống hệt caveat của
-  `TicketVerifier`). Thêm dependency `io.lettuce:lettuce-core` vào `uni-game-engine/pom.xml` (version
+  `JoinTokenVerifier`). Thêm dependency `io.lettuce:lettuce-core` vào `uni-game-engine/pom.xml` (version
   quản lý transitively qua BOM Spring Boot). Test mới: `LeaseBasedRoomOwnershipTest` (11 case,
   logic thuần + fake `RoomLeaseStore`) + 2 case mới trong `RoomOwnershipHandlerTest`
   (drop-khi-chưa-biết-owner, `ensureAcquired` được gọi trước khi check). `mvn clean install`
@@ -940,7 +940,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
   lên lại" như hiện tại), đối chiếu con số 10–50ms trong tài liệu — lệch thì sửa tài liệu.
 - **Ghi chú:** Lần đầu Redis chạm code thật ở GĐ1, gộp cả B1 lẫn phần ownership mới — không tách
   2 task riêng vì dùng chung một Valkey Cluster và luôn đi cùng nhau về vận hành (giành lease xong
-  luôn phải nạp snapshot ngay). Không mở rộng sang ticket replay dedup (`SETNX` cho ticket JWT) —
+  luôn phải nạp snapshot ngay). Không mở rộng sang join token replay dedup (`SETNX` cho join token JWT) —
   đó là điểm gắn khác (handshake, không phải `RoomActor`). `plan.md` Task 19 (runbook cấm
   auto-scale) **vẫn cần thiết cho tới khi task này triển khai và verify bằng chaos test thật**
   (kill pod giữa trận, đo thời gian phục hồi) — không tự động gỡ ràng buộc vận hành chỉ vì code
@@ -1265,7 +1265,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 
 ---
 
-### Task 20: Hạ tầng Docker test cục bộ — giả lập PH-1 (đa pod), PH-3 (client resync), G1a/G1c (dev ticket) — ✅ XONG (2026-09-07, yêu cầu người dùng: "Dựng dockerfile giả lập PH-1, PH-3, G1a/G1 để test ở local")
+### Task 20: Hạ tầng Docker test cục bộ — giả lập PH-1 (đa pod), PH-3 (client resync), G1a/G1c (dev join token) — ✅ XONG (2026-09-07, yêu cầu người dùng: "Dựng dockerfile giả lập PH-1, PH-3, G1a/G1 để test ở local")
 
 - **Bối cảnh:** Docker daemon lần đầu chạy được trong phiên này (trước đó luôn không sẵn sàng —
   Task 13/19 đều ghi nhận điều này). Người dùng yêu cầu dựng hạ tầng Docker để test cục bộ toàn hệ
@@ -1273,14 +1273,14 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
   vụ (không phải giả lập rỗng).
 - **Kết quả:**
   - **G1a/G1c (dev-only, KHÔNG bao giờ dùng ở staging/production):**
-    `modules/uni-websocket-gateway/src/main/java/.../auth/dev/DevTicketCodec.java` (HMAC-SHA256, ký/verify
-    ticket dev cục bộ, không liên quan gì tới thuật toán ký thật mà platform team sẽ chốt),
-    `DevTicketReplayGuard.java` (in-memory, single-pod, KHÔNG phải cơ chế chống replay thật —
-    xem javadoc), `DevTicketVerifier.java` (bean `TicketVerifier` đầu tiên từng tồn tại trong
-    repo, khoá kép `@Profile("dev-docker")` **và** `uni.gateway.dev-ticket.enabled=true`). Đăng
-    ký bean này tự động mở `GatewayNetworkLifecycle` (vốn `@ConditionalOnBean(TicketVerifier.class)`)
+    `modules/uni-websocket-gateway/src/main/java/.../auth/dev/DevJoinTokenCodec.java` (HMAC-SHA256, ký/verify
+    join token dev cục bộ, không liên quan gì tới thuật toán ký thật mà platform team sẽ chốt),
+    `DevJoinTokenReplayGuard.java` (in-memory, single-pod, KHÔNG phải cơ chế chống replay thật —
+    xem javadoc), `DevJoinTokenVerifier.java` (bean `JoinTokenVerifier` đầu tiên từng tồn tại trong
+    repo, khoá kép `@Profile("dev-docker")` **và** `uni.gateway.dev-join-token.enabled=true`). Đăng
+    ký bean này tự động mở `GatewayNetworkLifecycle` (vốn `@ConditionalOnBean(JoinTokenVerifier.class)`)
     — đúng như javadoc của lớp đó đã hứa "chỉ cần thêm 1 bean".
-  - **Bug tiềm ẩn phát hiện khi bean `TicketVerifier` đầu tiên xuất hiện:** `application.yml` của
+  - **Bug tiềm ẩn phát hiện khi bean `JoinTokenVerifier` đầu tiên xuất hiện:** `application.yml` của
     `uni-websocket-gateway` định nghĩa `uni.engine.pods` (ngang cấp `uni.gateway`), nhưng
     `GatewayNetworkLifecycle` đọc `@Value("${uni.gateway.engine.pods}")` — sai đường dẫn, chưa bao
     giờ lộ ra vì `GatewayNetworkLifecycle` chưa từng được khởi tạo. Đã sửa: lồng `engine.pods` vào
@@ -1326,10 +1326,10 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
     actor/publisher) + callback log lỗi bất đồng bộ trên `producer.send(...)` (trước đó im lặng
     hoàn toàn — xem chi tiết ở mục "Chưa làm" của Task 18).
   - **Sự cố ngoài ý muốn (đã báo cho người dùng ngay khi phát hiện):** Lần chạy `docker compose up`
-    đầu tiên dùng project name mặc định (trùng tên thư mục `spring-ticket-ddd`) — cờ
+    đầu tiên dùng project name mặc định (trùng tên thư mục `k12-platform-beta`) — cờ
     `--remove-orphans` đã xoá vài container KHÔNG liên quan tới repo này (mysql, mongodb, kafka-ui,
     4 exporter, đã dừng 10-13 ngày, không có compose file nào của chúng trong repo). Đã xác nhận
-    volume dữ liệu (`spring-ticket-ddd_mysql-data`, `_mongodb-data`) và toàn bộ image vẫn còn
+    volume dữ liệu (`k12-platform-beta_mysql-data`, `_mongodb-data`) và toàn bộ image vẫn còn
     nguyên — chỉ container bị xoá, dữ liệu chưa mất. Đã sửa gốc: `docker-compose.dev.yml` giờ có
     `name: uni-realtime-dev` cố định, không bao giờ đụng namespace mặc định của thư mục nữa.
   - `mvn clean install` toàn reactor: BUILD SUCCESS, **180 test**, không leak (2 Docker IT tách
@@ -1345,7 +1345,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
   - Vẫn không có K8s manifest nào — ngoài phạm vi "test cục bộ".
 - **File mới/sửa chính:** xem "Kết quả" ở trên; danh sách đầy đủ:
   `docker-compose.dev.yml`, `modules/uni-websocket-gateway/Dockerfile`, `modules/uni-game-engine/Dockerfile`,
-  `modules/uni-websocket-gateway/src/main/java/.../auth/dev/{DevTicketCodec,DevTicketReplayGuard,DevTicketVerifier}.java`,
+  `modules/uni-websocket-gateway/src/main/java/.../auth/dev/{DevJoinTokenCodec,DevJoinTokenReplayGuard,DevJoinTokenVerifier}.java`,
   `modules/uni-websocket-gateway/src/main/resources/{application.yml,application-dev-docker.yml}`,
   `modules/uni-game-engine/src/main/java/.../room/{RoomActor,RoomState,RoomSupervisor}.java`,
   `modules/uni-game-engine/src/main/java/.../persistence/KafkaGameEventSink.java`,
@@ -1357,7 +1357,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
   actuator health → 2 Docker IT chạy pass → `redis-cli`/Kafka consumer xác nhận dữ liệu thật),
   không dừng ở mức viết code/đọc bằng mắt.
 - **Rollback nếu fail:** revert toàn bộ file Task 20; `RoomActor`/`RoomSupervisor` quay lại không
-  xử lý `RESYNC` (hành vi cũ), Gateway quay lại không mở port WS nếu không có `TicketVerifier`
+  xử lý `RESYNC` (hành vi cũ), Gateway quay lại không mở port WS nếu không có `JoinTokenVerifier`
   bean nào khác được thêm.
 
 ---

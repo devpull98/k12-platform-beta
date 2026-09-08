@@ -40,9 +40,9 @@ register.registerMetric(dbQueriesTotal);
 const dbPool = mysql.createPool({
   host: process.env.DB_HOST || 'host.docker.internal',
   port: Number(process.env.DB_PORT || 3306),
-  user: process.env.DB_USER || 'ticket_user',
-  password: process.env.DB_PASSWORD || 'ticket_pass',
-  database: process.env.DB_NAME || 'ticket_dd',
+  user: process.env.DB_USER || 'demo_user',
+  password: process.env.DB_PASSWORD || 'demo_pass',
+  database: process.env.DB_NAME || 'demo_metrics',
   connectionLimit: 5,
 });
 new client.Gauge({

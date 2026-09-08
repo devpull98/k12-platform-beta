@@ -1,7 +1,7 @@
 package com.uni.realtime.websocketgateway.net;
 
-import com.uni.realtime.websocketgateway.auth.TicketAuthHandler;
-import com.uni.realtime.websocketgateway.auth.TicketVerifier;
+import com.uni.realtime.websocketgateway.auth.JoinTokenAuthHandler;
+import com.uni.realtime.websocketgateway.auth.JoinTokenVerifier;
 import com.uni.realtime.websocketgateway.fanout.RoomRegistry;
 import com.uni.realtime.websocketgateway.metrics.GatewayMetrics;
 import com.uni.realtime.websocketgateway.routing.EngineSender;
@@ -15,7 +15,7 @@ import io.netty.handler.codec.http.websocketx.WebSocketServerProtocolHandler;
  * {@code IpAdmissionHandler} (Task 7, §5.6 L1) goes first of all: an IP over budget must not
  * spend a cycle on anything downstream, including {@code BackpressureHandler}'s bookkeeping.
  * {@code BackpressureHandler} (Task 9) comes next since writability is a transport concern
- * unrelated to auth state. {@code TicketAuthHandler} must run before anything that trusts
+ * unrelated to auth state. {@code JoinTokenAuthHandler} must run before anything that trusts
  * {@link ChannelAttributes}, and {@code RoomRouteHandler} must run last so everything
  * downstream already agrees on identity and room ownership.
  *
@@ -32,7 +32,7 @@ public final class GatewayPipeline {
 
     private GatewayPipeline() {}
 
-    public static void addTo(ChannelPipeline pipeline, TicketVerifier ticketVerifier, RoomRegistry roomRegistry,
+    public static void addTo(ChannelPipeline pipeline, JoinTokenVerifier joinTokenVerifier, RoomRegistry roomRegistry,
             GatewayMetrics gatewayMetrics, IpAdmissionController ipAdmissionController,
             StudentHandshakeAdmissionController studentHandshakeAdmission, EngineSender engineSender) {
         // Outermost gate: reject an over-budget IP before it costs this pod anything else.
@@ -43,7 +43,7 @@ public final class GatewayPipeline {
         pipeline.addLast(new HttpServerCodec());
         pipeline.addLast(new HttpObjectAggregator(MAX_HTTP_AGGREGATED_CONTENT_BYTES));
         pipeline.addLast(new WebSocketServerProtocolHandler(WEBSOCKET_PATH));
-        pipeline.addLast(new TicketAuthHandler(ticketVerifier, roomRegistry, gatewayMetrics, studentHandshakeAdmission));
+        pipeline.addLast(new JoinTokenAuthHandler(joinTokenVerifier, roomRegistry, gatewayMetrics, studentHandshakeAdmission));
         pipeline.addLast(new RateLimitHandler());
         pipeline.addLast(new GameMessageDecoder());
         pipeline.addLast(new RoomRouteHandler(roomRegistry, engineSender));

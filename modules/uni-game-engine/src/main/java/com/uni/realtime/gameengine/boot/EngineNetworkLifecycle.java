@@ -37,7 +37,7 @@ import java.util.stream.IntStream;
  * before this, {@code EngineApplication} booted Spring and nothing else (its own javadoc said
  * so explicitly: "neither is started yet"). Unlike the Gateway side (see {@code
  * GatewayNetworkLifecycle}), nothing here waits on an external decision -- {@link RoomOwnership}
- * needs only this pod's own configuration, not a signed-ticket format from another team.
+ * needs only this pod's own configuration, not a signed-join-token format from another team.
  *
  * <p>Task 14 (2026-09-07): {@code uni.engine.room-store.enabled} (default {@code false})
  * switches between {@link ModuloRoomOwnership} with no snapshotting (today's behavior,

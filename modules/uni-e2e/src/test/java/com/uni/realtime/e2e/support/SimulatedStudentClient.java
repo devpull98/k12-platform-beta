@@ -129,12 +129,12 @@ public final class SimulatedStudentClient {
     /**
      * Simulates a network blip (§9.3's reconnect scenario): drops the connection with no
      * graceful WS close (a real disconnect does not warn anyone), reconnects to the same gateway
-     * port, re-joins with a fresh ticket (a new connection always starts with JOIN_ROOM --
-     * {@code TicketAuthHandler} requires it as the first frame), waits for the resulting personal
+     * port, re-joins with a fresh joinToken (a new connection always starts with JOIN_ROOM --
+     * {@code JoinTokenAuthHandler} requires it as the first frame), waits for the resulting personal
      * full snapshot, then sends a real {@code RESYNC} carrying every submission still sitting in
      * the ring buffer (i.e. never {@link #markAcked}) plus {@code last_acked_seq}.
      */
-    public void simulateDisconnectAndReconnect(String roomId, String ticket, String displayName) throws InterruptedException {
+    public void simulateDisconnectAndReconnect(String roomId, String joinToken, String displayName) throws InterruptedException {
         channel.close().sync();
         group.shutdownGracefully().sync();
 
@@ -144,7 +144,7 @@ public final class SimulatedStudentClient {
 
         send(GameMessage.newBuilder()
                 .setType(MessageType.JOIN_ROOM)
-                .setJoinRoom(JoinRoom.newBuilder().setTicket(ticket).setDisplayName(displayName))
+                .setJoinRoom(JoinRoom.newBuilder().setJoinToken(joinToken).setDisplayName(displayName))
                 .build());
         takeMatching("post-reconnect full snapshot",
                 m -> m.getType() == MessageType.ROOM_STATE_SNAPSHOT && m.getRoomStateSnapshot().getFull());
@@ -195,12 +195,12 @@ public final class SimulatedStudentClient {
      *     that ignored this return value and tried {@link #takeMatching} again afterward would
      *     find nothing (this exact mistake is why this method used to return {@code void}).
      */
-    public GameMessage joinRoomWithRetry(String ticket, String displayName, int maxAttempts, long retryIntervalMillis)
+    public GameMessage joinRoomWithRetry(String joinToken, String displayName, int maxAttempts, long retryIntervalMillis)
             throws InterruptedException {
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             send(GameMessage.newBuilder()
                     .setType(MessageType.JOIN_ROOM)
-                    .setJoinRoom(JoinRoom.newBuilder().setTicket(ticket).setDisplayName(displayName))
+                    .setJoinRoom(JoinRoom.newBuilder().setJoinToken(joinToken).setDisplayName(displayName))
                     .build());
             GameMessage reply = pollMatching(retryIntervalMillis,
                     m -> m.getType() == MessageType.ROOM_STATE_SNAPSHOT && m.getRoomStateSnapshot().getFull());

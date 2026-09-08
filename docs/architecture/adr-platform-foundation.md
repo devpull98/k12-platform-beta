@@ -6,7 +6,7 @@
 
 ## Context
 
-This repo (`spring-ticket-ddd`, module prefix `uni-`) is meant to become the long-term host that
+This repo (`k12-platform-beta`, module prefix `uni-`) is meant to become the long-term host that
 a separate, much older monorepo — `k12-backend-java` (Java 11, Spring Boot 2.5.4, 79 `pom.xml`
 files, ~50 leaf modules) — gets migrated into gradually, service by service, over time. No k12
 business code moves in this change; this ADR only fixes the structural precondition that would

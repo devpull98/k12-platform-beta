@@ -1,19 +1,36 @@
-# Local Docker test infrastructure only (see docker-compose.dev.yml at the repo root).
+# Local Docker test infrastructure & Production-ready container template
 #
-# No Maven-in-Docker multi-stage build on purpose: this repo's poms pin java.version=25, and a
-# JDK-25-capable Maven Docker image was not something to gamble on existing/being reproducible
-# while writing this. Instead: build the jar on the host first (`mvn clean package -DskipTests`
-# from the repo root), then this Dockerfile only copies the already-built, already-tested
-# artifact. Build context MUST be the repo root (docker-compose.dev.yml sets it that way) --
-# this COPY path only resolves from there.
-FROM eclipse-temurin:25-jre
+# Build context MUST be the repo root:
+#   mvn clean package -DskipTests
+#   docker compose -f docker-compose.dev.yml up -d --build
+
+FROM eclipse-temurin:25-jre-alpine
+
+LABEL maintainer="K12 Realtime Gateway Team"
+LABEL description="Optimized Netty WebSocket Gateway Service Container"
+
+# Create non-root user for container security hardening
+RUN addgroup -g 10001 appgroup && \
+    adduser -u 10001 -G appgroup -h /app -D appuser
 
 WORKDIR /app
-RUN mkdir -p /app/logs
+RUN mkdir -p /app/logs && chown -R appuser:appgroup /app
 
-COPY modules/uni-websocket-gateway/target/uni-websocket-gateway-0.0.1-SNAPSHOT-exec.jar /app/app.jar
+# Copy pre-built artifact from host build
+COPY --chown=appuser:appgroup modules/uni-websocket-gateway/target/uni-websocket-gateway-0.0.1-SNAPSHOT-exec.jar /app/app.jar
 
-# WORKDIR is already /app, so logback-spring.xml's relative `logs/${appName}.log` lands at
-# /app/logs/uni-websocket-gateway.log with no extra flag -- this does not need the host's
-# session.executionRootDirectory pom trick, which exists only for `mvn spring-boot:run`.
-ENTRYPOINT ["java", "-jar", "/app/app.jar"]
+USER appuser:appgroup
+
+# JVM Container Tuning Options:
+# - UseG1GC for Netty low-latency performance
+# - MaxRAMPercentage=75.0 to respect container cgroup memory limits
+# - ExitOnOutOfMemoryError to trigger automatic pod restarts
+ENV JAVA_OPTS="-XX:+UseG1GC -XX:MaxRAMPercentage=75.0 -XX:+ExitOnOutOfMemoryError -Djava.security.egd=file:/dev/./urandom"
+
+EXPOSE 8080 9000
+
+# Health check against WebSocket port
+HEALTHCHECK --interval=5s --timeout=3s --start-period=10s --retries=3 \
+  CMD nc -z localhost 9000 || exit 1
+
+ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar /app/app.jar"]

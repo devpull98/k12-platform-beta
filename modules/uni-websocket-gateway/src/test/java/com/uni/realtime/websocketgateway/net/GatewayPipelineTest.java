@@ -1,9 +1,9 @@
 package com.uni.realtime.websocketgateway.net;
 
-import com.uni.realtime.websocketgateway.auth.TicketAuthHandler;
-import com.uni.realtime.websocketgateway.auth.TicketClaims;
-import com.uni.realtime.websocketgateway.auth.TicketRejectedException;
-import com.uni.realtime.websocketgateway.auth.TicketVerifier;
+import com.uni.realtime.websocketgateway.auth.JoinTokenAuthHandler;
+import com.uni.realtime.websocketgateway.auth.JoinTokenClaims;
+import com.uni.realtime.websocketgateway.auth.JoinTokenRejectedException;
+import com.uni.realtime.websocketgateway.auth.JoinTokenVerifier;
 import com.uni.realtime.websocketgateway.fanout.RoomRegistry;
 import com.uni.realtime.websocketgateway.metrics.GatewayMetrics;
 import com.uni.realtime.websocketgateway.routing.EngineSender;
@@ -26,7 +26,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Task 6 verification (plan.md): fixed pipeline order, ticket-gated handshake, and the
+ * Task 6 verification (plan.md): fixed pipeline order, join-token-gated handshake, and the
  * room_id trust boundary -- all with {@code EmbeddedChannel} and no real socket
  * (test-patterns.mdc). The HTTP/WS upgrade machinery itself (HttpServerCodec,
  * HttpObjectAggregator, WebSocketServerProtocolHandler) is Netty's own well-tested code, so
@@ -39,8 +39,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class GatewayPipelineTest {
 
-    private static final TicketClaims ROOM_1_CLAIMS =
-            new TicketClaims("student-1", "room-1", "session-1", List.of("student"));
+    private static final JoinTokenClaims ROOM_1_CLAIMS =
+            new JoinTokenClaims("student-1", "room-1", "session-1", List.of("student"));
 
     @Test
     void should_assembleHandlersInFixedOrderWithNoTlsHandler_when_pipelineBuilt() {
@@ -63,7 +63,7 @@ class GatewayPipelineTest {
                 "HttpServerCodec",
                 "HttpObjectAggregator",
                 "WebSocketServerProtocolHandler",
-                "TicketAuthHandler",
+                "JoinTokenAuthHandler",
                 "RateLimitHandler",
                 "GameMessageDecoder",
                 "RoomRouteHandler");
@@ -76,23 +76,23 @@ class GatewayPipelineTest {
         CapturingEngineSender engineSender = new CapturingEngineSender();
         EmbeddedChannel channel = applicationChannel(fixedVerifier(ROOM_1_CLAIMS), engineSender);
 
-        channel.writeInbound(frameOf(joinRoom("valid-ticket")));
+        channel.writeInbound(frameOf(joinRoom("valid-joinToken")));
 
         assertThat(channel.attr(ChannelAttributes.STUDENT_ID).get()).isEqualTo("student-1");
         assertThat(channel.attr(ChannelAttributes.ROOM_ID).get()).isEqualTo("room-1");
         assertThat(channel.attr(ChannelAttributes.SESSION_ID).get()).isEqualTo("session-1");
-        assertThat(channel.pipeline().get(TicketAuthHandler.class)).isNull();
+        assertThat(channel.pipeline().get(JoinTokenAuthHandler.class)).isNull();
         assertThat(engineSender.last()).isNotNull();
     }
 
     @Test
-    void should_closeChannel_when_ticketRejected() {
-        TicketVerifier rejecting = ticket -> {
-            throw new TicketRejectedException("expired");
+    void should_closeChannel_when_joinTokenRejected() {
+        JoinTokenVerifier rejecting = joinToken -> {
+            throw new JoinTokenRejectedException("expired");
         };
         EmbeddedChannel channel = applicationChannel(rejecting, new CapturingEngineSender());
 
-        channel.writeInbound(frameOf(joinRoom("expired-ticket")));
+        channel.writeInbound(frameOf(joinRoom("expired-joinToken")));
 
         assertThat(channel.isOpen()).isFalse();
         assertThat(channel.attr(ChannelAttributes.ROOM_ID).get()).isNull();
@@ -111,7 +111,7 @@ class GatewayPipelineTest {
     void should_closeChannel_when_payloadRoomIdDisagreesWithBoundRoomId() {
         CapturingEngineSender engineSender = new CapturingEngineSender();
         EmbeddedChannel channel = applicationChannel(fixedVerifier(ROOM_1_CLAIMS), engineSender);
-        channel.writeInbound(frameOf(joinRoom("valid-ticket")));
+        channel.writeInbound(frameOf(joinRoom("valid-joinToken")));
         engineSender.clear(); // drain the forwarded JOIN_ROOM
 
         GameMessage spoofed = GameMessage.newBuilder()
@@ -134,7 +134,7 @@ class GatewayPipelineTest {
     void should_closeChannel_when_payloadStudentIdDisagreesWithBoundStudentId() {
         CapturingEngineSender engineSender = new CapturingEngineSender();
         EmbeddedChannel channel = applicationChannel(fixedVerifier(ROOM_1_CLAIMS), engineSender);
-        channel.writeInbound(frameOf(joinRoom("valid-ticket")));
+        channel.writeInbound(frameOf(joinRoom("valid-joinToken")));
         engineSender.clear();
 
         GameMessage spoofed = GameMessage.newBuilder()
@@ -155,7 +155,7 @@ class GatewayPipelineTest {
     void should_forwardWithBoundRoomId_when_payloadRoomIdIsBlank() {
         CapturingEngineSender engineSender = new CapturingEngineSender();
         EmbeddedChannel channel = applicationChannel(fixedVerifier(ROOM_1_CLAIMS), engineSender);
-        channel.writeInbound(frameOf(joinRoom("valid-ticket")));
+        channel.writeInbound(frameOf(joinRoom("valid-joinToken")));
         engineSender.clear(); // drain the forwarded JOIN_ROOM
 
         GameMessage blank = GameMessage.newBuilder()
@@ -175,7 +175,7 @@ class GatewayPipelineTest {
         RoomRegistry roomRegistry = new RoomRegistry();
         EmbeddedChannel channel = applicationChannel(fixedVerifier(ROOM_1_CLAIMS), roomRegistry, new CapturingEngineSender());
 
-        channel.writeInbound(frameOf(joinRoom("valid-ticket")));
+        channel.writeInbound(frameOf(joinRoom("valid-joinToken")));
 
         assertThat(roomRegistry.channelsIn("room-1")).contains(channel);
     }
@@ -184,7 +184,7 @@ class GatewayPipelineTest {
     void should_deregisterChannelFromRoomRegistry_when_channelGoesInactive() {
         RoomRegistry roomRegistry = new RoomRegistry();
         EmbeddedChannel channel = applicationChannel(fixedVerifier(ROOM_1_CLAIMS), roomRegistry, new CapturingEngineSender());
-        channel.writeInbound(frameOf(joinRoom("valid-ticket")));
+        channel.writeInbound(frameOf(joinRoom("valid-joinToken")));
         assertThat(roomRegistry.channelsIn("room-1")).contains(channel);
 
         channel.close();
@@ -196,7 +196,7 @@ class GatewayPipelineTest {
     void should_sendStudentLeft_when_aJoinedChannelGoesInactive() {
         CapturingEngineSender engineSender = new CapturingEngineSender();
         EmbeddedChannel channel = applicationChannel(fixedVerifier(ROOM_1_CLAIMS), engineSender);
-        channel.writeInbound(frameOf(joinRoom("valid-ticket")));
+        channel.writeInbound(frameOf(joinRoom("valid-joinToken")));
         engineSender.clear(); // drain the forwarded JOIN_ROOM
 
         channel.close();
@@ -223,7 +223,7 @@ class GatewayPipelineTest {
     void should_stampInternalHeaderTraceId_when_messageForwarded() {
         CapturingEngineSender engineSender = new CapturingEngineSender();
         EmbeddedChannel channel = applicationChannel(fixedVerifier(ROOM_1_CLAIMS), engineSender);
-        channel.writeInbound(frameOf(joinRoom("valid-ticket")));
+        channel.writeInbound(frameOf(joinRoom("valid-joinToken")));
         String traceId = engineSender.last().getInternal().getTraceId();
         assertThat(traceId).isNotBlank();
 
@@ -244,13 +244,13 @@ class GatewayPipelineTest {
         for (int i = 0; i < 10; i++) {
             EmbeddedChannel channel = applicationChannel(fixedVerifier(ROOM_1_CLAIMS), new RoomRegistry(),
                     new GatewayMetrics(new SimpleMeterRegistry()), admission, new CapturingEngineSender());
-            channel.writeInbound(frameOf(joinRoom("ticket-" + i)));
+            channel.writeInbound(frameOf(joinRoom("joinToken-" + i)));
             assertThat(channel.isOpen()).as("attempt %d must still be admitted", i).isTrue();
         }
 
         EmbeddedChannel eleventh = applicationChannel(fixedVerifier(ROOM_1_CLAIMS), new RoomRegistry(),
                 new GatewayMetrics(new SimpleMeterRegistry()), admission, new CapturingEngineSender());
-        eleventh.writeInbound(frameOf(joinRoom("ticket-11")));
+        eleventh.writeInbound(frameOf(joinRoom("joinToken-11")));
 
         assertThat(eleventh.isOpen()).as("11th handshake from the same student within the window must be rejected").isFalse();
     }
@@ -263,44 +263,44 @@ class GatewayPipelineTest {
         EmbeddedChannel first = applicationChannel(fixedVerifier(ROOM_1_CLAIMS), roomRegistry, gatewayMetrics, new CapturingEngineSender());
         EmbeddedChannel second = applicationChannel(fixedVerifier(ROOM_1_CLAIMS), roomRegistry, gatewayMetrics, new CapturingEngineSender());
 
-        first.writeInbound(frameOf(joinRoom("valid-ticket-1")));
-        second.writeInbound(frameOf(joinRoom("valid-ticket-2")));
+        first.writeInbound(frameOf(joinRoom("valid-joinToken-1")));
+        second.writeInbound(frameOf(joinRoom("valid-joinToken-2")));
 
         assertThat(meterRegistry.get("handshake_rate").counter().count()).isEqualTo(2.0);
     }
 
-    private static EmbeddedChannel applicationChannel(TicketVerifier verifier, EngineSender engineSender) {
+    private static EmbeddedChannel applicationChannel(JoinTokenVerifier verifier, EngineSender engineSender) {
         return applicationChannel(verifier, new RoomRegistry(), new GatewayMetrics(new SimpleMeterRegistry()), engineSender);
     }
 
     private static EmbeddedChannel applicationChannel(
-            TicketVerifier verifier, RoomRegistry roomRegistry, EngineSender engineSender) {
+            JoinTokenVerifier verifier, RoomRegistry roomRegistry, EngineSender engineSender) {
         return applicationChannel(verifier, roomRegistry, new GatewayMetrics(new SimpleMeterRegistry()), engineSender);
     }
 
     private static EmbeddedChannel applicationChannel(
-            TicketVerifier verifier, RoomRegistry roomRegistry, GatewayMetrics gatewayMetrics, EngineSender engineSender) {
+            JoinTokenVerifier verifier, RoomRegistry roomRegistry, GatewayMetrics gatewayMetrics, EngineSender engineSender) {
         return applicationChannel(verifier, roomRegistry, gatewayMetrics, new StudentHandshakeAdmissionController(), engineSender);
     }
 
-    private static EmbeddedChannel applicationChannel(TicketVerifier verifier, RoomRegistry roomRegistry,
+    private static EmbeddedChannel applicationChannel(JoinTokenVerifier verifier, RoomRegistry roomRegistry,
             GatewayMetrics gatewayMetrics, StudentHandshakeAdmissionController studentHandshakeAdmission,
             EngineSender engineSender) {
         return new EmbeddedChannel(
-                new TicketAuthHandler(verifier, roomRegistry, gatewayMetrics, studentHandshakeAdmission),
+                new JoinTokenAuthHandler(verifier, roomRegistry, gatewayMetrics, studentHandshakeAdmission),
                 new RateLimitHandler(),
                 new GameMessageDecoder(),
                 new RoomRouteHandler(roomRegistry, engineSender));
     }
 
-    private static TicketVerifier fixedVerifier(TicketClaims claims) {
-        return ticket -> claims;
+    private static JoinTokenVerifier fixedVerifier(JoinTokenClaims claims) {
+        return joinToken -> claims;
     }
 
-    private static GameMessage joinRoom(String ticket) {
+    private static GameMessage joinRoom(String joinToken) {
         return GameMessage.newBuilder()
                 .setType(MessageType.JOIN_ROOM)
-                .setJoinRoom(JoinRoom.newBuilder().setTicket(ticket))
+                .setJoinRoom(JoinRoom.newBuilder().setJoinToken(joinToken))
                 .build();
     }
 

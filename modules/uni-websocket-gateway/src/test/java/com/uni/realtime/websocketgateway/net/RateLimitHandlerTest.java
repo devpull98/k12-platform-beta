@@ -133,7 +133,7 @@ class RateLimitHandlerTest {
     private static GameMessage joinRoom() {
         return GameMessage.newBuilder()
                 .setType(MessageType.JOIN_ROOM)
-                .setJoinRoom(JoinRoom.newBuilder().setTicket("tok"))
+                .setJoinRoom(JoinRoom.newBuilder().setJoinToken("tok"))
                 .build();
     }
 }

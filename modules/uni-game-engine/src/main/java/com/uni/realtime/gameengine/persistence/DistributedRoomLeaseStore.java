@@ -19,7 +19,7 @@ import java.util.concurrent.CompletableFuture;
  * such server and no working Docker daemon (same constraint recorded against
  * {@code docker-compose.dev.yml} in plan.md Task 13) -- everything here follows Lettuce's
  * documented API but has not been exercised end-to-end. Treat this the same way
- * {@code TicketAuthHandler}'s placeholder {@code TicketVerifier} is treated: do not point it at
+ * {@code JoinTokenAuthHandler}'s placeholder {@code JoinTokenVerifier} is treated: do not point it at
  * staging/production until it has actually run against the real cluster.
  *
  * <p>Two keys per room, not one, so the fencing epoch survives a lease expiring: {@code

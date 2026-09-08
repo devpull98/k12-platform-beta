@@ -1,6 +1,6 @@
 package com.uni.realtime.websocketgateway.boot;
 
-import com.uni.realtime.websocketgateway.auth.TicketVerifier;
+import com.uni.realtime.websocketgateway.auth.JoinTokenVerifier;
 import com.uni.realtime.websocketgateway.fanout.Broadcaster;
 import com.uni.realtime.websocketgateway.fanout.RoomRegistry;
 import com.uni.realtime.websocketgateway.metrics.GatewayMetrics;
@@ -25,13 +25,13 @@ import java.util.List;
 /**
  * Task 13: actually starts the WebSocket edge on process boot.
  *
- * <p>Gated on a real {@link TicketVerifier} bean existing -- there isn't one yet (G1a/G1c,
+ * <p>Gated on a real {@link JoinTokenVerifier} bean existing -- there isn't one yet (G1a/G1c,
  * tech-design.md §9.1, still waiting on the platform team for the signing algorithm and clock
- * skew tolerance). {@code TicketAuthHandler}'s own javadoc already forbids wiring a temporary
+ * skew tolerance). {@code JoinTokenAuthHandler}'s own javadoc already forbids wiring a temporary
  * verifier into staging/production, so the correct behavior with no real bean present is for
  * this component to simply not exist -- the app still boots and serves {@code /actuator/*}, it
  * just never opens the game WebSocket. Once G1a/G1c resolve, adding one {@code @Bean
- * TicketVerifier} is the only change needed to light this up; nothing here changes.
+ * JoinTokenVerifier} is the only change needed to light this up; nothing here changes.
  *
  * <p>{@code uni.gateway.engine.pods} entries are assigned pod ids by list position
  * ("engine-0", "engine-1", ...) -- a Phase 1 simplification, since the config today is a flat
@@ -40,10 +40,10 @@ import java.util.List;
  * replace this once it exists.
  */
 @Component
-@ConditionalOnBean(TicketVerifier.class)
+@ConditionalOnBean(JoinTokenVerifier.class)
 public final class GatewayNetworkLifecycle implements ApplicationRunner, DisposableBean {
 
-    private final TicketVerifier ticketVerifier;
+    private final JoinTokenVerifier joinTokenVerifier;
     private final GatewayMetrics gatewayMetrics;
     private final int wsPort;
     private final List<String> enginePods;
@@ -52,10 +52,10 @@ public final class GatewayNetworkLifecycle implements ApplicationRunner, Disposa
     private FrameChannelClient frameChannelClient;
     private GatewayBootstrap gatewayBootstrap;
 
-    public GatewayNetworkLifecycle(TicketVerifier ticketVerifier, GatewayMetrics gatewayMetrics,
+    public GatewayNetworkLifecycle(JoinTokenVerifier joinTokenVerifier, GatewayMetrics gatewayMetrics,
             @Value("${uni.gateway.ws-port}") int wsPort,
             @Value("#{'${uni.gateway.engine.pods}'.split(',')}") List<String> enginePods) {
-        this.ticketVerifier = ticketVerifier;
+        this.joinTokenVerifier = joinTokenVerifier;
         this.gatewayMetrics = gatewayMetrics;
         this.wsPort = wsPort;
         this.enginePods = enginePods;
@@ -76,7 +76,7 @@ public final class GatewayNetworkLifecycle implements ApplicationRunner, Disposa
             frameChannelClient.connect("engine-" + i, hostPort[0], Integer.parseInt(hostPort[1]));
         }
 
-        gatewayBootstrap = new GatewayBootstrap(wsPort, ticketVerifier, roomRegistry, gatewayMetrics,
+        gatewayBootstrap = new GatewayBootstrap(wsPort, joinTokenVerifier, roomRegistry, gatewayMetrics,
                 new IpAdmissionController(), new StudentHandshakeAdmissionController(), frameChannelClient);
         gatewayBootstrap.start();
     }

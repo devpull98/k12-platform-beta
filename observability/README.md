@@ -55,7 +55,7 @@ App viết log JSON → logs/app.log → Promtail đọc file → parse traceId 
 **Promtail** là agent chạy sidecar, theo dõi file `logs/app.log`, tự extract các field và gắn label:
 ```yaml
 labels:
-  job: spring-ticket-ddd
+  job: k12-platform-beta
   level: {level từ JSON log}
 ```
 
@@ -64,19 +64,19 @@ labels:
 
 ```logql
 # Toàn bộ log của app
-{job="spring-ticket-ddd"}
+{job="k12-platform-beta"}
 
 # Chỉ ERROR
-{job="spring-ticket-ddd"} | json | level="ERROR"
+{job="k12-platform-beta"} | json | level="ERROR"
 
 # Log chứa "kafka"
-{job="spring-ticket-ddd"} |= "kafka"
+{job="k12-platform-beta"} |= "kafka"
 
 # Log theo traceId cụ thể
-{job="spring-ticket-ddd"} | json | traceId="abc123"
+{job="k12-platform-beta"} | json | traceId="abc123"
 
 # Rate lỗi theo thời gian
-rate({job="spring-ticket-ddd"} | json | level="ERROR" [1m])
+rate({job="k12-platform-beta"} | json | level="ERROR" [1m])
 ```
 
 **App config cần có:**
@@ -117,13 +117,13 @@ HTTP request vào app
 
 ```traceql
 # Tất cả trace của service này
-{ resource.service.name = "spring-ticket-ddd" }
+{ resource.service.name = "k12-platform-beta" }
 
 # Trace chậm hơn 500ms
-{ resource.service.name = "spring-ticket-ddd" } | duration > 500ms
+{ resource.service.name = "k12-platform-beta" } | duration > 500ms
 
 # Trace có lỗi
-{ resource.service.name = "spring-ticket-ddd" && status = error }
+{ resource.service.name = "k12-platform-beta" && status = error }
 
 # Trace có span gọi MySQL
 { span.db.system = "mysql" }

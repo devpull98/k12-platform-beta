@@ -164,8 +164,8 @@ services:
       GATEWAY_WS_PORT: "9000"
       ENGINE_PODS: "engine-0:9100,engine-1:9100"
       SPRING_PROFILES_ACTIVE: "dev-docker"
-      GATEWAY_DEV_TICKET_ENABLED: "true"
-      GATEWAY_DEV_TICKET_SECRET: "uni-realtime-local-docker-dev-secret-do-not-use-elsewhere"
+      GATEWAY_DEV_JOIN_TOKEN_ENABLED: "true"
+      GATEWAY_DEV_JOIN_TOKEN_SECRET: "uni-realtime-local-docker-dev-secret-do-not-use-elsewhere"
     ports:
       - "9000:9000"
       - "8080:8080"
@@ -189,7 +189,7 @@ services:
         max-file: "3"
 
   # Second Gateway pod -- closes plan.md Task 13's "2 GW + 2 Engine" AC. Identical to `gateway`
-  # above (same Engine pod list, same dev-ticket secret) other than host ports/container name, so
+  # above (same Engine pod list, same dev-join-token secret) other than host ports/container name, so
   # this is a genuine second pod, not a proxy in front of the first. `gateway`'s own name/ports
   # are untouched -- DockerComposeResyncIT hardcodes port 9000 against it.
   gateway-1:
@@ -203,8 +203,8 @@ services:
       GATEWAY_WS_PORT: "9000"
       ENGINE_PODS: "engine-0:9100,engine-1:9100"
       SPRING_PROFILES_ACTIVE: "dev-docker"
-      GATEWAY_DEV_TICKET_ENABLED: "true"
-      GATEWAY_DEV_TICKET_SECRET: "uni-realtime-local-docker-dev-secret-do-not-use-elsewhere"
+      GATEWAY_DEV_JOIN_TOKEN_ENABLED: "true"
+      GATEWAY_DEV_JOIN_TOKEN_SECRET: "uni-realtime-local-docker-dev-secret-do-not-use-elsewhere"
     ports:
       - "9001:9000"
       - "8081:8080"

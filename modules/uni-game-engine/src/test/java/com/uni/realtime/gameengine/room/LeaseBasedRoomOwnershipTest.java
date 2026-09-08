@@ -13,7 +13,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Task 14 verification: pure logic against a fake {@link RoomLeaseStore}, no real external store
  * (there is none available in this environment -- {@code DistributedRoomLeaseStore}, the real
  * Lettuce implementation, is exercised by nothing in this repo and must be verified against the
- * real cluster before staging/production, exactly like {@code TicketAuthHandler}'s
+ * real cluster before staging/production, exactly like {@code JoinTokenAuthHandler}'s
  * placeholder verifier). Everything here is about the caching/async/fencing/fallback logic
  * this class owns, independent of which store backs it.
  */

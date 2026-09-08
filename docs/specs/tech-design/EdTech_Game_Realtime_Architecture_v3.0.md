@@ -200,9 +200,9 @@ Fixed-rate tick chỉ bật cho game chuyển động liên tục, khai báo tro
                    ▼                                          ▼
    ┌───────────────────────────────────┐      ┌────────────────────────────────────┐
    │  NETTY GATEWAY  ×10–12 pod        │      │  DỊCH VỤ NỀN TẢNG (stateless)      │
-   │  STATELESS                        │      │  • Auth / One-time ticket          │
+   │  STATELESS                        │      │  • Auth / One-time join token          │
    │  • Terminate TLS + WS handshake   │      │  • Matchmaking & Party             │
-   │  • Xác thực ticket → ChannelAttr  │      │  • Player Profile & Progression    │
+   │  • Xác thực join token → ChannelAttr  │      │  • Player Profile & Progression    │
    │  • Rate limit phân tầng (§10.1)   │      │  • Leaderboard (Valkey ZSET)        │
    │  • Lazy-learned routing (§8.2)    │      └────────────────────────────────────┘
    │  • Fan-out zero-copy (§10.3)      │
@@ -251,7 +251,7 @@ Fixed-rate tick chỉ bật cho game chuyển động liên tục, khai báo tro
 
 | Tầng | Có trạng thái? | Trách nhiệm | Tuyệt đối không làm |
 |---|---|---|---|
-| **Netty Gateway** | Không *(trừ cache định tuyến tự lành)* | TLS, WS handshake, xác thực ticket, rate limit, định tuyến, fan-out zero-copy, admission control | Chấm điểm, đọc luật chơi, gọi DB, giữ state phòng |
+| **Netty Gateway** | Không *(trừ cache định tuyến tự lành)* | TLS, WS handshake, xác thực join token, rate limit, định tuyến, fan-out zero-copy, admission control | Chấm điểm, đọc luật chơi, gọi DB, giữ state phòng |
 | **Game Engine** | **Có** — nguồn sự thật lúc chạy | Toàn bộ luật chơi, chấm điểm, FSM, tick, snapshot, guardrails | Chạm socket của client trực tiếp, gọi blocking I/O trên dispatcher của actor |
 | **Valkey** | Có | Snapshot nóng, fencing epoch, leaderboard, session registry cho vận hành | **Nằm trên đường đi của gói tin** — registry chỉ phục vụ dashboard/vận hành |
 | **PostgreSQL** | Có | Nguồn sự thật lâu dài: tài khoản, câu hỏi, kết quả, analytics partition theo tháng | Bị gọi đồng bộ trong hot path |
@@ -523,12 +523,12 @@ sách outbound với các game COALESCE.
 
 ```
 1. Client  →  POST /session/{id}/join           (REST, ngoài hot path)
-              ← one-time ticket (TTL 30s, dùng một lần)
+              ← one-time join token (TTL 30s, dùng một lần)
               ← connect_after_ms: jitter 0–5.000ms      ← staggered join (§10.4)
 
 2. Client đợi connect_after_ms, rồi mở WSS tới Gateway.
 
-3. Gateway: TLS → WS handshake → đổi ticket lấy danh tính
+3. Gateway: TLS → WS handshake → đổi join token lấy danh tính
             → ghi vào ChannelAttributes: student_id, room_id, session_id, roles
             → từ thời điểm này Gateway KHÔNG parse lại token cho mỗi gói
 
@@ -861,7 +861,7 @@ tiêu.
 | Tầng | Khoá | Ngưỡng | Mục đích |
 |---|---|---|---|
 | **L1** — chống DDoS thô | IP | **300 handshake/phút** | Chỉ chặn flood thật. Đặt theo **số học sinh tối đa của một trường**, không theo trực giác về IP |
-| **L2** — chống lạm dụng tài khoản | `student_id` (từ ticket) | **10 handshake/phút** | Chống reconnect loop, script |
+| **L2** — chống lạm dụng tài khoản | `student_id` (từ join token) | **10 handshake/phút** | Chống reconnect loop, script |
 | **L3** — bảo vệ dung lượng | Toàn cục/pod | Admission control | §10.4 |
 
 Nếu có trường lớn hơn 300 học sinh đồng thời, **nâng L1 hoặc bỏ hẳn L1** và chỉ dựa vào L2+L3.
@@ -932,7 +932,7 @@ Tải EdTech không phẳng. 09:00 giáo viên bấm Bắt đầu → **54.000 k
 
 ```
 54.000 TLS handshake        ← đắt nhất, ~1–3ms CPU mỗi lượt
-54.000 xác thực ticket
+54.000 xác thực join token
  4.500 RoomActor spawn
  4.500 Valkey write (lease + epoch)
 ```
@@ -958,7 +958,7 @@ của hệ thống, không phải giờ cao điểm.**
 | **1** | **Pre-spawn actor lúc tạo phiên** | Giáo viên tạo phiên → actor spawn ngay, ở `LOBBY`. Tới 09:00 chỉ còn chi phí kết nối, không còn 4.500 lượt spawn dồn cục |
 | **2** | **Staggered join do server điều phối** | `POST /session/{id}/join` trả kèm `connect_after_ms` (jitter 0–5.000ms). Trải 54.000 kết nối ra 5 giây. Học sinh không cảm nhận được vì màn hình chờ vẫn hiển thị |
 | **3** | **Admission control ở Gateway** | Vượt `max_handshake_per_sec` (đo ở H1) → trả **`503 + Retry-After`**, **không phải 429**. 429 khiến client hiểu nhầm là bị phạt. Thà chậm 3 giây còn hơn pod chết |
-| **4** | **TLS session resumption** | Bật session ticket / session ID. Reconnect sau đứt mạng bỏ qua full handshake — giảm phần lớn CPU của kịch bản hàng nghìn client nối lại cùng lúc sau khi Engine pod phục hồi (§9.3) |
+| **4** | **TLS session resumption** | Bật session join token / session ID. Reconnect sau đứt mạng bỏ qua full handshake — giảm phần lớn CPU của kịch bản hàng nghìn client nối lại cùng lúc sau khi Engine pod phục hồi (§9.3) |
 
 ### 10.5. Runtime guardrails cho Game Definition
 

@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Realtime 4-Choice Quiz Game - Integrated FE</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- Protobuf.js CDN with fallback handling -->
+    <script src="https://cdn.jsdelivr.net/npm/protobufjs@7.2.6/dist/protobuf.min.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Top Navbar -->
+        <header class="navbar">
+            <div class="brand">
+                <span class="logo-icon">🎮</span>
+                <h1>Uni Quiz Realtime</h1>
+                <span class="badge phase-badge" id="appModeBadge">STAGING / INTEGRATION</span>
+            </div>
+            
+            <div class="status-bar">
+                <div class="status-indicator disconnected" id="connectionStatus">
+                    <span class="status-dot"></span>
+                    <span id="statusText">Disconnected</span>
+                </div>
+                <button id="toggleDevSettingsBtn" class="btn btn-sm btn-outline">⚙️ Cấu hình Dev</button>
+            </div>
+        </header>
+
+        <!-- Collapsible Dev & Connection Settings -->
+        <div class="dev-settings-panel hidden" id="devSettingsPanel">
+            <h3>⚙️ Dev & Connection Settings</h3>
+            <div class="grid-form">
+                <div class="form-group">
+                    <label for="wsUrl">WebSocket Gateway URL:</label>
+                    <input type="text" id="wsUrl" value="ws://localhost:9000">
+                </div>
+                <div class="form-group">
+                    <label for="hmacSecret">Dev Join Token HMAC Secret:</label>
+                    <input type="password" id="hmacSecret" value="uni-realtime-local-docker-dev-secret-do-not-use-elsewhere">
+                </div>
+                <div class="form-group">
+                    <label for="studentId">Student ID:</label>
+                    <input type="text" id="studentId" value="student-1">
+                </div>
+                <div class="form-group">
+                    <label for="modeSelect">Chế độ Thử nghiệm:</label>
+                    <select id="modeSelect">
+                        <option value="real">Real BE (WebSocket ws://localhost:9000)</option>
+                        <option value="mock">Mock Server Mode (FE Standalone Test)</option>
+                    </select>
+                </div>
+            </div>
+            <div class="dev-actions">
+                <button id="btnSendTeacherStart" class="btn btn-sm btn-secondary">👨‍🏫 Gửi Teacher START_GAME</button>
+                <button id="btnSendTeacherEnd" class="btn btn-sm btn-secondary">👨‍🏫 Gửi Teacher END_GAME</button>
+                <button id="btnTriggerMockQ" class="btn btn-sm btn-accent">⚡ Mock: Phát câu hỏi mới</button>
+            </div>
+        </div>
+
+        <!-- Connection Banner for Connection Degraded -->
+        <div id="degradedBanner" class="alert alert-warning hidden">
+            ⚠️ <strong>Cảnh báo kết nối:</strong> <span id="degradedMsg">Hệ thống đang giảm tải, giữ kết nối WebSocket...</span>
+        </div>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <!-- Left/Center Column: Main Game Views -->
+            <div class="game-column">
+                
+                <!-- VIEW 1: JOIN ROOM FORM -->
+                <section id="viewJoin" class="card view-card">
+                    <div class="card-header">
+                        <h2>Tham gia Phòng Học</h2>
+                        <p>Nhập Tên hiển thị và Mã phòng để bắt đầu</p>
+                    </div>
+                    <div class="card-body">
+                        <form id="joinForm">
+                            <div class="form-group">
+                                <label for="displayName">Tên của bạn (Display Name):</label>
+                                <input type="text" id="displayName" placeholder="Ví dụ: Nguyễn Văn A" value="Nguyễn Văn A" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="roomId">Mã Phòng (Room ID):</label>
+                                <input type="text" id="roomId" placeholder="Ví dụ: room-101" value="room-101" required>
+                            </div>
+                            <button type="submit" class="btn btn-primary btn-block btn-lg" id="btnJoin">
+                                🚀 Vào Phòng Game
+                            </button>
+                        </form>
+                    </div>
+                </section>
+
+                <!-- VIEW 2: WAITING LOBBY -->
+                <section id="viewLobby" class="card view-card hidden">
+                    <div class="lobby-header">
+                        <h2>Phòng: <span id="lobbyRoomId">room-101</span></h2>
+                        <span class="pulse-tag">Đang chờ Giáo viên bắt đầu...</span>
+                    </div>
+                    <div class="lobby-info">
+                        <div class="student-profile">
+                            <div class="avatar" id="playerAvatar">A</div>
+                            <div class="profile-details">
+                                <h3 id="lobbyStudentName">Nguyễn Văn A</h3>
+                                <p id="lobbyStudentId">ID: student-1</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="lobby-players">
+                        <h3>Danh sách Người chơi trong phòng (<span id="playerCount">1</span>)</h3>
+                        <ul class="roster-grid" id="rosterGrid">
+                            <!-- Player pills rendered dynamically -->
+                        </ul>
+                    </div>
+                </section>
+
+                <!-- VIEW 3: ACTIVE 4-CHOICE QUESTION -->
+                <section id="viewQuestion" class="card view-card hidden">
+                    <!-- Timer & Progress Bar -->
+                    <div class="timer-container">
+                        <div class="timer-bar" id="timerBar"></div>
+                        <div class="timer-text" id="timerText">25s</div>
+                    </div>
+
+                    <!-- Question Prompt -->
+                    <div class="question-box">
+                        <span class="question-step" id="questionStep">Câu 1</span>
+                        <h2 class="question-prompt" id="questionPrompt">Đang tải câu hỏi...</h2>
+                    </div>
+
+                    <!-- 4 Answer Choice Buttons (Kahoot Style Colors) -->
+                    <div class="answers-grid" id="answersGrid">
+                        <button class="choice-btn choice-a" data-choice="a" id="btnChoiceA">
+                            <span class="shape">▲</span>
+                            <span class="choice-label">A</span>
+                            <span class="choice-text" id="textChoiceA">Đáp án A</span>
+                        </button>
+                        <button class="choice-btn choice-b" data-choice="b" id="btnChoiceB">
+                            <span class="shape">◆</span>
+                            <span class="choice-label">B</span>
+                            <span class="choice-text" id="textChoiceB">Đáp án B</span>
+                        </button>
+                        <button class="choice-btn choice-c" data-choice="c" id="btnChoiceC">
+                            <span class="shape">●</span>
+                            <span class="choice-label">C</span>
+                            <span class="choice-text" id="textChoiceC">Đáp án C</span>
+                        </button>
+                        <button class="choice-btn choice-d" data-choice="d" id="btnChoiceD">
+                            <span class="shape">■</span>
+                            <span class="choice-label">D</span>
+                            <span class="choice-text" id="textChoiceD">Đáp án D</span>
+                        </button>
+                    </div>
+
+                    <!-- Submitted Feedback Area -->
+                    <div class="answer-feedback hidden" id="answerFeedback">
+                        <div class="feedback-card" id="feedbackCard">
+                            <div class="feedback-icon" id="feedbackIcon">⏳</div>
+                            <div class="feedback-content">
+                                <h3 id="feedbackTitle">Đã gửi đáp án!</h3>
+                                <p id="feedbackDetail">Đang chờ xác nhận từ server...</p>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- VIEW 4: GAME OVER / PODIUM -->
+                <section id="viewGameOver" class="card view-card hidden">
+                    <div class="gameover-header">
+                        <h2>🏆 KẾT THÚC TRÒ CHƠI 🏆</h2>
+                        <p id="gameOverReason">Cảm ơn bạn đã tham gia!</p>
+                    </div>
+                    
+                    <!-- Podium top 3 -->
+                    <div class="podium-container" id="podiumContainer">
+                        <!-- Rendered via JS -->
+                    </div>
+
+                    <button class="btn btn-outline btn-block mt-4" id="btnPlayAgain">🔄 Thử lại / Về phòng chờ</button>
+                </section>
+            </div>
+
+            <!-- Right Column: Live Leaderboard & Scoreboard -->
+            <aside class="sidebar-column">
+                <div class="card leaderboard-card">
+                    <div class="card-header flex-between">
+                        <h3>📊 Bảng Xếp Hạng</h3>
+                        <span class="badge" id="myScoreBadge">Điểm của bạn: 0</span>
+                    </div>
+                    <div class="card-body p-0">
+                        <ol class="leaderboard-list" id="leaderboardList">
+                            <li class="empty-list">Chưa có dữ liệu người chơi</li>
+                        </ol>
+                    </div>
+                </div>
+
+                <!-- Event Protocol Log Console -->
+                <div class="card console-card">
+                    <div class="card-header flex-between">
+                        <h3>📜 Protocol Logs (Netty / Protobuf)</h3>
+                        <button id="btnClearLogs" class="btn btn-xs btn-outline">Clear</button>
+                    </div>
+                    <div class="console-body" id="consoleBody">
+                        <div class="log-entry info">[System] Sẵn sàng kết nối Protobuf WebSocket...</div>
+                    </div>
+                </div>
+            </aside>
+        </main>
+    </div>
+
+    <!-- Application Script -->
+    <script src="app.js"></script>
+</body>
+</html>

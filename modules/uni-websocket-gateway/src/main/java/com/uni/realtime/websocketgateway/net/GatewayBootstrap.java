@@ -1,6 +1,6 @@
 package com.uni.realtime.websocketgateway.net;
 
-import com.uni.realtime.websocketgateway.auth.TicketVerifier;
+import com.uni.realtime.websocketgateway.auth.JoinTokenVerifier;
 import com.uni.realtime.websocketgateway.fanout.RoomRegistry;
 import com.uni.realtime.websocketgateway.metrics.GatewayMetrics;
 import com.uni.realtime.websocketgateway.routing.EngineSender;
@@ -25,7 +25,7 @@ import java.net.InetSocketAddress;
 public final class GatewayBootstrap {
 
     private final int port;
-    private final TicketVerifier ticketVerifier;
+    private final JoinTokenVerifier joinTokenVerifier;
     private final RoomRegistry roomRegistry;
     private final GatewayMetrics gatewayMetrics;
     private final IpAdmissionController ipAdmissionController;
@@ -37,7 +37,7 @@ public final class GatewayBootstrap {
 
     /**
      * {@code roomRegistry} is shared across every connection this bootstrap accepts (Task 8)
-     * -- unlike {@code TicketAuthHandler}/{@code RateLimitHandler}, which {@link GatewayPipeline}
+     * -- unlike {@code JoinTokenAuthHandler}/{@code RateLimitHandler}, which {@link GatewayPipeline}
      * builds fresh per channel, the registry is exactly this pod's one {@code room_id ->
      * Set<Channel>} map and must be the same instance a {@code Broadcaster} fans out through.
      * {@code gatewayMetrics} is likewise one shared instance (Task 12) so its metrics are
@@ -49,11 +49,11 @@ public final class GatewayBootstrap {
      * (Task 13) is the pod's one {@code FrameChannelClient} -- every connection's {@code
      * RoomRouteHandler} forwards through the same set of Engine-pod connections, never one each.
      */
-    public GatewayBootstrap(int port, TicketVerifier ticketVerifier, RoomRegistry roomRegistry,
+    public GatewayBootstrap(int port, JoinTokenVerifier joinTokenVerifier, RoomRegistry roomRegistry,
             GatewayMetrics gatewayMetrics, IpAdmissionController ipAdmissionController,
             StudentHandshakeAdmissionController studentHandshakeAdmission, EngineSender engineSender) {
         this.port = port;
-        this.ticketVerifier = ticketVerifier;
+        this.joinTokenVerifier = joinTokenVerifier;
         this.roomRegistry = roomRegistry;
         this.gatewayMetrics = gatewayMetrics;
         this.ipAdmissionController = ipAdmissionController;
@@ -72,7 +72,7 @@ public final class GatewayBootstrap {
                 .childHandler(new ChannelInitializer<SocketChannel>() {
                     @Override
                     protected void initChannel(SocketChannel ch) {
-                        GatewayPipeline.addTo(ch.pipeline(), ticketVerifier, roomRegistry, gatewayMetrics,
+                        GatewayPipeline.addTo(ch.pipeline(), joinTokenVerifier, roomRegistry, gatewayMetrics,
                                 ipAdmissionController, studentHandshakeAdmission, engineSender);
                     }
                 });

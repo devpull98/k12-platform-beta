@@ -24,15 +24,15 @@ uni:
       # gateway never hashes a room id itself.
       pods: ${ENGINE_PODS:localhost:9100}
 
-    # Local-Docker-only stand-in for the still-blocked G1a/G1c ticket verifier (see the
+    # Local-Docker-only stand-in for the still-blocked G1a/G1c join token verifier (see the
     # com.uni.realtime.websocketgateway.auth.dev package javadoc). NEVER valid for staging/production --
     # gated behind BOTH this flag AND the "dev-docker" Spring profile so neither alone can
     # accidentally light it up.
-    dev-ticket:
-      enabled: ${GATEWAY_DEV_TICKET_ENABLED:false}
-      hmac-secret: ${GATEWAY_DEV_TICKET_SECRET:}
-      ttl-seconds: ${GATEWAY_DEV_TICKET_TTL_SECONDS:300}
-      replay-guard-enabled: ${GATEWAY_DEV_TICKET_REPLAY_GUARD_ENABLED:false}
+    dev-join-token:
+      enabled: ${GATEWAY_DEV_JOIN_TOKEN_ENABLED:false}
+      hmac-secret: ${GATEWAY_DEV_JOIN_TOKEN_SECRET:}
+      ttl-seconds: ${GATEWAY_DEV_JOIN_TOKEN_TTL_SECONDS:300}
+      replay-guard-enabled: ${GATEWAY_DEV_JOIN_TOKEN_REPLAY_GUARD_ENABLED:false}
 
 management:
   endpoints:

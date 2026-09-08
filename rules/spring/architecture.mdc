@@ -46,7 +46,7 @@ chỉ định, không đọc cả 1528 dòng.
 - Thu hẹp component scan khỏi `com.uni.realtime` — alerting tắt im lặng mà app vẫn khởi động.
 
 # Examples
-- modules/uni-websocket-gateway/src/main/java/... — handshake, ticket auth, rate limit, room registry, fan-out
+- modules/uni-websocket-gateway/src/main/java/... — handshake, join-token auth, rate limit, room registry, fan-out
 - modules/uni-game-engine/src/main/java/...  — RoomActor FSM, scoring, dedupe, tick coalescing, RoomOwnership
 - modules/uni-protocol/src/main/proto/game_message.proto — schema dùng chung, sinh code một lần
 - modules/uni-observability/src/main/java/... — Prometheus/OTLP, JSON logging, alert relay

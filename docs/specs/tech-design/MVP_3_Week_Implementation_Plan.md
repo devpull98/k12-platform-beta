@@ -66,7 +66,7 @@
 | Ngày | Công việc chính | Kết quả mong đợi |
 |---|---|---|
 | **Ngày 1-2** | - Chốt file `game_message.proto`<br>- Generate code Java 25+ & Dart (Flutter)<br>- Setup project Gateway + Engine | Protobuf sẵn sàng, project chạy |
-| **Ngày 3-4** | - Dựng Gateway: WebSocket + Auth Ticket + forward gRPC<br>- Kết nối Gateway ↔ Engine qua gRPC Stream | Client kết nối WebSocket thành công |
+| **Ngày 3-4** | - Dựng Gateway: WebSocket + Auth Join token + forward gRPC<br>- Kết nối Gateway ↔ Engine qua gRPC Stream | Client kết nối WebSocket thành công |
 | **Ngày 5** | - Xây dựng `RoomActor` (Java 25+ / Pekko) cơ bản<br>- FSM: `LOBBY` ➔ `PLAYING` ➔ `FINISHED` | Actor xử lý được state phòng |
 | **Ngày 6-7** | - Xử lý `SubmitAnswer` + chấm điểm đơn giản<br>- Broadcast Progress trong phòng<br>- Test nội bộ 1 phòng 12 người | Chơi được 1 ván quiz hoàn chỉnh |
 

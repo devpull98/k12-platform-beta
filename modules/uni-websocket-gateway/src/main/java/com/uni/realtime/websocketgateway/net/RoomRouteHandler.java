@@ -25,7 +25,7 @@ import org.slf4j.LoggerFactory;
  * or routing.
  *
  * <p>This is also where a dying channel is deregistered from {@link RoomRegistry} (Task 8):
- * {@code TicketAuthHandler} removes itself from the pipeline right after the join, so it
+ * {@code JoinTokenAuthHandler} removes itself from the pipeline right after the join, so it
  * cannot see this channel's eventual {@code channelInactive} -- this handler stays for the
  * whole connection and does.
  */

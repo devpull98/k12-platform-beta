@@ -46,7 +46,7 @@ receivers:
     webhook_configs:
       # Alertmanager's payload schema doesn't match what Google Chat's
       # webhook expects — relay through the app, which reshapes it into
-      # Chat's cardsV2 format (com.ticketdd.notification.AlertmanagerWebhookController).
+      # Chat's cardsV2 format (com.uni.realtime.observability.notification.AlertmanagerWebhookController).
       - url: "http://host.docker.internal:8080/internal/alertmanager-webhook"
         send_resolved: true
 
@@ -54,7 +54,7 @@ receivers:
     webhook_configs:
       # Alertmanager's payload schema doesn't match what Google Chat's
       # webhook expects — relay through the app, which reshapes it into
-      # Chat's cardsV2 format (com.ticketdd.notification.AlertmanagerWebhookController).
+      # Chat's cardsV2 format (com.uni.realtime.observability.notification.AlertmanagerWebhookController).
       - url: "http://host.docker.internal:8080/internal/alertmanager-webhook"
         send_resolved: true
 
@@ -73,7 +73,7 @@ receivers:
     webhook_configs:
       # Alertmanager's payload schema doesn't match what Google Chat's
       # webhook expects — relay through the app, which reshapes it into
-      # Chat's cardsV2 format (com.ticketdd.notification.AlertmanagerWebhookController).
+      # Chat's cardsV2 format (com.uni.realtime.observability.notification.AlertmanagerWebhookController).
       - url: "http://host.docker.internal:8080/internal/alertmanager-webhook"
         send_resolved: true
 

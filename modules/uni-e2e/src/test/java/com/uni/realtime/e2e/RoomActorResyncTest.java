@@ -8,9 +8,9 @@ import com.uni.realtime.gameengine.room.RoomActor;
 import com.uni.realtime.gameengine.room.RoomOwnership;
 import com.uni.realtime.gameengine.room.RoomSupervisor;
 import com.uni.realtime.gameengine.scoring.FormulaScoreCalculator;
-import com.uni.realtime.websocketgateway.auth.TicketClaims;
-import com.uni.realtime.websocketgateway.auth.TicketRejectedException;
-import com.uni.realtime.websocketgateway.auth.TicketVerifier;
+import com.uni.realtime.websocketgateway.auth.JoinTokenClaims;
+import com.uni.realtime.websocketgateway.auth.JoinTokenRejectedException;
+import com.uni.realtime.websocketgateway.auth.JoinTokenVerifier;
 import com.uni.realtime.websocketgateway.fanout.Broadcaster;
 import com.uni.realtime.websocketgateway.fanout.RoomRegistry;
 import com.uni.realtime.websocketgateway.metrics.GatewayMetrics;
@@ -85,8 +85,8 @@ class RoomActorResyncTest {
 
         clientA = SimulatedStudentClient.connect(gatewayPort);
         clientB = SimulatedStudentClient.connect(gatewayPort);
-        clientA.send(joinRoom("ticket:student-a:room-resync", "Alice"));
-        clientB.send(joinRoom("ticket:student-b:room-resync", "Bob"));
+        clientA.send(joinRoom("join-token:student-a:room-resync", "Alice"));
+        clientB.send(joinRoom("join-token:student-b:room-resync", "Bob"));
         clientA.takeMatching("Alice's full snapshot",
                 m -> m.getType() == MessageType.ROOM_STATE_SNAPSHOT && m.getRoomStateSnapshot().getFull());
         clientB.takeMatching("Bob's full snapshot",
@@ -103,7 +103,7 @@ class RoomActorResyncTest {
         // Student A submits but never drains the resulting ANSWER_ACK -- it stays in the ring
         // buffer as "unacked" from the client's point of view -- then disconnects.
         long sequence = clientA.submitTrackedAnswer("room-resync", "q-1", List.of("a"));
-        clientA.simulateDisconnectAndReconnect("room-resync", "ticket:student-a:room-resync", "Alice");
+        clientA.simulateDisconnectAndReconnect("room-resync", "join-token:student-a:room-resync", "Alice");
 
         // The reconnect's JOIN_ROOM reply and RESYNC's reply both land on the queue; take them
         // in the order the server actually sends them: ANSWER_ACK for the replayed submission,
@@ -162,7 +162,7 @@ class RoomActorResyncTest {
                 responseRouter::broadcastConnectionDegraded, gatewayClientGroup, gatewayMetrics);
         frameChannelClient.connect("engine-0", "localhost", enginePort);
 
-        gatewayBootstrap = new GatewayBootstrap(0, new FakeTicketVerifier(), roomRegistry, gatewayMetrics,
+        gatewayBootstrap = new GatewayBootstrap(0, new FakeJoinTokenVerifier(), roomRegistry, gatewayMetrics,
                 new IpAdmissionController(), new StudentHandshakeAdmissionController(), frameChannelClient);
         gatewayBootstrap.start();
         return gatewayBootstrap.boundPort();
@@ -176,22 +176,22 @@ class RoomActorResyncTest {
         room.tell(new RoomActor.StartQuestion("q-1", 25_000, List.of("a")));
     }
 
-    private static GameMessage joinRoom(String ticket, String displayName) {
+    private static GameMessage joinRoom(String joinToken, String displayName) {
         return GameMessage.newBuilder()
                 .setType(MessageType.JOIN_ROOM)
-                .setJoinRoom(com.uni.realtime.protocol.JoinRoom.newBuilder().setTicket(ticket).setDisplayName(displayName))
+                .setJoinRoom(com.uni.realtime.protocol.JoinRoom.newBuilder().setJoinToken(joinToken).setDisplayName(displayName))
                 .build();
     }
 
     /** Same test-only stand-in {@code WalkingSkeletonTest} uses -- see that class's javadoc for why. */
-    private static final class FakeTicketVerifier implements TicketVerifier {
+    private static final class FakeJoinTokenVerifier implements JoinTokenVerifier {
         @Override
-        public TicketClaims verify(String ticket) throws TicketRejectedException {
-            String[] parts = ticket.split(":");
-            if (parts.length != 3 || !parts[0].equals("ticket")) {
-                throw new TicketRejectedException("malformed test ticket: " + ticket);
+        public JoinTokenClaims verify(String joinToken) throws JoinTokenRejectedException {
+            String[] parts = joinToken.split(":");
+            if (parts.length != 3 || !parts[0].equals("join-token")) {
+                throw new JoinTokenRejectedException("malformed test joinToken: " + joinToken);
             }
-            return new TicketClaims(parts[1], parts[2], "session-" + parts[1], List.of("student"));
+            return new JoinTokenClaims(parts[1], parts[2], "session-" + parts[1], List.of("student"));
         }
     }
 }

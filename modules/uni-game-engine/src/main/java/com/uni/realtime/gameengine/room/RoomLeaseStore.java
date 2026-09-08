@@ -9,7 +9,7 @@ import java.util.concurrent.CompletableFuture;
  * connection (the production implementation, {@code DistributedRoomLeaseStore}, lives in
  * {@code engine.persistence} and is not exercised by any test in this repo -- there is no such
  * store available in this development environment to verify it against, the same caveat
- * {@code TicketAuthHandler}'s placeholder verifier already carries for its own real
+ * {@code JoinTokenAuthHandler}'s placeholder verifier already carries for its own real
  * implementation).
  *
  * <p>Both methods return a {@link CompletableFuture} on purpose: whatever calls this sits one

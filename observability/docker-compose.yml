@@ -5,6 +5,8 @@ networks:
 services:
   prometheus:
     image: prom/prometheus:v2.53.4
+    container_name: uni-prometheus
+    restart: unless-stopped
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
@@ -24,18 +26,18 @@ services:
           cpus: "0.4"
         reservations:
           memory: 96m
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   alertmanager:
     image: prom/alertmanager:v0.27.0
+    container_name: uni-alertmanager
+    restart: unless-stopped
     volumes:
       - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml.template:ro
-    # Alertmanager has no built-in ${VAR} expansion of its config file (unlike
-    # Promtail's -config.expand-env), so sed-substitute the Telegram
-    # placeholders into a real config before starting it. Secrets are
-    # escaped for sed's replacement syntax first — a literal "&" or "#" in a
-    # secret is otherwise a sed metacharacter and corrupts the substitution.
-    # Google Chat no longer goes through templating here: webhook_configs
-    # posts to the app's own relay endpoint instead (see alertmanager.yml).
     entrypoint: ["/bin/sh", "-c"]
     command:
       - >-
@@ -61,9 +63,16 @@ services:
         limits:
           memory: 64m
           cpus: "0.1"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   loki:
     image: grafana/loki:3.1.2
+    container_name: uni-loki
+    restart: unless-stopped
     volumes:
       - ./loki/loki-config.yml:/etc/loki/local-config.yaml:ro
       - loki-data:/loki
@@ -79,9 +88,16 @@ services:
           cpus: "0.3"
         reservations:
           memory: 96m
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   tempo:
     image: grafana/tempo:2.6.1
+    container_name: uni-tempo
+    restart: unless-stopped
     volumes:
       - ./tempo/tempo.yaml:/etc/tempo.yaml:ro
     command: -config.file=/etc/tempo.yaml
@@ -98,15 +114,22 @@ services:
           cpus: "0.3"
         reservations:
           memory: 96m
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   promtail:
     image: grafana/promtail:3.1.2
+    container_name: uni-promtail
+    restart: unless-stopped
     volumes:
       - ./promtail/promtail-config.yml:/etc/promtail/config.yml:ro
       - ${APP_LOG_DIR:-../logs}:/logs:ro
     command: -config.file=/etc/promtail/config.yml -config.expand-env=true
     environment:
-      APP_JOB_NAME: "${APP_JOB_NAME:-spring-app}"
+      APP_JOB_NAME: "${APP_JOB_NAME:-k12-platform-beta}"
     networks:
       - observability
     depends_on:
@@ -116,9 +139,16 @@ services:
         limits:
           memory: 96m
           cpus: "0.1"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   grafana:
     image: grafana/grafana:11.3.2
+    container_name: uni-grafana
+    restart: unless-stopped
     environment:
       GF_SECURITY_ADMIN_PASSWORD: admin
       GF_USERS_ALLOW_SIGN_UP: "false"
@@ -142,56 +172,11 @@ services:
           cpus: "0.4"
         reservations:
           memory: 96m
-
-  # --- Cross-stack metrics test services ---
-  # Minimal non-Java services whose only purpose is proving the Prometheus →
-  # Grafana pipeline works for other languages/frameworks, not real domain
-  # code. Each exposes /metrics (Prometheus text format) and /work (dummy
-  # endpoint that generates request-count/latency/error-rate samples).
-  # DB_HOST=host.docker.internal reaches the MySQL container from the root
-  # docker-compose.yml (a separate compose project/network) via its published
-  # host port — same host.docker.internal convention Prometheus already uses
-  # to scrape the host-run Spring app, rather than bridging the two networks.
-  express-metrics:
-    build: ./express-metrics
-    ports:
-      - "${EXPRESS_METRICS_PORT:-3001}:3000"
-    environment:
-      DB_HOST: host.docker.internal
-      DB_PORT: "3306"
-      DB_USER: ticket_user
-      DB_PASSWORD: ticket_pass
-      DB_NAME: ticket_dd
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    networks:
-      - observability
-    deploy:
-      resources:
-        limits:
-          memory: 128m
-          cpus: "0.2"
-
-  laravel-metrics:
-    build: ./laravel-metrics
-    ports:
-      - "${LARAVEL_METRICS_PORT:-8001}:8000"
-    environment:
-      DB_CONNECTION: mysql
-      DB_HOST: host.docker.internal
-      DB_PORT: "3306"
-      DB_DATABASE: ticket_dd
-      DB_USERNAME: ticket_user
-      DB_PASSWORD: ticket_pass
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    networks:
-      - observability
-    deploy:
-      resources:
-        limits:
-          memory: 192m
-          cpus: "0.2"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   loki-data:

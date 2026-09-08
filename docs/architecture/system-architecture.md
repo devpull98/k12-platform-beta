@@ -69,7 +69,7 @@ CLIENT (Flutter · WebView · Web)
    │ WSS + Protobuf ─ HOT PATH          │ REST/HTTPS ─ auth · hồ sơ · ghép trận
    ▼                                    ▼
 GATEWAY ×10–12 · STATELESS          DỊCH VỤ NỀN TẢNG (stateless)
-   handshake · ticket · rate limit      auth/one-time ticket · matchmaking
+   handshake · join token · rate limit      auth/one-time join token · matchmaking
    định tuyến học được · fan-out        profile · leaderboard
    ✗ KHÔNG business logic
    │ INTERNAL FRAME CHANNEL (ADR-001)
@@ -85,7 +85,7 @@ GAME ENGINE ×12–16 · Pekko Typed (ADR-002)
 ```
 
 > [!NOTE]
-> **Hạ tầng hiện tại:** Valkey Cluster và Kafka **đã sẵn sàng và được tích hợp ngay từ đầu** ở tầng Async Backplane (Valkey cho Ticket `SETNX` lúc handshake và Hot Snapshot < 5 KB; Kafka cho Event Log trận đấu). PostgreSQL lưu trữ kết quả thi đấu sau phiên. Toàn bộ Hot Path tiếp tục duy trì 100% qua TCP nội bộ Netty thuần, tuyệt đối không đi qua Valkey hay Kafka.
+> **Hạ tầng hiện tại:** Valkey Cluster và Kafka **đã sẵn sàng và được tích hợp ngay từ đầu** ở tầng Async Backplane (Valkey cho Join token `SETNX` lúc handshake và Hot Snapshot < 5 KB; Kafka cho Event Log trận đấu). PostgreSQL lưu trữ kết quả thi đấu sau phiên. Toàn bộ Hot Path tiếp tục duy trì 100% qua TCP nội bộ Netty thuần, tuyệt đối không đi qua Valkey hay Kafka.
 
 ### 1.6 Ba thứ cố ý không có
 - **Valkey Pub/Sub trên hot path**: Không dùng — mỗi phòng có đúng 1 RoomActor chủ sở hữu, không có shared state để phải đồng bộ qua backplane.
@@ -103,16 +103,16 @@ Hệ thống gồm 4 module Maven nhưng chỉ đóng gói thành **2 process**:
 |---|---|---|---|
 | `modules/uni-protocol` | Thư viện | Nhúng vào **cả hai** process | Chứa schema Protobuf duy nhất của kênh giao tiếp; cấm copy `.proto` sang module khác |
 | `modules/uni-observability` | Thư viện | Nhúng vào **cả hai** process | Plumbing metrics (Prometheus/OTLP), log JSON, Alertmanager relay |
-| `modules/uni-websocket-gateway` | **Process** | Gateway pod (×10–12) | Đón kết nối WebSocket, xác thực ticket, rate limit, định tuyến, fan-out |
+| `modules/uni-websocket-gateway` | **Process** | Gateway pod (×10–12) | Đón kết nối WebSocket, xác thực join token, rate limit, định tuyến, fan-out |
 | `modules/uni-game-engine` | **Process** | Engine pod (×12–16) | Chạy RoomActor, xử lý FSM, chấm điểm, tick coalescing |
 
 ### 2.2 Trách nhiệm từng tầng
 
 | Tầng | State? | Trách nhiệm | Tuyệt đối không làm |
 |---|---|---|---|
-| **Gateway** | Không *(trừ RouteCache tự lành)* | Handshake, ticket auth (`SETNX` Valkey), rate limit, định tuyến học được, fan-out zero-copy | Chấm điểm, đọc luật chơi, gọi DB, giữ state phòng |
+| **Gateway** | Không *(trừ RouteCache tự lành)* | Handshake, join-token auth (`SETNX` Valkey), rate limit, định tuyến học được, fan-out zero-copy | Chấm điểm, đọc luật chơi, gọi DB, giữ state phòng |
 | **Engine** | **Có** (in-memory) | Luật chơi, chấm điểm, FSM, tick coalescing, lưu Hot Snapshot async sang Valkey, phát event sang Kafka | Chạm socket client trực tiếp, blocking I/O trên dispatcher actor |
-| **Valkey Cluster** | Có (Đã sẵn sàng) | Hot Snapshot (< 5 KB), fencing epoch, chặn replay ticket (`SETNX`), session registry | **Nằm trên đường đi của gói tin hot path (Cấm Valkey Pub/Sub)** |
+| **Valkey Cluster** | Có (Đã sẵn sàng) | Hot Snapshot (< 5 KB), fencing epoch, chặn replay join token (`SETNX`), session registry | **Nằm trên đường đi của gói tin hot path (Cấm Valkey Pub/Sub)** |
 | **PostgreSQL** | Có | Nguồn sự thật lâu dài: tài khoản, câu hỏi, kết quả phiên (ghi async sau phiên) | Bị gọi đồng bộ trong hot path |
 | **Kafka Cluster** | Có (Đã sẵn sàng) | Event log async cho Teacher Dashboard, PostgreSQL writer, analytics và audit trail | **Nằm trên hot path hoặc tham gia recovery** ([ADR-003](#adr-003)) |
 
@@ -122,7 +122,7 @@ Hệ thống gồm 4 module Maven nhưng chỉ đóng gói thành **2 process**:
 Pipeline Netty (thứ tự cố định, không hoán đổi):
 ```text
 HttpServerCodec → HttpObjectAggregator(50KB) → WebSocketServerProtocolHandler
-  → TicketAuthHandler   ── xác thực MỘT lần, rồi TỰ GỠ khỏi pipeline
+  → JoinTokenAuthHandler   ── xác thực MỘT lần, rồi TỰ GỠ khỏi pipeline
   → RateLimitHandler    ── token bucket theo student_id
   → ProtobufDecoder
   → RoomRouteHandler    ── tra RouteCache → Internal Frame Channel
@@ -241,21 +241,21 @@ Cấu trúc `GameMessage`:
 
 Framing kênh nội bộ sử dụng 4-byte big-endian length prefix (`LengthFieldBasedFrameDecoder` / `LengthFieldPrepender` của Netty). Gói tin > 1 MB sẽ bị ngắt kết nối lập tức để chống OOM.
 
-### 3.4 Xác thực: One-Time Ticket
+### 3.4 Xác thực: One-Time Join Token
 ```text
 1. Client ──POST /session/{id}/join (REST)──► Dịch vụ Nền tảng
-          ◄── ticket (TTL 30s, dùng 1 lần) + connect_after_ms (jitter 0–5000ms)
+          ◄── join token (TTL 30s, dùng 1 lần) + connect_after_ms (jitter 0–5000ms)
 2. Client chờ hết jitter → mở kết nối WSS tới Gateway.
-3. Gateway: verify ticket 1 lần lúc handshake:
+3. Gateway: verify join token 1 lần lúc handshake:
             a. Kiểm tra chữ ký & hạn dùng exp cục bộ (vật liệu key nạp lúc boot).
-            b. Chặn replay trên Valkey Cluster: SET ticket:{jti} "1" EX 30 NX
+            b. Chặn replay trên Valkey Cluster: SET join-token:{jti} "1" EX 30 NX
                (trả OK → chấp nhận; trả nil → từ chối ngay).
             c. Ghi ChannelAttributes{student_id, room_id, session_id, roles}
-            d. TicketAuthHandler TỰ GỠ khỏi pipeline.
+            d. JoinTokenAuthHandler TỰ GỠ khỏi pipeline.
 4. Các gói tin sau KHÔNG verify lại; danh tính lấy trực tiếp từ ChannelAttributes.
 ```
 - `connect_after_ms`: Trải đều 54.000 kết nối trong 5 giây, triệt tiêu connection storm.
-- **Cơ chế chống Replay đã chốt:** Sử dụng Valkey Cluster `SET ticket:{jti} "1" EX 30 NX` giải quyết triệt để việc cưỡng chế vé 1 lần giữa nhiều Gateway pod mà không làm chậm hot path. Thuật toán ký và phân phối secret được nạp lúc boot.
+- **Cơ chế chống Replay đã chốt:** Sử dụng Valkey Cluster `SET join-token:{jti} "1" EX 30 NX` giải quyết triệt để việc cưỡng chế vé 1 lần giữa nhiều Gateway pod mà không làm chậm hot path. Thuật toán ký và phân phối secret được nạp lúc boot.
 
 ### 3.5 Phân lớp Critical vs Best-Effort
 
@@ -282,9 +282,9 @@ Phần lớn CCU đang đọc câu hỏi trên màn hình. Với R = 4.500 phòn
 - **Tổng Outbound (có Coalescing 200ms)**: `2.160 × 12 ≈ 26.000 packet/s` (thay vì 270.000 packet/s nếu chạy Fixed-rate 200ms).
 
 ### 4.2 Luồng Vào phòng (Join Room)
-1. Client gọi REST `/join`, nhận ticket và `connect_after_ms`.
-2. Hết jitter, client mở WSS gửi ticket trong handshake.
-3. Gateway xác thực ticket, ghi `ChannelAttributes{student_id, room_id, session_id, roles}` và gỡ auth handler.
+1. Client gọi REST `/join`, nhận join token và `connect_after_ms`.
+2. Hết jitter, client mở WSS gửi join token trong handshake.
+3. Gateway xác thực join token, ghi `ChannelAttributes{student_id, room_id, session_id, roles}` và gỡ auth handler.
 4. Gateway gửi `JoinRoom` qua Frame Channel. Chưa biết pod nào → gửi round-robin, Engine tự forward nếu không phải owner.
 5. `RoomActor` nhận lệnh: cấp `student_index`, thêm vào state, trả `ROOM_STATE_SNAPSHOT` đầy đủ kèm `owner_pod_id`.
 6. Gateway nhận response, lưu route `room_id → owner_pod_id` vào `RouteCache`.
@@ -480,7 +480,7 @@ Dựa trên số liệu đo đạc thực tế tại ca cao điểm (19:00 – 2
 |---|:---:|:---:|:---:|---|
 | **Gateway (`uni-websocket-gateway`)** | **4 – 5 Pods** | **1.5 CPU / 3 GiB** | **3.0 CPU / 6 GiB** | Peak Load Target: ~10.000–13.000 WS conns/pod (Tải thường 10k–20k CCU dùng 2–3 pods ~5k–6.5k WS/pod). |
 | **Engine (`uni-game-engine`)** | **6 – 8 Pods** | **1.5 CPU / 3 GiB** | **3.0 CPU / 6 GiB** | Gánh ~550–750 phòng/pod (~6.700–9.000 HS) ở tải đỉnh (*chỉ áp dụng sau Task 14*; trước Task 14 giữ 300–375 phòng/pod). **Cấm HPA**. |
-| **Valkey Cluster** | 3 shard + replica | Cluster | Cluster | Ticket SETNX, Hot Snapshot (<5KB) & Lease (`Task 14`). |
+| **Valkey Cluster** | 3 shard + replica | Cluster | Cluster | Join token SETNX, Hot Snapshot (<5KB) & Lease (`Task 14`). |
 | **PostgreSQL** | Multi-AZ | Primary-Replica | Primary-Replica | Lưu kết quả phiên sau khi FINISHED. |
 | **Kafka Cluster** | 3 broker | Cluster | Cluster | Async event log analytics (`game.events.v1`, `Task 18`). |
 
@@ -502,7 +502,7 @@ Bảng chi tiết quy tắc co giãn (Scaling Rules) khi chạy ở mức tải 
 | **Engine (`uni-game-engine`)** | **3 – 4 Pods** | **6 – 8 Pods** | **TĂNG +3–4 Pods TRƯỚC 18:50** (Cấm auto-scale tự động; **CẤM scale khi chạy Modulo**) |
 | **Tổng Gateway Request** | 3.0–4.5 CPUs / 6–9 GiB | 6.0–7.5 CPUs / 12–15 GiB | Tự động mở rộng Quota K8s cho Gateway |
 | **Tổng Engine Request** | 4.5–6.0 CPUs / 9–12 GiB | 9.0–12.0 CPUs / 18–24 GiB | Mở rộng Quota K8s cho Engine trước ca thi đấu |
-| **Valkey Connection Pool** | 50 conns/pod | 150 conns/pod | **TĂNG max-connections pool** để xử lý bão ticket `SETNX` lúc 19:00 |
+| **Valkey Connection Pool** | 50 conns/pod | 150 conns/pod | **TĂNG max-connections pool** để xử lý bão join token `SETNX` lúc 19:00 |
 
 > [!CAUTION]
 > **Ràng buộc Scale Engine trong Ca Thi:**
@@ -645,7 +645,7 @@ t ≈ 22s     Phòng trở lại PLAYING, broadcast state đầy đủ cho học
 - **`LastSeenSequenceTable`** chống trùng lặp.
 - **Tick coalescing** với cờ dirty flag 200ms.
 - **Định tuyến tự học** qua `owner_pod_id` (không cần Valkey/TTL trên hot path).
-- **Tích hợp Valkey Cluster**: Chặn replay ticket (`SET ticket:{jti} 1 EX 30 NX` lúc handshake), lưu Hot Snapshot (< 5 KB) định kỳ + Fencing epoch bất đồng bộ.
+- **Tích hợp Valkey Cluster**: Chặn replay join token (`SET join-token:{jti} 1 EX 30 NX` lúc handshake), lưu Hot Snapshot (< 5 KB) định kỳ + Fencing epoch bất đồng bộ.
 - **Tích hợp Kafka Cluster**: Event streaming (`game.events.v1`, partition key `session_id`) đẩy kết quả trận đấu ra hệ sinh thái nền tảng.
 - Rate limiting phân tầng, Zero-copy fan-out, Backpressure 1 tầng.
 - Nền tảng quan sát đầy đủ (Prometheus, Grafana, OpenTelemetry, Log JSON).
@@ -1044,11 +1044,11 @@ khỏi phần **đề xuất cho GĐ2** (cần ADR riêng, chưa được phép 
 ### 9.3 Rủi ro Tầng Hạ Tầng Phụ Trợ Valkey Cluster & Kafka
 
 #### ⚠️ Rủi ro 5: Lệch đồng hồ (NTP Clock Drift) làm từ chối vé hợp lệ
-- **Hiện trạng:** Ticket vào phòng có TTL 30 giây. Gateway giải mã JWT/ticket và so sánh trường hạn dùng `exp` với đồng hồ cục bộ của pod ([§3.4](#34-xác-thực-one-time-ticket)).
-- **Nguy cơ:** Dịch vụ cấp ticket (BFF/Auth) và các máy chủ Kubernetes chạy Gateway nằm trên các node vật lý khác nhau. Nếu đồng bộ giờ (NTP) bị lệch chỉ **3–5 giây**:
-  - Học sinh vừa nhận ticket ở Web, mở WebSocket tới Gateway thì Gateway so với giờ của nó thấy `current_time > exp` → **Lập tức từ chối học sinh với lỗi vé hết hạn**.
+- **Hiện trạng:** Join token vào phòng có TTL 30 giây. Gateway giải mã JWT/join token và so sánh trường hạn dùng `exp` với đồng hồ cục bộ của pod ([§3.4](#34-xác-thực-one-time-join-token)).
+- **Nguy cơ:** Dịch vụ cấp join token (BFF/Auth) và các máy chủ Kubernetes chạy Gateway nằm trên các node vật lý khác nhau. Nếu đồng bộ giờ (NTP) bị lệch chỉ **3–5 giây**:
+  - Học sinh vừa nhận join token ở Web, mở WebSocket tới Gateway thì Gateway so với giờ của nó thấy `current_time > exp` → **Lập tức từ chối học sinh với lỗi vé hết hạn**.
 - **Chiến lược phòng ngừa:**
-  1. **Cấu hình Clock Skew Tolerance:** Thêm khoảng dung sai từ **3–5 giây** khi kiểm tra hạn dùng `exp` tại `TicketAuthHandler`.
+  1. **Cấu hình Clock Skew Tolerance:** Thêm khoảng dung sai từ **3–5 giây** khi kiểm tra hạn dùng `exp` tại `JoinTokenAuthHandler`.
   2. **Giám sát đồng bộ NTP:** Đặt alert cảnh báo trên K8s cluster khi độ lệch NTP (`chrony`/`ntpd` offset) giữa các worker node vượt quá 500ms.
 
 #### ⚠️ Rủi ro 6: Kafka Producer Buffer Full làm nghẽn Engine Pod
@@ -1083,7 +1083,7 @@ khỏi phần **đề xuất cho GĐ2** (cần ADR riêng, chưa được phép 
 | **1** | **GC Pause làm lệch timestamp** | 🔴 Cao | 🟡 Vừa | Đóng dấu `received_at` ở Netty transport; tuning G1 `MaxGCPauseMillis=10` | Backend Lead |
 | **2** | **Direct Memory Leak & RSS Bloat** | 🔴 Cao | 🟡 Vừa | Ép nạp `jemalloc` (`LD_PRELOAD`); bật Netty leak detection ADVANCED; alert RSS | Backend / SRE |
 | **3** | **Kafka lag làm block Engine** | 🔴 Cao | 🟢 Thấp | Cấu hình `max.block.ms=0`, đẩy event qua worker thread riêng biệt | Backend Dev |
-| **4** | **Lệch đồng hồ NTP làm hỏng Ticket** | 🟡 Vừa | 🟡 Vừa | Clock skew tolerance 5s tại Gateway; alert NTP sync | DevOps / SRE |
+| **4** | **Lệch đồng hồ NTP làm hỏng Join token** | 🟡 Vừa | 🟡 Vừa | Clock skew tolerance 5s tại Gateway; alert NTP sync | DevOps / SRE |
 | **5** | **Head-of-Line Blocking trên TCP** | 🟡 Vừa | 🟢 Thấp ở GĐ1 (snapshot đã < 5 KB) | GĐ1: giám sát `internal_frame_p99_latency`/cặp pod. GĐ2 (nếu đo thấy cần): pool 2–4 TCP + sửa ADR-001, không tự làm trước | Backend Dev |
 | **6** | **Scale pod làm vỡ Modulo Hash** | 🔴 Cao | 🟢 Thấp | Tạm thời: cấm scale Engine pod giữa trận đấu (Task 19). Fix thật đã chốt: `LeaseBasedRoomOwnership` (Task 14, chưa triển khai) | Backend Dev / DevOps / SRE |
 | **7** | **Frontend thiếu RingBuffer (PH-3)** | 🔴 Cao | 🟡 Vừa | Ký hợp đồng kỹ thuật bắt buộc: RingBuffer 10 phần tử + phát `RESYNC` | Frontend Lead |
@@ -1104,7 +1104,7 @@ Mục này trình bày ví dụ thực tế quy trình chuyển đổi tài li�
 | **Cơ chế Mechanic:**<br>- `progress_meter` (Thanh tiến trình)<br>- `progress_display_mode`: `simple_bar` / `staged_visual` | Cấu hình `progress_target` (đích tiến trình). Thêm mốc phần trăm (`progress_stages`) trong payload Protobuf `RoomStateSnapshot`. `RoomActor` tự tính `% = (câu đúng / progress_target) * 100`. | `modules/uni-protocol/.../game_message.proto`<br>`modules/uni-game-engine/.../room/RoomActor.java` |
 | **Điều kiện Thắng (`win_condition`):**<br>- `progress_completed`: Đạt 100%<br>- `first_to_finish`: Đội đầu tiên chạm 100%<br>- `most_points_when_time_up`: Điểm cao nhất khi hết giờ | Thêm `WinConditionEvaluator` vào `RoomState.evaluateStep()`. Khi thỏa mãn điều kiện, `RoomActor` chuyển FSM sang trạng thái `FINISHED` và dừng ván game. | `modules/uni-game-engine/.../room/RoomState.java`<br>`modules/uni-game-engine/.../scoring/FormulaScoreCalculator.java` |
 | **Tài nguyên dùng chung (`shared_resource`):**<br>- `time`: Trừ thời gian khi sai<br>- `lives`: Trừ số mạng của phòng | Thêm `shared_resource_type` và `penalty_value`. Khi nộp bài sai, `RoomState` trừ trực tiếp vào `step_deadline_at` hoặc `remaining_lives` của nhóm/phòng. | `modules/uni-game-engine/.../room/RoomState.java` |
-| **Tự động hiện nút "Vào chơi" (No Room Code):**<br>- Không cần link hay mã phòng.<br>- Lấy danh tính từ tài khoản Uniclass/CMS | Xác thực `TicketAuthHandler` tại Gateway qua JWT ticket một lần (`TicketAuthHandler.java`). Trích xuất `student_id`, `room_id`, `session_id` từ token claim. | `modules/uni-websocket-gateway/.../auth/TicketAuthHandler.java` |
+| **Tự động hiện nút "Vào chơi" (No Room Code):**<br>- Không cần link hay mã phòng.<br>- Lấy danh tính từ tài khoản Uniclass/CMS | Xác thực `JoinTokenAuthHandler` tại Gateway qua JWT join token một lần (`JoinTokenAuthHandler.java`). Trích xuất `student_id`, `room_id`, `session_id` từ token claim. | `modules/uni-websocket-gateway/.../auth/JoinTokenAuthHandler.java` |
 | **Tương thích Hệ thống Cũ (`lms-worker`):**<br>- Thảo luận nhóm, nộp bài tập nhóm, trao cúp thành tích | `GameEventPublisher` đẩy `GameEvent` bất đồng bộ sang Kafka topic `game.events.v1`. Các listener `lms-worker` (`ActiveGroupDiscussionListener`, `SubmitExerciseListener`) tiêu thụ sự kiện từ Kafka để trao cúp/lưu DB. | `modules/uni-game-engine/.../events/GameEventPublisher.java`<br>`vn.edupiaclass.lms.worker.listener.event.group_discussion.*` |
 
 ---
@@ -1152,7 +1152,7 @@ Feature: Khôi phục kết nối và Chống nộp trùng dữ liệu
   Scenario: Học sinh bị ngắt mạng tạm thời trong lúc ván game đang diễn ra
     Given Học sinh A đã nộp bài thành công ở câu 1 với sequence = 1 và nhận ANSWER_ACK
     When Học sinh A bị rớt mạng WebSocket và kết nối lại sau 10 giây
-    Then Gateway xác thực vé One-Time Ticket và tra cứu RouteCache đưa học sinh A về đúng Engine Pod
+    Then Gateway xác thực vé One-Time Join Token và tra cứu RouteCache đưa học sinh A về đúng Engine Pod
     And Client gửi gói tin Resync(last_acked_seq = 1, pending = [sequence_1])
     Then Server RoomActor tra cứu LastSeenSequenceTable phát hiện sequence_1 <= last_seen (1 <= 1)
     And Server trả lại ANSWER_ACK cũ, không cộng điểm lần hai, không làm thay đổi điểm số ván game
@@ -1171,6 +1171,6 @@ Feature: Khôi phục kết nối và Chống nộp trùng dữ liệu
    └─► 3. Ánh xạ vào Codebase hiện tại:
            ├── Protocol: Thêm field vào GameMessage / RoomStateSnapshot (uni-protocol)
            ├── Engine FSM: Bổ sung WinCondition & Progress Calculator vào RoomState (uni-game-engine)
-           ├── Gateway: Giữ nguyên TicketAuthHandler & RouteCache (uni-websocket-gateway)
+           ├── Gateway: Giữ nguyên JoinTokenAuthHandler & RouteCache (uni-websocket-gateway)
            └─► Worker Integration: Đẩy Kafka Event sang lms-worker / SubmitExerciseListener
 ```

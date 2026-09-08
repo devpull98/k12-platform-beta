@@ -28,7 +28,7 @@ public final class GatewayMetrics {
         channelNotWritableCounter.increment();
     }
 
-    /** Called once per successful handshake (TicketAuthHandler) -- PromQL's rate() over this gives handshake_rate its name. */
+    /** Called once per successful handshake (JoinTokenAuthHandler) -- PromQL's rate() over this gives handshake_rate its name. */
     public void recordHandshake() {
         handshakeCounter.increment();
     }

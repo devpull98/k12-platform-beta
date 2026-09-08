@@ -9,9 +9,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * {@code student_id}, shared across every connection this pod accepts. Unlike {@link
  * IpAdmissionController}'s L1 budget -- which must stay generous because a whole school shares
  * one NAT IP (§5.6, "Cả trường ra Internet qua một IP NAT") -- this keys by the student identity
- * a ticket has just verified, so one student reconnecting too often can never exhaust a budget
+ * a join token has just verified, so one student reconnecting too often can never exhaust a budget
  * shared with classmates behind the same NAT IP. Runs in {@link
- * com.uni.realtime.websocketgateway.auth.TicketAuthHandler}, right after {@code ticketVerifier.verify}
+ * com.uni.realtime.websocketgateway.auth.JoinTokenAuthHandler}, right after {@code joinTokenVerifier.verify}
  * succeeds and {@code student_id} becomes known, before {@link ChannelAttributes} is bound.
  *
  * <p>Threshold: 10 handshake/phút (§5.6 L2) -- distinct from {@link

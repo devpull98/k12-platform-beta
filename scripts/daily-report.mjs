@@ -2,7 +2,7 @@
 // Daily Health Report — query Prometheus, sinh Markdown vao reports/
 // Chay thu: node scripts/daily-report.mjs
 // Schedule: Windows Task Scheduler - Daily 08:00
-//   Action: node "E:\Learn-Backend\java\spring-ticket-ddd\scripts\daily-report.mjs"
+//   Action: node "scripts/daily-report.mjs"
 
 import { writeFileSync, mkdirSync } from "fs";
 import { join, dirname } from "path";
@@ -57,10 +57,10 @@ const [appUp, errRate, p95, heapPct,
        mysqlUp, connPct, slowQps,
        redisUp, memPct,
        kafkaUp, maxLag] = await Promise.all([
-  query('up{job="spring-ticket-ddd"}'),
-  query('sum(rate(http_server_requests_seconds_count{application="spring-ticket-ddd",status=~"5.."}[1h])) / sum(rate(http_server_requests_seconds_count{application="spring-ticket-ddd"}[1h]))'),
-  query('histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{application="spring-ticket-ddd"}[1h])) by (le))'),
-  query('sum(jvm_memory_used_bytes{application="spring-ticket-ddd",area="heap"}) / sum(jvm_memory_max_bytes{application="spring-ticket-ddd",area="heap"})'),
+  query('up{job="k12-platform-beta"}'),
+  query('sum(rate(http_server_requests_seconds_count{application="k12-platform-beta",status=~"5.."}[1h])) / sum(rate(http_server_requests_seconds_count{application="k12-platform-beta"}[1h]))'),
+  query('histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{application="k12-platform-beta"}[1h])) by (le))'),
+  query('sum(jvm_memory_used_bytes{application="k12-platform-beta",area="heap"}) / sum(jvm_memory_max_bytes{application="k12-platform-beta",area="heap"})'),
   query('mysql_up'),
   query('mysql_global_status_threads_connected / mysql_global_variables_max_connections'),
   query('rate(mysql_global_status_slow_queries[1h])'),
@@ -73,7 +73,7 @@ const [appUp, errRate, p95, heapPct,
 const lines = [
   `# Daily Health Report — ${date}`,
   "",
-  "## App: spring-ticket-ddd",
+  "## App: k12-platform-beta",
   "| Metric | Value | Status |",
   "|--------|-------|--------|",
   `| Liveness        | ${appUp === 1 ? "UP" : "DOWN"} | ${upStatus(appUp)} |`,

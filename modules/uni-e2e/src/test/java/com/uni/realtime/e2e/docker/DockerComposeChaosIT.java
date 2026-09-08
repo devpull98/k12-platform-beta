@@ -1,8 +1,8 @@
 package com.uni.realtime.e2e.docker;
 
 import com.uni.realtime.e2e.support.SimulatedStudentClient;
-import com.uni.realtime.websocketgateway.auth.TicketClaims;
-import com.uni.realtime.websocketgateway.auth.dev.DevTicketCodec;
+import com.uni.realtime.websocketgateway.auth.JoinTokenClaims;
+import com.uni.realtime.websocketgateway.auth.dev.DevJoinTokenCodec;
 import com.uni.realtime.protocol.MessageType;
 import com.uni.realtime.protocol.PlayerState;
 import org.junit.jupiter.api.AfterEach;
@@ -41,8 +41,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 class DockerComposeChaosIT {
 
     private static final int GATEWAY_PORT = 9000;
-    private static final DevTicketCodec CODEC = new DevTicketCodec(
-            DevTicketCodec.DEFAULT_DEV_SECRET.getBytes(StandardCharsets.UTF_8), Clock.systemUTC());
+    private static final DevJoinTokenCodec CODEC = new DevJoinTokenCodec(
+            DevJoinTokenCodec.DEFAULT_DEV_SECRET.getBytes(StandardCharsets.UTF_8), Clock.systemUTC());
 
     private SimulatedStudentClient client;
     private String killedEngineService;
@@ -68,12 +68,12 @@ class DockerComposeChaosIT {
     @Test
     void should_notCloseTheSocket_when_itsOwningEngineIsKilled() throws Exception {
         String roomId = "room-chaos-degraded";
-        String ticket = CODEC.sign(
-                new TicketClaims("student-chaos-degraded", roomId, "session-chaos-degraded", List.of("student")),
+        String joinToken = CODEC.sign(
+                new JoinTokenClaims("student-chaos-degraded", roomId, "session-chaos-degraded", List.of("student")),
                 Duration.ofMinutes(5));
 
         client = SimulatedStudentClient.connect(GATEWAY_PORT);
-        client.joinRoomWithRetry(ticket, "Chaos Student", 5, 2_000);
+        client.joinRoomWithRetry(joinToken, "Chaos Student", 5, 2_000);
 
         String owningPod = ownerOf(roomId);
         killedEngineService = owningPod;
@@ -91,12 +91,12 @@ class DockerComposeChaosIT {
     void should_recoverRoomOnAnotherPod_when_itsOwningEngineIsKilled() throws Exception {
         String roomId = "room-chaos-recover";
         String studentId = "student-chaos-recover";
-        String ticket = CODEC.sign(
-                new TicketClaims(studentId, roomId, "session-chaos-recover", List.of("student")),
+        String joinToken = CODEC.sign(
+                new JoinTokenClaims(studentId, roomId, "session-chaos-recover", List.of("student")),
                 Duration.ofMinutes(5));
 
         client = SimulatedStudentClient.connect(GATEWAY_PORT);
-        client.joinRoomWithRetry(ticket, "Chaos Student", 5, 2_000);
+        client.joinRoomWithRetry(joinToken, "Chaos Student", 5, 2_000);
 
         String originalOwner = ownerOf(roomId);
         awaitSnapshotWritten(roomId);
@@ -110,7 +110,7 @@ class DockerComposeChaosIT {
         // at the moment of the kill, not just "20s since last renewal"). 25 attempts x 3s = 75s
         // gives generous margin over that worst case plus round-robin/detection overhead,
         // observed to matter in practice (a tighter 15x2s=30s window flaked once).
-        var fullSnapshot = client.joinRoomWithRetry(ticket, "Chaos Student", 25, 3_000);
+        var fullSnapshot = client.joinRoomWithRetry(joinToken, "Chaos Student", 25, 3_000);
 
         List<PlayerState> players = fullSnapshot.getRoomStateSnapshot().getPlayersList();
         assertThat(players)

@@ -59,7 +59,7 @@
   - `modules/uni-game-engine/src/test/java/com/uni/realtime/engine/net/FrameCodecTest.java` (mới)
   - `modules/uni-game-engine/src/test/java/com/uni/realtime/engine/net/FrameChannelServerTest.java` (mới)
 
-## Task 6 — Gateway: Netty pipeline + WS handshake + ticket auth (một phần)
+## Task 6 — Gateway: Netty pipeline + WS handshake + join-token auth (một phần)
 
 - **Trạng thái:** một phần xong (2026-09-06) — xem "Cố ý chưa làm" bên dưới, đây không phải task đóng hoàn toàn.
 - **Verification:** `mvn -pl :uni-websocket-gateway test -Dtest=GatewayPipelineTest` → 6/6 pass
@@ -69,10 +69,10 @@
 - **Phạm vi đã làm:**
   - `GatewayPipeline.addTo(...)`: thứ tự cố định đúng như AC —
     `HttpServerCodec → HttpObjectAggregator(8KB) → WebSocketServerProtocolHandler →
-    TicketAuthHandler → RateLimitHandler → GameMessageDecoder → RoomRouteHandler`. Không có
+    JoinTokenAuthHandler → RateLimitHandler → GameMessageDecoder → RoomRouteHandler`. Không có
     `SslHandler` (test xác nhận `pipeline.get(SslHandler.class)` null).
-  - `TicketAuthHandler`: đọc frame WS đầu tiên, bắt buộc phải là `JOIN_ROOM` (sai loại → đóng
-    channel), gọi `TicketVerifier.verify(ticket)`, ticket bị từ chối → đóng channel + log; ticket
+  - `JoinTokenAuthHandler`: đọc frame WS đầu tiên, bắt buộc phải là `JOIN_ROOM` (sai loại → đóng
+    channel), gọi `JoinTokenVerifier.verify(join token)`, join token bị từ chối → đóng channel + log; join token
     hợp lệ → bind `ChannelAttributes{student_id, room_id, session_id, roles}` rồi **tự gỡ khỏi
     pipeline** và forward message JOIN_ROOM đã decode sẵn (không parse lại 2 lần).
   - `RoomRouteHandler`: `room_id` trong payload rỗng → chấp nhận và ghi đè bằng giá trị đã bind;
@@ -83,8 +83,8 @@
     group duy nhất, đúng AC "Netty EventLoop cố định = cores × 2"), dùng `NioIoHandler` (API
     mới của Netty 4.2, không dùng `NioEventLoopGroup` đã deprecated).
 - **Cố ý CHƯA làm — không phải thiếu sót:**
-  - **Thuật toán ký ticket thật (G1a) và dung sai lệch đồng hồ (G1c) — KHÔNG hiện thực.**
-    `TicketVerifier` chỉ là interface (`modules/uni-websocket-gateway/.../auth/TicketVerifier.java`),
+  - **Thuật toán ký join token thật (G1a) và dung sai lệch đồng hồ (G1c) — KHÔNG hiện thực.**
+    `JoinTokenVerifier` chỉ là interface (`modules/uni-websocket-gateway/.../auth/JoinTokenVerifier.java`),
     **không có implementation nào trong main code**. Test dùng lambda fake verifier. Đây là
     ranh giới cố ý — tech-design.md nói rõ "không tự thiết kế, đi hỏi đội dịch vụ nền tảng".
     Bất kỳ ai định "tạm" viết một verifier giả trong main code để demo/staging đều đang vi phạm
@@ -94,10 +94,10 @@
   - Rate limiting thật (Task 7), fan-out/RoomRegistry (Task 8), route cache tới Engine (Task 5),
     backpressure (Task 9) — đều chưa đụng tới, đúng ranh giới Task 6.
 - **File đụng tới:**
-  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/auth/TicketVerifier.java` (mới)
-  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/auth/TicketClaims.java` (mới)
-  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/auth/TicketRejectedException.java` (mới)
-  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/auth/TicketAuthHandler.java` (mới)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/auth/JoinTokenVerifier.java` (mới)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/auth/JoinTokenClaims.java` (mới)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/auth/JoinTokenRejectedException.java` (mới)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/auth/JoinTokenAuthHandler.java` (mới)
   - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/net/ChannelAttributes.java` (mới)
   - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/net/GameMessageDecoder.java` (mới)
   - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/net/RateLimitHandler.java` (mới)
@@ -242,12 +242,12 @@
   - `Broadcaster`: `retainedDuplicate()` + `BinaryWebSocketFrame` mới cho mỗi client,
     `frame.release()` trong `finally` (chạy dù list rỗng hay write ném lỗi), bỏ qua channel đã
     `!isActive()` (phòng race giữa lúc channel chết và lúc `channelInactive` kịp chạy).
-  - Nối dây thật: `TicketAuthHandler` gọi `roomRegistry.add(...)` ngay sau khi bind
+  - Nối dây thật: `JoinTokenAuthHandler` gọi `roomRegistry.add(...)` ngay sau khi bind
     `ChannelAttributes` (chỗ duy nhất biết `room_id`) — nhưng handler này tự gỡ khỏi pipeline
     sau đó nên không thể lo phần gỡ đăng ký. `RoomRouteHandler` (sống suốt đời connection)
     override `channelInactive` để gọi `roomRegistry.remove(...)`. `GatewayPipeline`/
     `GatewayBootstrap` truyền `RoomRegistry` — **một instance dùng chung cho cả pod**, khác hẳn
-    `TicketAuthHandler`/`RateLimitHandler` (mỗi channel một instance riêng).
+    `JoinTokenAuthHandler`/`RateLimitHandler` (mỗi channel một instance riêng).
 - **Cố ý chưa làm (thuộc task khác):**
   - Nối `Broadcaster.broadcast(...)` với phản hồi thật từ Engine (`FrameChannelClient.onResponse`,
     Task 5) — dây nối end-to-end Engine→Gateway→client là Task 13.
@@ -255,7 +255,7 @@
 - **File đụng tới:**
   - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/fanout/RoomRegistry.java` (mới)
   - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/fanout/Broadcaster.java` (mới)
-  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/auth/TicketAuthHandler.java` (sửa)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/auth/JoinTokenAuthHandler.java` (sửa)
   - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/net/RoomRouteHandler.java` (sửa)
   - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/net/GatewayPipeline.java` (sửa)
   - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/net/GatewayBootstrap.java` (sửa)
@@ -409,7 +409,7 @@
     tag theo room_id) sang dùng `EngineMetrics.processingLatencyTimer()` — đúng tên
     `actor_processing_latency` theo AC, pod-wide.
   - `Broadcaster` (Task 8/9) đo `fanout_latency` quanh toàn bộ vòng lặp fan-out.
-  - `TicketAuthHandler`: sinh `trace_id` (`UUID.randomUUID()`) lúc handshake thành công, lưu
+  - `JoinTokenAuthHandler`: sinh `trace_id` (`UUID.randomUUID()`) lúc handshake thành công, lưu
     vào `ChannelAttributes.TRACE_ID` (key mới), gọi `GatewayMetrics.recordHandshake()`.
   - `RoomRouteHandler`: luôn đóng dấu `InternalHeader.trace_id` từ `ChannelAttributes` vào
     MỌI message trước khi forward (gộp luôn phần sửa `room_id` cũ vào cùng 1 `toBuilder()`).
@@ -434,7 +434,7 @@
   - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/net/GatewayBootstrap.java` (sửa)
   - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/net/ChannelAttributes.java` (sửa)
   - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/net/RoomRouteHandler.java` (sửa)
-  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/auth/TicketAuthHandler.java` (sửa)
+  - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/auth/JoinTokenAuthHandler.java` (sửa)
   - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/routing/FrameChannelClient.java` (sửa)
   - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/fanout/Broadcaster.java` (sửa)
   - Cùng các file test tương ứng (thêm mới `EngineMetricsTest`/`GatewayMetricsTest`, sửa
@@ -557,7 +557,7 @@
 - **Điểm gắn trước đây không tồn tại, nay có:** `IpAdmissionHandler` là handler **đầu tiên** trong
   `GatewayPipeline` (trước cả `BackpressureHandler`), chạy ở `channelActive` — mỗi TCP connection
   mới tới pod này được tính là 1 lần thử handshake, và bị từ chối (đóng channel) trước khi tốn dù
-  một cycle CPU cho `HttpServerCodec`/WS upgrade/`TicketAuthHandler` nếu IP đã vượt ngưỡng.
+  một cycle CPU cho `HttpServerCodec`/WS upgrade/`JoinTokenAuthHandler` nếu IP đã vượt ngưỡng.
 - **Ngưỡng dùng đúng quyết định mới nhất:** `4.000 handshake/phút` (Business, 2026-09-06,
   system-architecture.md §5.6) — **không phải** con số `300` còn ghi trong AC gốc của plan.md
   Task 7 (đã lỗi thời trước khi phần này được code).
@@ -576,7 +576,7 @@
     của plan.md Task 7 (chỉ nhắc "L1 theo IP") và cũng không thuộc bất kỳ task nào khác đã liệt
     kê. Mở rộng sang đó sẽ là tự thêm phạm vi không có trong `plan.md`.
   - Không thêm metric Prometheus riêng cho lượt từ chối L1 — chỉ `log.warn`, đúng khuôn
-    `TicketAuthHandler` xử lý ticket bị từ chối (cũng chỉ log, không có counter riêng). Task 12
+    `JoinTokenAuthHandler` xử lý join token bị từ chối (cũng chỉ log, không có counter riêng). Task 12
     đã chốt xong danh sách 5 metric cụ thể; thêm một metric mới ở đây sẽ là mở rộng phạm vi Task 12.
 - **File đụng tới:**
   - `modules/uni-websocket-gateway/src/main/java/com/uni/realtime/gateway/net/IpAdmissionController.java` (mới)
@@ -621,7 +621,7 @@
   - `EngineNetworkLifecycle`/`GatewayNetworkLifecycle` (`.../boot/`, mới) — lần đầu Spring Boot
     thật sự khởi động Netty/Pekko. **Đã chạy thật** (`spring-boot:run` + `curl`/`netstat`):
     Engine bind 9100+8090; Gateway chỉ bind 8080 — cổng WS 9000 **cố tình không mở** vì
-    `GatewayNetworkLifecycle` có `@ConditionalOnBean(TicketVerifier.class)` và chưa có bean thật
+    `GatewayNetworkLifecycle` có `@ConditionalOnBean(JoinTokenVerifier.class)` và chưa có bean thật
     (G1a/G1c chưa chốt) — đúng hành vi mong muốn, không phải lỗi.
   - `EngineMetrics.recordMessageDequeued()` giờ được gọi thật trong `RoomActor.watched()` (chỉ
     `JoinRoom`/`SubmitAnswer`) — đóng nốt cảnh báo Task 12 để lại.
@@ -714,7 +714,7 @@ cơ chế mã hoá message.
   `writeAndFlush` trực tiếp thì fail đúng như dự đoán.
 - **Linear scan trong `sendToOneStudent` (trùng phát hiện review pass 1):** `RoomRegistry` thêm
   overload `add(roomId, studentId, channel)` xây `Map<room_id, Map<student_id, Channel>>` song
-  song, cộng `channelFor(roomId, studentId)` O(1). `TicketAuthHandler` đổi sang overload có
+  song, cộng `channelFor(roomId, studentId)` O(1). `JoinTokenAuthHandler` đổi sang overload có
   index; `RoomRegistryTest` thêm 3 case cho index mới.
 - **`ConcurrentHashMap` thừa trong `RoomSupervisor` (trùng phát hiện review pass 1):** đổi cả 3
   map (`roomsByRoomId`, `replyActorsByChannel`, `subscribersByRoom`) sang `HashMap` thường —

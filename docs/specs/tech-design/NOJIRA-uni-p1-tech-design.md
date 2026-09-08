@@ -39,40 +39,40 @@ Không có REST endpoint mới. Biên realtime là WebSocket + Protobuf, đã ch
 [README §3.3](../../architecture/system-architecture.md#33-envelope-thống-nhất-gamemessage) và `modules/uni-protocol/src/main/proto/game_message.proto`.
 Phần dưới chỉ đóng ba chỗ còn trống.
 
-### G1 — Hợp đồng ticket (chặn T6)
+### G1 — Hợp đồng join token (chặn T6)
 
-[README §3.4](../../architecture/system-architecture.md#34-xác-thực-one-time-ticket) mô tả *luồng* ticket nhưng chưa ở đâu định nghĩa
-**ticket là cái gì**. T6 phải viết `TicketAuthHandler` verify nó.
+[README §3.4](../../architecture/system-architecture.md#34-xác-thực-one-time-join-token) mô tả *luồng* join token nhưng chưa ở đâu định nghĩa
+**join token là cái gì**. T6 phải viết `JoinTokenAuthHandler` verify nó.
 
 Ba ràng buộc dưới đây **suy ra được từ thiết kế đã chốt**, không phải lựa chọn mới:
 
 | # | Ràng buộc | Suy ra từ |
 |---|---|---|
-| R1 | Ticket phải **tự chứa và verify được cục bộ** — không tra cứu, không gọi mạng | §13.2 cấm mọi DB/Valkey/HTTP call trong EventLoop. Ticket dạng handle mờ (phải tra ra danh tính) **vi phạm trực tiếp** rule này |
-| R2 | Ticket phải mang chữ ký | [README §2.3](../../architecture/system-architecture.md#23-bên-trong-gateway): *"Mọi gói sau đó KHÔNG verify lại chữ ký"* — câu đó chỉ có nghĩa nếu có chữ ký để verify một lần |
-| R3 | Claim tối thiểu: `student_id`, `room_id`, `session_id`, `roles`, `exp` | [README §3.4](../../architecture/system-architecture.md#34-xác-thực-one-time-ticket) bước 3 — đó đúng là tập `ChannelAttributes` gateway phải bind |
+| R1 | Join token phải **tự chứa và verify được cục bộ** — không tra cứu, không gọi mạng | §13.2 cấm mọi DB/Valkey/HTTP call trong EventLoop. Join token dạng handle mờ (phải tra ra danh tính) **vi phạm trực tiếp** rule này |
+| R2 | Join token phải mang chữ ký | [README §2.3](../../architecture/system-architecture.md#23-bên-trong-gateway): *"Mọi gói sau đó KHÔNG verify lại chữ ký"* — câu đó chỉ có nghĩa nếu có chữ ký để verify một lần |
+| R3 | Claim tối thiểu: `student_id`, `room_id`, `session_id`, `roles`, `exp` | [README §3.4](../../architecture/system-architecture.md#34-xác-thực-one-time-join-token) bước 3 — đó đúng là tập `ChannelAttributes` gateway phải bind |
 
 **Chưa quyết được ở đây, phải xác nhận với đội dịch vụ nền tảng:** thuật toán ký (HMAC dùng
 secret chung hay chữ ký bất đối xứng), cách phân phối/xoay khoá, và encoding cụ thể.
-`_context.md` ghi `POST /session/{id}/join` **đã có** ở dịch vụ nền tảng — nên format ticket là
+`_context.md` ghi `POST /session/{id}/join` **đã có** ở dịch vụ nền tảng — nên format join token là
 **sự thật cần đi hỏi, không phải thứ tài liệu này được phép thiết kế**. Bịa ra một format ở đây
 sẽ được code theo và lệch với thứ đang chạy thật.
 
 > [!NOTE]
 > **Cơ chế cưỡng chế "Dùng MỘT lần" với Valkey Cluster (ĐÃ CHỐT):**
 >
-> Cưỡng chế một-lần đòi hỏi trạng thái **dùng chung giữa các Gateway pod** (đã tiêu ticket nào).
-> Với hạ tầng **Valkey Cluster đã có sẵn**, Gateway cưỡng chế vé 1 lần tại `TicketAuthHandler` (T6) bằng lệnh atomic:
+> Cưỡng chế một-lần đòi hỏi trạng thái **dùng chung giữa các Gateway pod** (đã tiêu join token nào).
+> Với hạ tầng **Valkey Cluster đã có sẵn**, Gateway cưỡng chế vé 1 lần tại `JoinTokenAuthHandler` (T6) bằng lệnh atomic:
 > ```text
-> SET ticket:{jti} "1" EX 30 NX
+> SET join-token:{jti} "1" EX 30 NX
 > ```
-> - Nếu trả về `OK` → Ticket hợp lệ và chưa ai dùng, cho phép hoàn tất handshake và bind `ChannelAttributes`.
-> - Nếu trả về `nil` → Ticket đã bị dùng ở pod khác → Từ chối kết nối ngay lập tức.
+> - Nếu trả về `OK` → Join token hợp lệ và chưa ai dùng, cho phép hoàn tất handshake và bind `ChannelAttributes`.
+> - Nếu trả về `nil` → Join token đã bị dùng ở pod khác → Từ chối kết nối ngay lập tức.
 >
 > Thao tác này diễn ra đúng 1 lần duy nhất lúc mở kết nối WebSocket, **hoàn toàn không nằm trên hot path của trận đấu**, bảo đảm an toàn bảo mật tuyệt đối mà không ảnh hưởng latency.
 
 **Còn phải chốt (kỹ thuật, nhỏ):** dung sai lệch đồng hồ khi so `exp`. Gateway và dịch vụ cấp
-ticket là hai process khác nhau; TTL 30s mà lệch đồng hồ 5s là ăn mất 1/6 cửa sổ. Không tự điền
+join token là hai process khác nhau; TTL 30s mà lệch đồng hồ 5s là ăn mất 1/6 cửa sổ. Không tự điền
 một con số ở đây — cần biết hai bên có cùng nguồn NTP không.
 
 ### G2 — Mã hoá delta snapshot (chặn T3, và client PH-3)
@@ -122,7 +122,7 @@ chặn** T7 — nhưng người code T7 cần biết trước, không phát hi�
 ## 3. Thay đổi Database
 
 **Không có Database trên hot path.** Valkey Cluster được tích hợp ở tầng phụ trợ async:
-- Chặn replay ticket: `SET ticket:{jti} "1" EX 30 NX` tại Gateway handshake (ngoài hot path trận đấu).
+- Chặn replay join token: `SET join-token:{jti} "1" EX 30 NX` tại Gateway handshake (ngoài hot path trận đấu).
 - Lưu Hot Snapshot phòng: `SET room:snap:{room_id}` định kỳ (< 5 KB, ghi async qua Virtual Thread từ `RoomActor`).
 - PostgreSQL: Lưu trữ kết quả phiên thi đấu sau khi kết thúc trận (được đẩy bất đồng bộ từ Kafka event consumer).
 
@@ -138,7 +138,7 @@ Task nào bắt đầu chèn truy vấn database/Valkey đồng bộ vào hot pa
 
 ## 5. Tích hợp dịch vụ ngoài
 
-Một, và nó nằm **ngoài** hot path: dịch vụ nền tảng cấp ticket qua `POST /session/{id}/join`.
+Một, và nó nằm **ngoài** hot path: dịch vụ nền tảng cấp join token qua `POST /session/{id}/join`.
 
 | Thuộc tính | Giá trị |
 |---|---|
@@ -180,7 +180,7 @@ trên:
 
 | Hợp đồng | Module / file | Task |
 |---|---|---|
-| G1 ticket | `modules/uni-websocket-gateway/.../auth/TicketAuthHandler.java` | T6 |
+| G1 join token | `modules/uni-websocket-gateway/.../auth/JoinTokenAuthHandler.java` | T6 |
 | G2 delta | `modules/uni-game-engine/.../room/CoalescingFlush.java` | T3 |
 | G3 `UPDATE_DRAFT` | `modules/uni-protocol/src/main/proto/game_message.proto` · `modules/uni-websocket-gateway/.../net/RateLimitHandler.java` | T7 |
 | Envelope (đã chốt) | `modules/uni-protocol/src/main/proto/game_message.proto` | T1 ✅ |
@@ -195,9 +195,9 @@ sao: `stack: spring` ở repo này chỉ nghĩa là "boot bằng Spring Boot" �
 
 ### 9.1 Kỹ thuật — chặn task, quyết được trong đội
 
-- [ ] **G1a** Thuật toán ký ticket + phân phối khoá — **đi hỏi đội dịch vụ nền tảng**, không tự
+- [ ] **G1a** Thuật toán ký join token + phân phối khoá — **đi hỏi đội dịch vụ nền tảng**, không tự
       thiết kế (dịch vụ đã tồn tại). *Chặn T6.*
-- [x] **G1b** "Một lần" hay "TTL ngắn"? → **ĐÃ CHỐT:** Cưỡng chế vé 1 lần bằng Valkey Cluster `SET ticket:{jti} "1" EX 30 NX` tại Gateway handshake. Không còn chặn T6.
+- [x] **G1b** "Một lần" hay "TTL ngắn"? → **ĐÃ CHỐT:** Cưỡng chế vé 1 lần bằng Valkey Cluster `SET join-token:{jti} "1" EX 30 NX` tại Gateway handshake. Không còn chặn T6.
 - [ ] **G1c** Dung sai lệch đồng hồ khi kiểm `exp`. *Chặn T6.*
 - [x] **G2a** `N` = bao nhiêu lần flush thì gửi full snapshot? → **ĐÃ CHỐT (2026-09-06, trong đội):**
       `N = 10` (~2 giây ở trần 200ms/flush). Hiện thực ở
@@ -238,7 +238,7 @@ trúc sẽ được code theo và không ai biết nó chưa từng được duy
 ## 10. Checklist cho người review
 
 - [ ] R1–R3 (§G1) có đúng là **suy ra** từ thiết kế đã chốt, hay có chỗ đã lén thành lựa chọn mới?
-- [ ] Ba lựa chọn one-time ticket đã đủ chưa? Khuyến nghị (1) có chấp nhận được về bảo mật không?
+- [ ] Ba lựa chọn one-time join token đã đủ chưa? Khuyến nghị (1) có chấp nhận được về bảo mật không?
 - [ ] D1–D4 có giữ được `RoomStateSnapshot` < 5 KB ở phòng 12 người không?
 - [ ] D3 ("vắng mặt = không đổi") có tạo lỗ nào khi một học sinh rời phòng không? Rời phòng phải
       biểu diễn bằng `connected = false` **có mặt** trong delta, không phải bằng vắng mặt.
