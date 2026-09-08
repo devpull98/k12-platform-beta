@@ -1352,8 +1352,8 @@
       "description": "mongodb_driver_pool_checkoutfailed_total không phải metric có thật (Micrometer MongoMetricsConnectionPoolListener không emit counter này) — dùng mongodb_driver_commands_seconds_count{status!=\"SUCCESS\"} từ MongoMetricsCommandListener thay thế, đã confirm có data thật trên cluster Prometheus.",
       "targets": [
         {
-          "expr": "sum(rate(mongodb_driver_commands_seconds_count{application=\"$application\", status!=\"SUCCESS\"}[$__rate_interval])) by (command)",
-          "legendFormat": "{{command}} failed",
+          "expr": "sum(rate(mongodb_driver_commands_seconds_count{application=\"$application\", status!=\"SUCCESS\"}[$__rate_interval])) by (command, server_address)",
+          "legendFormat": "{{command}} @ {{server_address}}",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus-k12"
@@ -2618,6 +2618,367 @@
       ],
       "title": "Aerospike Client Connection Status",
       "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 9010
+      },
+      "id": 502,
+      "title": "MongoDB Failure Detail",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "description": "Latency thực tế của các command bị FAILED — dùng để phân biệt lỗi timeout thật (latency gần bằng ngưỡng timeout cấu hình, thường vài giây) với fail nhanh kiểu connection refused/auth reject (latency gần 0).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 9011
+      },
+      "id": 503,
+      "options": {
+        "legend": {
+          "calcs": ["mean", "max"],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "mongodb_driver_commands_seconds_max{application=\"$application\", status!=\"SUCCESS\"}",
+          "legendFormat": "{{command}} @ {{server_address}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "MongoDB Failed Command Latency (max)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "description": "Tổng số command FAILED cộng dồn từ lúc app start — khác với panel 'rate' ở trên: rate có thể về 0 ngay cả khi tổng số lỗi rất cao (lỗi xảy ra rồi dừng, không còn tăng tiếp), panel này cho thấy con số tích lũy thật để không bị bỏ sót.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 10 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 9011
+      },
+      "id": 504,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "mongodb_driver_commands_seconds_count{application=\"$application\", status!=\"SUCCESS\"}",
+          "legendFormat": "{{command}} @ {{server_address}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "MongoDB Failed Commands (total, cumulative)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "description": "Metric CHƯA tồn tại (chờ team platform triển khai — xem docs/work/NOJIRA-platform-mongodb-driver-event-metrics-gap bên repo k12-backend-java, BUG-A). Đây là timeout THẬT của thread giám sát topology (ServerMonitorListener) — khác với 'MongoDB Command Failures' ở trên (đi qua CommandListener, code path khác). Panel sẽ tự có data ngay khi metric mongodb_driver_heartbeat_failures_total được deploy, không cần sửa dashboard thêm.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 9018
+      },
+      "id": 505,
+      "options": {
+        "legend": {
+          "calcs": ["mean", "max"],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(mongodb_driver_heartbeat_failures_total{application=\"$application\"}[$__rate_interval])) by (server_address, exception)",
+          "legendFormat": "{{server_address}} — {{exception}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "MongoDB Heartbeat Failures (rate) — pending BUG-A",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "description": "Metric CHƯA tồn tại (chờ BUG-A). Latency heartbeat thật — dùng để phát hiện server chậm dần trước khi timeout hẳn.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 9018
+      },
+      "id": 506,
+      "options": {
+        "legend": {
+          "calcs": ["mean", "max"],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "mongodb_driver_heartbeat_seconds_max{application=\"$application\"}",
+          "legendFormat": "{{server_address}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "MongoDB Heartbeat Latency (max) — pending BUG-A",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "description": "Metric CHƯA tồn tại (chờ BUG-B). checkout_failed = lý do checkout connection thất bại (TIMEOUT/CONNECTION_ERROR/POOL_CLOSED); connections_closed = lý do đóng connection (idle bình thường vs lỗi).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 9025
+      },
+      "id": 507,
+      "options": {
+        "legend": {
+          "calcs": ["mean", "max"],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(mongodb_driver_pool_checkout_failed_total{application=\"$application\"}[$__rate_interval])) by (server_address, reason)",
+          "legendFormat": "checkout failed: {{server_address}} — {{reason}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        },
+        {
+          "expr": "sum(rate(mongodb_driver_pool_connections_closed_total{application=\"$application\"}[$__rate_interval])) by (server_address, reason)",
+          "legendFormat": "closed: {{server_address}} — {{reason}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "MongoDB Pool Checkout Failed / Connections Closed (rate) — pending BUG-B",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "description": "Metric CHƯA tồn tại (chờ BUG-B/BUG-C). pool_cleared = pool bị clear toàn bộ (thường do lỗi nghiêm trọng/failover, hiếm nhưng critical); cluster_topology_changes = số lần topology cluster đổi (failover, node join/leave). Tổng tích lũy từ lúc app start.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 9025
+      },
+      "id": 508,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "mongodb_driver_pool_cleared_total{application=\"$application\"}",
+          "legendFormat": "pool cleared: {{server_address}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        },
+        {
+          "expr": "mongodb_driver_cluster_topology_changes_total{application=\"$application\"}",
+          "legendFormat": "topology changes",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "MongoDB Pool Cleared / Topology Changes (total) — pending BUG-B/C",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "description": "Metric CHƯA tồn tại (chờ BUG-C). Số lần 1 server cụ thể đổi trạng thái (vd CONNECTED → UNKNOWN) — cảnh báo sớm trước khi dẫn tới hàng loạt timeout/command fail.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 9032
+      },
+      "id": 509,
+      "options": {
+        "legend": {
+          "calcs": ["mean", "max"],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(mongodb_driver_server_state_changes_total{application=\"$application\"}[$__rate_interval])) by (server_address, type)",
+          "legendFormat": "{{server_address}} — {{type}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "MongoDB Server State Changes (rate) — pending BUG-C",
+      "type": "timeseries"
     }
   ],
   "refresh": "10s",
