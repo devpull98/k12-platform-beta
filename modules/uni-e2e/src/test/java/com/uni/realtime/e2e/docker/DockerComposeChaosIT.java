@@ -8,11 +8,14 @@ import com.uni.realtime.protocol.PlayerState;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -40,6 +43,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @EnabledIfEnvironmentVariable(named = "RUN_DOCKER_IT", matches = "true")
 class DockerComposeChaosIT {
 
+    private static final Logger log = LoggerFactory.getLogger(DockerComposeChaosIT.class);
     private static final int GATEWAY_PORT = 9000;
     private static final DevJoinTokenCodec CODEC = new DevJoinTokenCodec(
             DevJoinTokenCodec.DEFAULT_DEV_SECRET.getBytes(StandardCharsets.UTF_8), Clock.systemUTC());
@@ -102,6 +106,9 @@ class DockerComposeChaosIT {
         awaitSnapshotWritten(roomId);
 
         killedEngineService = originalOwner;
+        // plan.md Task 14's last open AC: measure REAL recovery time to replace the unfounded
+        // "10-50ms" system-architecture.md used to state (already removed pending this number).
+        long killedAtNanos = System.nanoTime();
         DockerComposeControl.kill(originalOwner);
 
         // The surviving pod cannot win the lease until it expires server-side
@@ -111,6 +118,7 @@ class DockerComposeChaosIT {
         // gives generous margin over that worst case plus round-robin/detection overhead,
         // observed to matter in practice (a tighter 15x2s=30s window flaked once).
         var fullSnapshot = client.joinRoomWithRetry(joinToken, "Chaos Student", 25, 3_000);
+        long recoveryMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - killedAtNanos);
 
         List<PlayerState> players = fullSnapshot.getRoomStateSnapshot().getPlayersList();
         assertThat(players)
@@ -122,6 +130,13 @@ class DockerComposeChaosIT {
 
         String newOwner = ownerOf(roomId);
         assertThat(newOwner).as("a different pod must now hold the lease").isNotEqualTo(originalOwner);
+
+        // Logged, not asserted on a bound -- this number is inherently a function of the chosen
+        // 20s lease TTL plus wherever in its renewal cycle the kill happened to land (0-20s real
+        // remaining TTL, see comment above), not a latency this code could optimize down. The
+        // number itself is what plan.md Task 14 needs recorded in system-architecture.md.
+        log.info("room {}: recovered on pod {} (was {}) {} ms after the owning pod was killed "
+                        + "(lease TTL=20s)", roomId, newOwner, originalOwner, recoveryMs);
     }
 
     /** Reads {@code room:owner:<room_id>} straight from the real room-store (Valkey) -- ground truth, not a guess from a hashing convention that no longer applies once LeaseBasedRoomOwnership is active. */

@@ -715,7 +715,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 
 ---
 
-### Task 14: `LeaseBasedRoomOwnership` + Hot Snapshot thật — thay `ModuloRoomOwnership` tĩnh, đóng B1 + cho phép auto-scale an toàn — ⚠️ MỘT PHẦN XONG (viết lại 2026-09-07, thay bản Task 14 gốc; bắt đầu code 2026-09-07; chaos test + 2 bug fix thật 2026-09-08)
+### Task 14: `LeaseBasedRoomOwnership` + Hot Snapshot thật — thay `ModuloRoomOwnership` tĩnh, đóng B1 + cho phép auto-scale an toàn (phần Engine) — ✅ XONG (viết lại 2026-09-07, thay bản Task 14 gốc; bắt đầu code 2026-09-07; chaos test + 2 bug fix thật 2026-09-08; đo thời gian phục hồi thật 2026-09-08 — mọi AC đã tick)
 
 - **Kết quả (phần ownership — 2026-09-07):** `RoomLease`/`RoomLeaseStore` (interface async,
   `CompletableFuture`) + `LeaseBasedRoomOwnership implements RoomOwnership` — cache RAM
@@ -911,9 +911,18 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
         dùng Lua script so epoch với **cùng key** `room:epoch:{room_id}` mà
         `DistributedRoomLeaseStore` đã tăng — một nguồn sự thật epoch duy nhất cho cả lease lẫn
         snapshot, không tách hai bộ đếm riêng. **Chưa verify với Redis thật.**
-  - [ ] Sau khi có implementation thật: sửa `system-architecture.md` ADR-002 GĐ1-note và §6.3 —
-        **đã sửa một phần ở lượt review trước** (bỏ câu "10-50ms" vô căn cứ); số đo thật (10-50ms
-        hay khác) vẫn cần benchmark thật, chưa làm — không tự ý điền số vào lại tài liệu
+  - [x] Sau khi có implementation thật: sửa `system-architecture.md` ADR-002 GĐ1-note và §6.3 —
+        **Cập nhật 2026-09-08:** đo thật bằng cách chạy `DockerComposeChaosIT` 6 lần qua Docker +
+        Valkey thật (`docker compose up -d --build room-store kafka engine-0 engine-1 gateway
+        gateway-1`, `RUN_DOCKER_IT=true`). Kết quả: 5/6 lần xanh, **21.8s – 27.9s (trung bình
+        ≈24.9s)** từ lúc `docker compose kill` tới lúc phòng phục hồi đúng roster trên pod khác —
+        khớp lý thuyết (dư TTL 0–20s + chu kỳ `renewAll` mỗi `ttl/3≈6.67s`). Đã sửa
+        `system-architecture.md`: §6.5 (đính chính "10-50ms" chỉ là `T_load`, không phải tổng thời
+        gian phục hồi — nhầm lẫn cũ đã tồn tại từ trước) + ADR-002 GĐ1-note (thêm số đo thật). 1/6
+        lần chạy fail thoáng qua, không lặp lại — khớp cảnh báo có sẵn trong
+        `DockerComposeChaosIT`'s comment ("a tighter window flaked once"), không phải regression.
+        `DockerComposeChaosIT` cũng được thêm log đo thời gian thật (`recoveryMs`) để lần đo sau
+        (staging thật) có ngay số liệu, không cần sửa lại test.
 - **Cập nhật 2026-09-08 — 2 bug thật tìm ra khi viết `DockerComposeChaosIT` (chaos test kill+phục
   hồi qua Docker + Redis thật), cả hai đã sửa kèm test hồi quy + prove-it:**
   1. **`RoomSupervisor` chưa từng gọi `SnapshotEnvelope.unwrap()`.** `RoomSnapshotStore#load` trả
@@ -956,6 +965,21 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
   đã viết xong, phải chứng minh bằng thực nghiệm trước.
 - **Rollback nếu fail:** revert; `ModuloRoomOwnership` (Task 10) tiếp tục là implementation duy
   nhất, đúng hành vi GĐ1 hiện tại — không regress.
+- **"AC xong" ≠ "hết mọi rủi ro sản xuất" (2026-09-08):** mọi AC hình thức của task này đã tick,
+  nhưng vẫn còn caveat thật chưa đóng, không phải AC bị bỏ sót mà là phạm vi task chưa từng bao
+  gồm — không tự động coi là đã hết rủi ro:
+  1. Cờ `uni.engine.room-store.enabled` **vẫn `false`** trong `application.yml` production — chỉ
+     bật ở `docker-compose.dev.yml` test cục bộ. Bật thật là quyết định vận hành riêng, chưa làm.
+  2. Verify mới qua Docker Compose **1 máy** (loopback network) — chưa qua staging thật (nhiều
+     node vật lý, độ trễ mạng thật).
+  3. Chưa test kịch bản fencing/split-brain **thật**: pod cũ còn sống nhưng bị cô lập tạm thời
+     (GC pause/network hiccup) rồi tỉnh dậy cố ghi snapshot cũ — `DockerComposeChaosIT` chỉ test
+     "pod chết hẳn" (`docker kill`), chưa test "pod sống nhưng mất renew tạm thời".
+  4. `room-store` hiện là **1 Valkey instance đơn** (`valkey/valkey:8.1-alpine`), chưa phải Valkey
+     Cluster như tên gọi trong thiết kế — nếu chính instance đó chết, mọi phòng đồng loạt rơi về
+     fallback modulo cùng lúc.
+  `plan.md` Task 19 (runbook cấm scale) vẫn cần giữ nguyên tới khi các caveat này được đóng **và**
+  `plan.md` Task 21 (Gateway dynamic pod discovery) xong.
 
 ---
 

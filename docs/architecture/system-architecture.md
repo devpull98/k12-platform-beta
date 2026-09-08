@@ -613,8 +613,17 @@ t ≈ 22s     Phòng trở lại PLAYING, broadcast state đầy đủ cho học
 
 > [!NOTE]
 > **Khôi phục với Valkey Cluster (Sau Task 14):** Nhờ Hot Snapshot (< 5 KB) được lưu liên tục lên Valkey Cluster, khi 1 Engine pod bị crash và pod mới khởi động lại (hoặc failover), state của ~350 phòng được phục hồi từ Valkey. Client kết nối lại gửi `RESYNC(pending[])` → hoàn tất phục hồi với cam kết **Zero Data Loss**.
-> 
-> *Ghi chú GĐ1:* Con số 10–50ms chỉ có hiệu lực sau khi triển khai và verify Task 14 (Valkey Hot Snapshot & Lease Ownership). Ở GĐ1 hiện tại khi pod crash, phòng sẽ rớt kết nối cho tới khi pod phục hồi.
+>
+> *Ghi chú GĐ1 (sửa lại 2026-09-08, có số đo thật):* Con số **10–50ms ở dòng dưới chỉ là bước đọc
+> snapshot từ Valkey** (`T_load`), không phải tổng thời gian phục hồi — và đúng cho cả cơ chế
+> lease GĐ1 lẫn Cluster Sharding GĐ2 vì hai cơ chế chỉ khác nhau ở bước *phát hiện lỗi + quyết định
+> chủ mới*, không khác ở bước đọc dữ liệu. Tổng thời gian phục hồi thật của GĐ1
+> (`LeaseBasedRoomOwnership`, Task 14) đo được qua chaos test thật: **~22–28 giây** (chi tiết ở
+> [ADR-002](#adr-002)) — chậm hơn nhiều so với `T_total ≈ 12–25s` của kịch bản SBR bên dưới, vì GĐ1
+> không có phát hiện lỗi chủ động (heartbeat), chỉ có TTL tĩnh 20s. Khi pod crash ở GĐ1: phòng
+> **CÓ** phục hồi (không mất vĩnh viễn như trước khi có Task 14), nhưng phải đợi hết TTL trước khi
+> pod khác giành lại — không phải "rớt kết nối cho tới khi đúng pod cũ phục hồi" (câu cũ, đã sai
+> từ khi Task 14 có code) và cũng không nhanh bằng con số SBR của kịch bản dưới đây.
 
 
 ### 6.6 Chỉ số Giám sát & SLA Nội bộ
@@ -791,6 +800,20 @@ update là một lần nghi ngờ split-brain) · `requests = limits` · theo d�
 > nữa mà là ai giữ được lease Valkey — nên đổi `N` (thêm/bớt pod) không còn làm vỡ hash toàn cụm
 > như hành vi mặc định `ModuloRoomOwnership` vẫn có. Cờ này **vẫn `false` trong `application.yml`
 > mặc định** — chưa ai bật thật ngoài `docker-compose.dev.yml` test cục bộ.
+>
+> **Thời gian phục hồi thật (đo 2026-09-08, đóng nốt AC cuối cùng của Task 14):** chạy
+> `DockerComposeChaosIT` 6 lần qua Docker + Valkey thật (`lease-ttl-seconds=20`, mặc định
+> `application.yml`) — 5/6 lần xanh, thời gian từ lúc `docker compose kill` pod đang giữ phòng tới
+> lúc phòng phục hồi đúng roster trên pod còn lại: **21.8s – 27.9s, trung bình ≈ 24.9s** (21834 /
+> 24903 / 24843 / 24905 / 27917 ms). Khớp đúng dự đoán lý thuyết: dư TTL còn lại lúc kill (0–20s,
+> không biết trước) cộng chu kỳ `renewAll()` mỗi `ttl/3 ≈ 6.67s`. **Đây KHÔNG phải cùng con số với
+> `T_load` 10–50ms ở §6.5/ADR-003** — con số đó đo riêng bước đọc+giải mã snapshot từ Valkey sau
+> khi đã biết chủ phòng mới (dùng chung cho cả cơ chế lease này lẫn Cluster Sharding tương lai),
+> không phải tổng thời gian phục hồi. Tổng thời gian phục hồi của GĐ1 (lease-based) bị chặn bởi
+> TTL tĩnh, không có phát hiện lỗi chủ động (heartbeat/SBR) như Cluster Sharding — đây chính là cái
+> giá phải trả để không cần Cluster Sharding (§7.6). 1/6 lần chạy fail thoáng qua, không lặp lại ở
+> 2 lần chạy kế tiếp — khớp đúng cảnh báo đã có sẵn trong code test ("a tighter window flaked
+> once"), không phải regression mới.
 >
 > **Phát hiện mới (2026-09-08), tách biệt với Task 14:** dù Engine đã hết phụ thuộc `N`, **Gateway
 > vẫn không route được tới một Engine pod hoàn toàn mới** — `uni.gateway.engine.pods` là danh sách
