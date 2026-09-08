@@ -122,7 +122,12 @@ class GatewayPipelineTest {
         channel.writeInbound(frameOf(spoofed));
 
         assertThat(channel.isOpen()).isFalse();
-        assertThat(engineSender.last()).as("a security event must never reach Engine").isNull();
+        // The forced close now also fires the leave-room flow (Engine must learn this student's
+        // socket dropped) -- what must never reach Engine is the SPOOFED submission itself, not
+        // literally nothing at all.
+        assertThat(engineSender.last().getType())
+                .as("the spoofed SUBMIT_ANSWER must never reach Engine")
+                .isEqualTo(MessageType.STUDENT_LEFT);
     }
 
     @Test
@@ -140,7 +145,10 @@ class GatewayPipelineTest {
         channel.writeInbound(frameOf(spoofed));
 
         assertThat(channel.isOpen()).isFalse();
-        assertThat(engineSender.last()).as("a spoofed student_id must never reach Engine").isNull();
+        // Same reasoning as should_closeChannel_when_payloadRoomIdDisagreesWithBoundRoomId above.
+        assertThat(engineSender.last().getType())
+                .as("the spoofed student_id must never reach Engine")
+                .isEqualTo(MessageType.STUDENT_LEFT);
     }
 
     @Test
@@ -182,6 +190,33 @@ class GatewayPipelineTest {
         channel.close();
 
         assertThat(roomRegistry.channelsIn("room-1")).doesNotContain(channel);
+    }
+
+    @Test
+    void should_sendStudentLeft_when_aJoinedChannelGoesInactive() {
+        CapturingEngineSender engineSender = new CapturingEngineSender();
+        EmbeddedChannel channel = applicationChannel(fixedVerifier(ROOM_1_CLAIMS), engineSender);
+        channel.writeInbound(frameOf(joinRoom("valid-ticket")));
+        engineSender.clear(); // drain the forwarded JOIN_ROOM
+
+        channel.close();
+
+        GameMessage left = engineSender.last();
+        assertThat(left).as("leave-room flow: Engine must learn a joined student's socket dropped").isNotNull();
+        assertThat(left.getType()).isEqualTo(MessageType.STUDENT_LEFT);
+        assertThat(left.getRoomId()).isEqualTo("room-1");
+        assertThat(left.getStudentId()).isEqualTo("student-1");
+    }
+
+    @Test
+    void should_notSendAnything_when_aNeverJoinedChannelGoesInactive() {
+        CapturingEngineSender engineSender = new CapturingEngineSender();
+        EmbeddedChannel channel = applicationChannel(fixedVerifier(ROOM_1_CLAIMS), engineSender);
+        // No JOIN_ROOM ever sent on this channel -- ChannelAttributes were never bound.
+
+        channel.close();
+
+        assertThat(engineSender.last()).as("nothing to tell Engine about a channel that never joined anything").isNull();
     }
 
     @Test

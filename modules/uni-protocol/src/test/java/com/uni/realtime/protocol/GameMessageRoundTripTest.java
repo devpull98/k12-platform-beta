@@ -121,6 +121,32 @@ class GameMessageRoundTripTest {
         assertThat(parsed.getPendingList()).containsExactly(pending);
     }
 
+    @Test
+    @DisplayName("STUDENT_LEFT and STUDENT_KICKED carry no payload -- room_id/student_id alone survive the round trip")
+    void noPayloadNotificationTypesRoundTrip() throws InvalidProtocolBufferException {
+        GameMessage left = GameMessage.newBuilder()
+                .setType(MessageType.STUDENT_LEFT)
+                .setRoomId("room-42")
+                .setStudentId("student-7")
+                .build();
+        GameMessage parsedLeft = GameMessage.parseFrom(left.toByteArray());
+        assertThat(parsedLeft.getType()).isEqualTo(MessageType.STUDENT_LEFT);
+        assertThat(parsedLeft.getRoomId()).isEqualTo("room-42");
+        assertThat(parsedLeft.getStudentId()).isEqualTo("student-7");
+        assertThat(parsedLeft.getPayloadCase()).isEqualTo(GameMessage.PayloadCase.PAYLOAD_NOT_SET);
+
+        GameMessage kicked = GameMessage.newBuilder()
+                .setType(MessageType.STUDENT_KICKED)
+                .setRoomId("room-42")
+                .setStudentId("student-9")
+                .build();
+        GameMessage parsedKicked = GameMessage.parseFrom(kicked.toByteArray());
+        assertThat(parsedKicked.getType()).isEqualTo(MessageType.STUDENT_KICKED);
+        assertThat(parsedKicked.getRoomId()).isEqualTo("room-42");
+        assertThat(parsedKicked.getStudentId()).isEqualTo("student-9");
+        assertThat(parsedKicked.getPayloadCase()).isEqualTo(GameMessage.PayloadCase.PAYLOAD_NOT_SET);
+    }
+
     private static GameMessage.PayloadCase payloadCaseOf(java.util.function.Consumer<GameMessage.Builder> setPayload) {
         GameMessage.Builder builder = GameMessage.newBuilder();
         setPayload.accept(builder);

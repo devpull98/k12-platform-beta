@@ -188,8 +188,14 @@ public final class SimulatedStudentClient {
      * this repo's history (every earlier real-socket test used exactly one Engine pod, where a
      * route miss is structurally impossible). Resends JOIN_ROOM every {@code retryIntervalMillis}
      * until a full snapshot arrives or {@code maxAttempts} is exhausted.
+     *
+     * @return the matching full snapshot -- callers that need to inspect the restored roster
+     *     (chaos tests) would otherwise have no way to see it: it is already drained off
+     *     {@link #received} by the successful {@link #pollMatching} call below, so a caller
+     *     that ignored this return value and tried {@link #takeMatching} again afterward would
+     *     find nothing (this exact mistake is why this method used to return {@code void}).
      */
-    public void joinRoomWithRetry(String ticket, String displayName, int maxAttempts, long retryIntervalMillis)
+    public GameMessage joinRoomWithRetry(String ticket, String displayName, int maxAttempts, long retryIntervalMillis)
             throws InterruptedException {
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             send(GameMessage.newBuilder()
@@ -199,7 +205,7 @@ public final class SimulatedStudentClient {
             GameMessage reply = pollMatching(retryIntervalMillis,
                     m -> m.getType() == MessageType.ROOM_STATE_SNAPSHOT && m.getRoomStateSnapshot().getFull());
             if (reply != null) {
-                return;
+                return reply;
             }
         }
         throw new AssertionError("JOIN_ROOM got no full-snapshot reply after " + maxAttempts
@@ -215,6 +221,11 @@ public final class SimulatedStudentClient {
             }
         }
         return null;
+    }
+
+    /** Chaos-test support: proves a socket survived a degrade notice instead of only inferring it indirectly. */
+    public boolean isOpen() {
+        return channel.isOpen();
     }
 
     public void assertNoMoreMessagesFor(long millis) throws InterruptedException {

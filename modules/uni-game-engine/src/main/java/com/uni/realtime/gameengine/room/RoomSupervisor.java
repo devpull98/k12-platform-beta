@@ -175,10 +175,30 @@ public final class RoomSupervisor extends AbstractBehavior<RoomSupervisor.Comman
             }
             case RESYNC -> handleResync(roomId, message, command.sourceChannel());
             case TEACHER_COMMAND -> dispatchTeacherCommand(roomId, message.getTeacherCommand());
+            case PAYLOAD_NOT_SET -> dispatchNoPayloadMessage(roomId, message);
             default -> log.warn("dropping {} for room {}: no dispatch wired for this payload yet",
                     message.getPayloadCase(), roomId);
         }
         return this;
+    }
+
+    /**
+     * Leave-room flow: {@code STUDENT_LEFT} carries no oneof payload (same shape as
+     * {@code HEARTBEAT}/{@code UPDATE_DRAFT}), so it never reaches {@code onDispatch}'s
+     * payload-based switch above -- it is distinguished by {@code MessageType} instead.
+     */
+    private void dispatchNoPayloadMessage(String roomId, GameMessage message) {
+        switch (message.getType()) {
+            case STUDENT_LEFT -> {
+                ActorRef<RoomActor.Command> room = roomsByRoomId.get(roomId);
+                if (room != null) {
+                    room.tell(new RoomActor.StudentDisconnected(message.getStudentId()));
+                }
+                // room == null: never spawned on this pod (or already terminated) -- nothing to update.
+            }
+            default -> log.warn("dropping {} (type {}) for room {}: no dispatch wired for this payload yet",
+                    message.getPayloadCase(), message.getType(), roomId);
+        }
     }
 
     /**
@@ -209,9 +229,12 @@ public final class RoomSupervisor extends AbstractBehavior<RoomSupervisor.Comman
         switch (teacherCommand.getCommand()) {
             case START_GAME -> room.tell(new RoomActor.StartGame());
             case END_GAME -> room.tell(new RoomActor.EndGame());
+            case KICK_STUDENT -> room.tell(new RoomActor.KickStudent(teacherCommand.getTargetStudentId()));
             // NEXT_STEP needs question content (prompt/choices) that no decided format supplies
-            // yet (Task 11 note); PAUSE has no corresponding RoomActor phase; KICK_STUDENT needs
-            // a student_id -> channel lookup this pod does not have. Left unwired on purpose.
+            // yet (Task 11 note). PAUSE has no corresponding RoomActor phase AND no RESUME command
+            // exists anywhere in the schema -- there is no defined semantics (does a paused
+            // question's deadline freeze? does scoring pause?) to implement without inventing
+            // gameplay rules this task is not scoped to invent. Left unwired on purpose.
             default -> log.warn("TeacherCommand.{} not wired for room {} yet", teacherCommand.getCommand(), roomId);
         }
     }
@@ -240,8 +263,25 @@ public final class RoomSupervisor extends AbstractBehavior<RoomSupervisor.Comman
                 new SnapshotLoaded(roomId, failure != null ? null : loaded.orElse(null)));
     }
 
+    /**
+     * Real-infra chaos test finding (docker-compose.dev.yml, kill+recover a room's owning pod):
+     * {@link RoomSnapshotStore#load} returns the RAW envelope written by {@link RoomActor}'s
+     * {@code maybeSnapshot} ({@code SnapshotEnvelope.wrap(...)} -- schema_version/epoch/crc32
+     * header, then the actual {@code RoomState.serializeSnapshot()} payload). Nothing on this
+     * path ever called {@link SnapshotEnvelope#unwrap} before handing bytes to
+     * {@code RoomActor.create}'s {@code restoreFromSnapshot}, which expects the INNER payload,
+     * not the envelope -- every real restore threw {@code ActorInitializationException} (a
+     * garbled {@code GamePhase} enum name from misaligned fields), invisible to every existing
+     * test because {@code RoomActorSnapshotTest} feeds {@code RoomState.serializeSnapshot()}
+     * output directly, bypassing the envelope entirely. Fixed here, the one place that actually
+     * hands loaded bytes onward. A corrupt/schema-mismatched envelope (§5.8) still degrades to
+     * "spawn empty", exactly like a missing snapshot -- {@link SnapshotEnvelope#unwrap} already
+     * returns {@code Optional.empty()} for both, never throws.
+     */
     private Behavior<Command> onSnapshotLoaded(SnapshotLoaded command) {
-        ActorRef<RoomActor.Command> room = spawnRoom(command.roomId(), command.snapshotBytes());
+        byte[] payload = command.snapshotBytes() == null ? null
+                : SnapshotEnvelope.unwrap(command.snapshotBytes()).map(SnapshotEnvelope.Unwrapped::payload).orElse(null);
+        ActorRef<RoomActor.Command> room = spawnRoom(command.roomId(), payload);
         List<PendingJoin> pending = pendingJoinsByRoom.remove(command.roomId());
         if (pending != null) {
             pending.forEach(join -> deliverJoin(room, join.message(), join.sourceChannel()));

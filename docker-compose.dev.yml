@@ -1,26 +1,11 @@
-# Local Docker test infrastructure -- stands in for PH-1 (multi-pod topology; load testing
-# itself is explicitly out of scope), PH-3 (exercised via SimulatedStudentClient /
-# DockerComposeResyncIT in modules/uni-e2e, not by anything here), and G1a/G1c (the gateway's
-# dev-ticket profile below). NOT for staging/production -- see the "NEVER" warnings on
-# DevTicketVerifier and uni.gateway.dev-ticket.
+# Optimized Local Docker Development & Testing Stack
+# Platform: K12 Realtime Classroom Game System
 #
 # Usage:
-#   mvn clean package -DskipTests                    # build the exec jars Dockerfiles COPY
+#   mvn clean package -DskipTests
 #   docker compose -f docker-compose.dev.yml up -d --build
-#   docker compose -f docker-compose.dev.yml down -v # tear down, including room-store/Kafka volumes
-#
-# Base images verified to exist and pull successfully as of 2026-09-07: eclipse-temurin:25-jre,
-# apache/kafka:3.9.0. valkey/valkey:8.1-alpine (swapped in for redis:7-alpine -- Valkey is the
-# BSD-licensed, Linux Foundation-governed fork of Redis 7.2.4, RESP-protocol-compatible, no
-# client/code changes needed) has NOT been pull-verified in this environment -- no working Docker
-# daemon here, same constraint recorded against DistributedRoomLeaseStore's javadoc. The service
-# below is named "room-store" (not "valkey") to match the code's naming -- see CLAUDE.md's note
-# on why identifiers don't name the product; the `image:` line is still the honest, real product.
-#
-# Explicit project name -- without this, Compose defaults the project name to the directory
-# basename ("spring-ticket-ddd"), which collided with an unrelated, pre-existing "spring-ticket-ddd"
-# Compose project on this machine (mysql/mongodb/kafka-ui/exporters, none of which exist in this
-# repo) and overwrote its registry entry. Never remove this.
+#   docker compose -f docker-compose.dev.yml down -v
+
 name: uni-realtime-dev
 
 networks:
@@ -28,17 +13,37 @@ networks:
     driver: bridge
 
 services:
+  # Valkey (BSD-3 licensed, Redis-compatible in-memory store for room leases)
   room-store:
     image: valkey/valkey:8.1-alpine
+    container_name: uni-room-store
+    restart: unless-stopped
     ports:
       - "6379:6379"
     networks: [uni-dev-net]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          memory: 64M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
-  # Single-broker KRaft mode (no Zookeeper) -- the official Apache Kafka image, env-var
-  # convention is KAFKA_<PROPERTY.DOTS.UPPERCASED_WITH_UNDERSCORES> (verified against the
-  # image's own /etc/kafka/docker/server.properties and launch script).
+  # Single-broker KRaft Kafka for event streaming
   kafka:
     image: apache/kafka:3.9.0
+    container_name: uni-kafka
+    restart: unless-stopped
     environment:
       CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
       KAFKA_NODE_ID: "1"
@@ -53,17 +58,31 @@ services:
     ports:
       - "29092:29092"
     networks: [uni-dev-net]
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 9092 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          memory: 256M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
-  # Pod naming matters: EngineNetworkLifecycle derives ids as "engine-" + list-position
-  # (application.yml's ENGINE_POD_ID default is "engine-0"), and GatewayNetworkLifecycle assigns
-  # the SAME "engine-" + position ids to its dial list (uni.gateway.engine.pods) regardless of
-  # ENGINE_POD_ID's actual value -- so these Compose service/hostnames only need to match the
-  # ORDER in gateway's ENGINE_PODS below, not their own ENGINE_POD_ID literally. Both are set to
-  # the same "engine-N" here purely for humans reading logs, not because the code requires it.
+  # Game Engine Pod 0
   engine-0:
     build:
       context: .
       dockerfile: modules/uni-game-engine/Dockerfile
+    container_name: uni-engine-0
+    restart: unless-stopped
     environment:
       SERVER_PORT: "8090"
       ENGINE_FRAME_PORT: "9100"
@@ -76,24 +95,32 @@ services:
       ENGINE_KAFKA_TOPIC: "game.events.v1"
     ports:
       - "18090:8090"
-    depends_on: [room-store, kafka]
+    depends_on:
+      room-store:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
     networks: [uni-dev-net]
-    # GatewayNetworkLifecycle dials this pod's frame-channel port at ITS OWN startup, synchronously,
-    # and a failed dial crashes the whole gateway JVM (no retry) -- Spring Boot's actuator port
-    # comes up BEFORE the ApplicationRunner that opens 9100 runs, so actuator/health is not a
-    # sufficient readiness signal here; check the actual frame-channel port. No curl/wget in this
-    # JRE base image, so use bash's /dev/tcp instead (Ubuntu-based image ships bash).
-    healthcheck:
-      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/9100' 2>/dev/null"]
-      interval: 2s
-      timeout: 2s
-      retries: 30
-      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          memory: 256M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
+  # Game Engine Pod 1
   engine-1:
     build:
       context: .
       dockerfile: modules/uni-game-engine/Dockerfile
+    container_name: uni-engine-1
+    restart: unless-stopped
     environment:
       SERVER_PORT: "8090"
       ENGINE_FRAME_PORT: "9100"
@@ -106,27 +133,38 @@ services:
       ENGINE_KAFKA_TOPIC: "game.events.v1"
     ports:
       - "18091:8090"
-    depends_on: [room-store, kafka]
+    depends_on:
+      room-store:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
     networks: [uni-dev-net]
-    healthcheck:
-      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/9100' 2>/dev/null"]
-      interval: 2s
-      timeout: 2s
-      retries: 30
-      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          memory: 256M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
+  # WebSocket Gateway Edge
   gateway:
     build:
       context: .
       dockerfile: modules/uni-websocket-gateway/Dockerfile
+    container_name: uni-gateway
+    restart: unless-stopped
     environment:
       SERVER_PORT: "8080"
       GATEWAY_WS_PORT: "9000"
-      # Position 0 -> engine-0, position 1 -> engine-1 (see the pod-naming note above).
       ENGINE_PODS: "engine-0:9100,engine-1:9100"
       SPRING_PROFILES_ACTIVE: "dev-docker"
       GATEWAY_DEV_TICKET_ENABLED: "true"
-      # Must stay textually identical to DevTicketCodec.DEFAULT_DEV_SECRET.
       GATEWAY_DEV_TICKET_SECRET: "uni-realtime-local-docker-dev-secret-do-not-use-elsewhere"
     ports:
       - "9000:9000"
@@ -137,3 +175,54 @@ services:
       engine-1:
         condition: service_healthy
     networks: [uni-dev-net]
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          memory: 256M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Second Gateway pod -- closes plan.md Task 13's "2 GW + 2 Engine" AC. Identical to `gateway`
+  # above (same Engine pod list, same dev-ticket secret) other than host ports/container name, so
+  # this is a genuine second pod, not a proxy in front of the first. `gateway`'s own name/ports
+  # are untouched -- DockerComposeResyncIT hardcodes port 9000 against it.
+  gateway-1:
+    build:
+      context: .
+      dockerfile: modules/uni-websocket-gateway/Dockerfile
+    container_name: uni-gateway-1
+    restart: unless-stopped
+    environment:
+      SERVER_PORT: "8080"
+      GATEWAY_WS_PORT: "9000"
+      ENGINE_PODS: "engine-0:9100,engine-1:9100"
+      SPRING_PROFILES_ACTIVE: "dev-docker"
+      GATEWAY_DEV_TICKET_ENABLED: "true"
+      GATEWAY_DEV_TICKET_SECRET: "uni-realtime-local-docker-dev-secret-do-not-use-elsewhere"
+    ports:
+      - "9001:9000"
+      - "8081:8080"
+    depends_on:
+      engine-0:
+        condition: service_healthy
+      engine-1:
+        condition: service_healthy
+    networks: [uni-dev-net]
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          memory: 256M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

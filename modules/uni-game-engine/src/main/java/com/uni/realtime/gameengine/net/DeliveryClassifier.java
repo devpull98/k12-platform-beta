@@ -15,7 +15,7 @@ public final class DeliveryClassifier {
 
     public static DeliveryClass classify(MessageType type) {
         return switch (type) {
-            case ANSWER_ACK, GAME_OVER, TEACHER_COMMAND, QUESTION_STARTED, CONNECTION_DEGRADED ->
+            case ANSWER_ACK, GAME_OVER, TEACHER_COMMAND, QUESTION_STARTED, CONNECTION_DEGRADED, STUDENT_KICKED ->
                     DeliveryClass.CRITICAL;
             default -> DeliveryClass.BEST_EFFORT;
         };

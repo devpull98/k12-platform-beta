@@ -4,6 +4,7 @@ import com.uni.realtime.websocketgateway.fanout.RoomRegistry;
 import com.uni.realtime.websocketgateway.routing.EngineSender;
 import com.uni.realtime.protocol.GameMessage;
 import com.uni.realtime.protocol.InternalHeader;
+import com.uni.realtime.protocol.MessageType;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 import org.slf4j.Logger;
@@ -73,6 +74,28 @@ public final class RoomRouteHandler extends SimpleChannelInboundHandler<GameMess
     @Override
     public void channelInactive(ChannelHandlerContext ctx) throws Exception {
         roomRegistry.remove(ctx.channel());
+        notifyEngineOfLeave(ctx);
         super.channelInactive(ctx);
+    }
+
+    /**
+     * Leave-room flow: the only signal Engine ever gets that a student's WebSocket dropped --
+     * before this, {@code RoomState} had no way to flip {@code connected} to {@code false} on a
+     * disconnect (only ever tolerated by silence). No-op for a channel that never completed
+     * JOIN_ROOM (attributes still unbound) -- there is nothing for Engine to update.
+     */
+    private void notifyEngineOfLeave(ChannelHandlerContext ctx) {
+        String roomId = ctx.channel().attr(ChannelAttributes.ROOM_ID).get();
+        String studentId = ctx.channel().attr(ChannelAttributes.STUDENT_ID).get();
+        if (roomId == null || studentId == null) {
+            return;
+        }
+        String traceId = ctx.channel().attr(ChannelAttributes.TRACE_ID).get();
+        engineSender.send(GameMessage.newBuilder()
+                .setType(MessageType.STUDENT_LEFT)
+                .setRoomId(roomId)
+                .setStudentId(studentId)
+                .setInternal(InternalHeader.newBuilder().setTraceId(traceId))
+                .build());
     }
 }

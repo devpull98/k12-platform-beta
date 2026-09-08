@@ -165,6 +165,39 @@ class EngineResponseRouterTest {
                 .isTrue();
     }
 
+    @Test
+    void should_deliverStudentKickedNoticeThenCloseTheChannel_regardlessOfWritability() throws Exception {
+        EmbeddedChannel alice = studentChannel("room-10", "student-alice");
+
+        router.route(GameMessage.newBuilder()
+                .setType(MessageType.STUDENT_KICKED)
+                .setRoomId("room-10")
+                .setStudentId("student-alice")
+                .setInternal(InternalHeader.newBuilder().setOwnerPodId("engine-1").setDeliveryClass(DeliveryClass.CRITICAL))
+                .build());
+
+        assertThat(decode(alice).getType()).isEqualTo(MessageType.STUDENT_KICKED);
+        assertThat(alice.isOpen())
+                .as("unlike ANSWER_ACK/CONNECTION_DEGRADED, a kick notice must close the socket right after delivery")
+                .isFalse();
+    }
+
+    @Test
+    void should_releaseTheFrame_when_kickedStudentHasNoChannelOnThisPod() {
+        // Engine fans STUDENT_KICKED out to every subscribed Gateway pod (§B1) -- only the one
+        // actually holding the student's channel should do anything with it.
+        studentChannel("room-11", "student-someone-else");
+
+        router.route(GameMessage.newBuilder()
+                .setType(MessageType.STUDENT_KICKED)
+                .setRoomId("room-11")
+                .setStudentId("student-not-on-this-pod")
+                .setInternal(InternalHeader.newBuilder().setOwnerPodId("engine-1").setDeliveryClass(DeliveryClass.CRITICAL))
+                .build());
+        // No assertion beyond "did not throw" -- paranoid leak detection (Surefire-wide) is what
+        // actually proves the frame was released, not left dangling.
+    }
+
     private EmbeddedChannel studentChannel(String roomId, String studentId) {
         EmbeddedChannel channel = new EmbeddedChannel();
         channel.attr(ChannelAttributes.STUDENT_ID).set(studentId);

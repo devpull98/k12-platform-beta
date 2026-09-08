@@ -116,10 +116,22 @@ public final class LeaseBasedRoomOwnership implements RoomOwnership {
      * continuing to act as owner on stale belief. This is the fencing half of the design: a
      * pod that is uncertain about its lease gives it up rather than risking two pods both
      * believing they own the same room.
+     *
+     * <p>Real-infra chaos test finding (docker-compose.dev.yml, kill a room's owning pod): a
+     * room cached as owned by ANOTHER pod (a lost {@code tryAcquire} race) used to stay in
+     * {@link #cache} forever -- nothing ever evicted it, so {@link #ensureAcquired} short-circuited
+     * on the {@code cache.containsKey} check for the rest of this pod's life, even long after the
+     * original owner's lease had genuinely expired. There is no cross-pod notification when a
+     * lease frees up (SETNX polling is the only signal this design has), so this pod must
+     * periodically retry too -- evicting foreign-owned entries here reuses the SAME cadence
+     * {@code renewAll()} is already called on, rather than inventing a second timer/TTL just for
+     * this. The next frame for that room (if any) triggers a fresh {@code ensureAcquired}, which
+     * is exactly how a genuinely freed lease gets discovered and won.
      */
     public void renewAll() {
         cache.forEach((roomId, lease) -> {
             if (!selfPodId.equals(lease.podId())) {
+                cache.remove(roomId, lease);
                 return;
             }
             roomStore.renew(roomId, selfPodId, lease.epoch(), ttl).whenComplete((renewed, ex) -> {

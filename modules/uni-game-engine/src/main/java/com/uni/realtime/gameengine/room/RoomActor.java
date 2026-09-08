@@ -94,6 +94,20 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
 
     public record EndGame() implements Command {}
 
+    /**
+     * Leave-room flow: a Gateway channel that had completed JOIN_ROOM disconnected. Flips the
+     * roster's {@code connected} flag and lets the next coalescing flush carry it -- no reply,
+     * no urgency, unlike {@link KickStudent}.
+     */
+    public record StudentDisconnected(String studentId) implements Command {}
+
+    /**
+     * {@code TeacherCommand.KICK_STUDENT}: unlike {@link StudentDisconnected}, this must notify
+     * the target immediately (bypass coalescing, like {@code ANSWER_ACK}) so the Gateway can close
+     * that student's socket right after delivering it -- see {@code EngineResponseRouter}.
+     */
+    public record KickStudent(String studentId) implements Command {}
+
     /** Internal timer message (ADR-4 pseudocode's {@code Flush.INSTANCE}) — never sent from outside. */
     private enum Flush implements Command { INSTANCE }
 
@@ -254,6 +268,8 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
                 .onMessage(SubmitAnswer.class, watched(this::onSubmitAnswer))
                 .onMessage(Resync.class, watched(this::onResync))
                 .onMessage(EndGame.class, watched(this::onEndGame))
+                .onMessage(StudentDisconnected.class, watched(this::onStudentDisconnected))
+                .onMessage(KickStudent.class, watched(this::onKickStudent))
                 .onMessage(Flush.class, watched(this::onFlush))
                 .onMessage(LeaseLost.class, watched(this::onLeaseLost))
                 .build();
@@ -362,6 +378,24 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
     private Behavior<Command> onEndGame(EndGame command) {
         state.endGame();
         return Behaviors.stopped();
+    }
+
+    private Behavior<Command> onStudentDisconnected(StudentDisconnected command) {
+        state.markDisconnected(command.studentId());
+        scheduleFlushIfDirty();
+        return this;
+    }
+
+    /**
+     * Sends {@code STUDENT_KICKED} via {@code broadcastTarget} immediately, bypassing coalescing
+     * (same reason {@code ANSWER_ACK} does) -- the Gateway pod holding this student's channel
+     * must close it without waiting up to 200ms for the next flush.
+     */
+    private Behavior<Command> onKickStudent(KickStudent command) {
+        state.markDisconnected(command.studentId());
+        broadcastTarget.tell(RoomState.buildStudentKicked(roomId, command.studentId()));
+        scheduleFlushIfDirty();
+        return this;
     }
 
     /**

@@ -569,7 +569,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 
 ---
 
-### Task 13: Ghép walking skeleton end-to-end + smoke test — ⚠️ MỘT PHẦN XONG (2026-09-07)
+### Task 13: Ghép walking skeleton end-to-end + smoke test — ✅ XONG (2026-09-07; 2 AC còn treo đóng nốt bằng chaos test thật 2026-09-08 — xem cập nhật bên dưới)
 
 - **Mode:** sequential after [SYNC]
 - **Mô tả:** Chứng minh một gói tin đi hết vòng qua hệ thống thật. Đây là tiêu chí "xong Giai đoạn 1".
@@ -595,21 +595,25 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
         Nhân tiện lộ ra một giới hạn thật: JOIN_ROOM đầu tiên của phòng mới có thể trúng round-
         robin sai pod (§4.5 bước 2, xem `RoomOwnershipHandler`'s javadoc) — client phải tự retry,
         đã thêm `SimulatedStudentClient.joinRoomWithRetry` cho việc này, không sửa Gateway/Engine.
-  - [ ] Giết một Engine pod → client nhận `CONNECTION_DEGRADED`, WebSocket không đóng (§9.7) —
-        **cơ chế đã hiện thực** (`RouteCache.evictPod` trả về room bị ảnh hưởng,
-        `FrameChannelClient.onPodDisconnected`, `EngineResponseRouter.broadcastConnectionDegraded`)
-        nhưng **vẫn chưa có test nào lắp cả chuỗi lại với nhau** để chứng minh bằng thực nghiệm —
-        Task 20 dựng được hạ tầng đa pod thật nhưng không làm kịch bản giết pod (ngoài phạm vi
-        "test cục bộ" người dùng yêu cầu, thiên về chaos test)
-  - [ ] `docker-compose.dev.yml` với 2 GW + 2 Engine thật — **Cập nhật 2026-09-07 (Task 20):**
-        `docker-compose.dev.yml` giờ **đã tồn tại và chạy thật** (1 Gateway + 2 Engine pod + Redis
-        + Kafka) — nhưng AC gốc đòi **2 Gateway**, còn thực tế chỉ có 1 (không cần thiết cho mục
-        tiêu "test cục bộ" của Task 20, vốn tập trung vào đa pod phía Engine). Vẫn để `[ ]` vì
-        chưa khớp đúng nghĩa đen AC gốc.
-- **Verification:** `mvn -pl :uni-e2e -am test` (bắt buộc `-am`, xem ghi chú build). AC gốc đòi
-  `mvn -pl :uni-e2e verify` + `docker-compose.dev.yml` — phần Docker giờ có (Task 20), nhưng chỉ
-  phủ 1 trong 3 sub-AC còn treo ở trên (route cache đa pod); 2 sub-AC còn lại (kill pod, 2 GW)
-  vẫn treo, xem chi tiết ngay trên.
+  - [x] Giết một Engine pod → client nhận `CONNECTION_DEGRADED`, WebSocket không đóng (§9.7) —
+        **Cập nhật 2026-09-08:** đóng hẳn bằng `DockerComposeChaosIT.should_notCloseTheSocket_when_itsOwningEngineIsKilled`
+        — `docker compose kill <pod thật đang giữ phòng>` (xác định qua `redis-cli GET room:owner:<room_id>`,
+        không đoán theo hash vì `LeaseBasedRoomOwnership` không còn cố định theo `room_id % N`),
+        xác nhận client nhận đúng `CONNECTION_DEGRADED` và socket còn mở. Cơ chế production
+        (`RouteCache.evictPod`, `FrameChannelClient.onPodDisconnected`,
+        `EngineResponseRouter.broadcastConnectionDegraded`) không đổi — chỉ thêm bằng chứng qua
+        container thật thay vì chỉ unit test với fake.
+  - [x] `docker-compose.dev.yml` với 2 GW + 2 Engine thật — **Cập nhật 2026-09-08:** thêm service
+        `gateway-1` (cùng cấu hình `gateway`, khác host port `9001`/`8081`) — đủ 2 Gateway + 2
+        Engine như AC gốc đòi. `gateway` gốc giữ nguyên port 9000 (DockerComposeResyncIT vẫn hardcode nó).
+- **Verification:** `mvn -pl :uni-e2e -am test` (bắt buộc `-am`, xem ghi chú build) — 119 test cũ vẫn
+  xanh. Cả 2 sub-AC còn treo phía trên nay đã đóng qua `DockerComposeChaosIT` (`RUN_DOCKER_IT=true
+  mvn -pl :uni-e2e test -Dtest=DockerComposeChaosIT`, chạy thật ~2 phút do phải chờ hết lease TTL
+  20s ở kịch bản Task 14).
+- **Phát hiện phụ khi viết `DockerComposeChaosIT` (2026-09-08):** 2 bug thật trong code Task 14
+  (`SnapshotEnvelope.unwrap()` không được gọi trước restore; `LeaseBasedRoomOwnership` cache vĩnh
+  viễn kết quả thua race) chặn đứng chính kịch bản pod-crash-recovery — chi tiết đầy đủ ở ghi chú
+  tương ứng trong Task 14 bên dưới, cả hai đã sửa + có test hồi quy.
 - **Ghi chú quan trọng — kiến trúc mới phải xây (Task 2/9 đều đã ghi rõ đây là việc của Task 13):**
   - **`RoomSupervisor`** (`modules/uni-game-engine/.../room/RoomSupervisor.java`, mới): actor duy nhất
     mỗi Engine pod, spawn `RoomActor` lười theo `room_id` lúc `JOIN_ROOM` đầu tiên, dịch
@@ -682,15 +686,36 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
     câu hỏi bằng `RoomSupervisor.GetRoomActor` (hook test/ops-only, xem javadoc lớp
     `RoomSupervisor`), không phải qua dây — giống hệt cách `RoomSupervisorTest` (Task 13, engine)
     đã làm.
-  - `PAUSE`, `KICK_STUDENT` (TeacherCommand) — không wire, log cảnh báo. `PAUSE` không có phase
-    tương ứng trong `RoomActor`; `KICK_STUDENT` cần tra `student_id → channel` mà pod này chưa có.
-  - Luồng "rời phòng" (`connected=false`) — vẫn treo từ Task 3, chưa có tín hiệu nào từ Gateway
-    khi một channel đóng được truyền sang Engine.
+  - `PAUSE` (TeacherCommand) — vẫn không wire, có chủ đích: schema không có lệnh RESUME nào, và
+    không tài liệu nào (kể cả v3.0) định nghĩa "pause" có đóng băng deadline/điểm hay không — làm
+    bây giờ nghĩa là tự bịa luật chơi. `KICK_STUDENT` **đã wire (2026-09-08)**, xem ngay dưới.
+  - ~~Luồng "rời phòng" (`connected=false`)~~ — **đã đóng (2026-09-08)**, xem mục mới ngay dưới.
+- **Cập nhật 2026-09-08 — đóng nốt luồng rời phòng + `KICK_STUDENT`:**
+  - **Luồng rời phòng:** thêm `MessageType.STUDENT_LEFT` (không payload, tái dùng `room_id`/
+    `student_id` sẵn có trong envelope). `RoomRouteHandler.channelInactive` gửi nó cho Engine nếu
+    channel đã từng JOIN_ROOM thành công (bỏ qua nếu chưa). `RoomSupervisor` dispatch tới
+    `RoomActor.StudentDisconnected(studentId)` (command mới) → `RoomState.markDisconnected(...)`
+    (mirror `joinRoom`, set `connected=false` + đánh dấu dirty, no-op nếu student không có trong
+    roster) → party khác thấy `connected=false` ở delta kế tiếp.
+  - **`KICK_STUDENT`:** thêm `MessageType.STUDENT_KICKED` (không payload). `RoomActor.KickStudent`
+    gọi `markDisconnected` rồi gửi ngay `STUDENT_KICKED` qua `broadcastTarget` (bypass coalescing,
+    giống `ANSWER_ACK`) — fan-out tới MỌI Gateway pod đang subscribe phòng (quyết định B1), pod
+    nào thật sự giữ channel của học sinh đó mới xử lý (không cần Engine biết học sinh đang ở pod
+    nào). `EngineResponseRouter` thêm nhánh riêng cho `STUDENT_KICKED`: gửi xong thì đóng channel
+    ngay (`ChannelFutureListener.CLOSE`) bất kể writability — khác hẳn `ANSWER_ACK` (không đóng)
+    và `CONNECTION_DEGRADED` (cố tình không đóng).
+  - Test mới: `RoomActorPresenceTest` (4 case, engine), `RoomSupervisorTest` (+3 case: dispatch
+    STUDENT_LEFT, no-op khi phòng chưa tồn tại, dispatch KICK_STUDENT), `GatewayPipelineTest` (+2
+    case: gửi STUDENT_LEFT khi channel đã join rồi đóng, không gửi gì khi chưa từng join — sửa
+    luôn 2 test cũ về security event vì giờ đóng channel do vi phạm trust boundary CŨNG kích hoạt
+    luồng rời phòng, đúng vì học sinh đó thật sự đang rời), `EngineResponseRouterTest` (+2 case:
+    đóng channel sau khi gửi kick, release frame an toàn khi học sinh không ở pod này),
+    `GameMessageRoundTripTest` (+1 case). `mvn clean install` toàn reactor: BUILD SUCCESS.
 - **Rollback nếu fail:** không revert — đây là task tích hợp, fail nghĩa là một task thượng nguồn sai. Truy về task đó.
 
 ---
 
-### Task 14: `LeaseBasedRoomOwnership` + Hot Snapshot thật — thay `ModuloRoomOwnership` tĩnh, đóng B1 + cho phép auto-scale an toàn — ⚠️ MỘT PHẦN XONG (viết lại 2026-09-07, thay bản Task 14 gốc; bắt đầu code 2026-09-07)
+### Task 14: `LeaseBasedRoomOwnership` + Hot Snapshot thật — thay `ModuloRoomOwnership` tĩnh, đóng B1 + cho phép auto-scale an toàn — ⚠️ MỘT PHẦN XONG (viết lại 2026-09-07, thay bản Task 14 gốc; bắt đầu code 2026-09-07; chaos test + 2 bug fix thật 2026-09-08)
 
 - **Kết quả (phần ownership — 2026-09-07):** `RoomLease`/`RoomLeaseStore` (interface async,
   `CompletableFuture`) + `LeaseBasedRoomOwnership implements RoomOwnership` — cache RAM
@@ -840,9 +865,16 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
         **vẫn** `ModuloRoomOwnership` — cờ chỉ bật ở compose test cục bộ, không đổi mặc định. Điều
         CHƯA test: thêm pod thứ 3 **giữa lúc** 2 pod kia đang chạy phòng thật (mid-session
         scale-up) — Task 20 khởi động cả 2 pod cùng lúc từ đầu, không mô phỏng scale động.
-  - [ ] Pod crash thật → pod khác giành lại + nạp snapshot — **vẫn chưa làm**. Task 20 xác nhận
-        Redis lease/snapshot ghi đúng dữ liệu thật, nhưng không giết container nào giữa chừng để
-        chứng minh pod khác giành lại lease + nạp lại snapshot — vẫn cần một chaos test riêng.
+  - [x] Pod crash thật → pod khác giành lại + nạp snapshot — **Cập nhật 2026-09-08:** đóng bằng
+        `DockerComposeChaosIT.should_recoverRoomOnAnotherPod_when_itsOwningEngineIsKilled` —
+        join thật, xác nhận Hot Snapshot đã ghi (`redis-cli EXISTS room:snap:*`), `docker compose
+        kill` đúng pod đang giữ lease, đợi hết lease TTL (20s, xem docker-compose.dev.yml), rồi
+        join lại: pod sống sót giành được lease + full snapshot trả về đúng roster/display_name
+        cũ (không phải phòng rỗng mới tinh). Quá trình viết chaos test này tự nó lộ ra **2 bug
+        thật** chặn đứng chính kịch bản này — xem ghi chú riêng ngay dưới, cả hai đã sửa. Không
+        verify được phục hồi ĐIỂM SỐ (Phase 1 không có wire message đưa phòng vào PLAYING từ
+        ngoài JVM engine, giống hạn chế `DockerComposeResyncIT` đã nêu cho SUBMIT_ANSWER) — đúng
+        phạm vi AC này (lease + roster), không phải toàn bộ chuỗi chấm điểm.
 - **Acceptance criteria — phần Hot Snapshot (2026-09-07, tiếp tục code):**
   - [x] Ghi async, không trong đường xử lý đồng bộ của `RoomActor`/Netty EventLoop —
         `RoomActor.maybeSnapshot()` gọi `snapshotStore.save(...)` (trả `CompletableFuture`) và
@@ -873,6 +905,33 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
   - [ ] Sau khi có implementation thật: sửa `system-architecture.md` ADR-002 GĐ1-note và §6.3 —
         **đã sửa một phần ở lượt review trước** (bỏ câu "10-50ms" vô căn cứ); số đo thật (10-50ms
         hay khác) vẫn cần benchmark thật, chưa làm — không tự ý điền số vào lại tài liệu
+- **Cập nhật 2026-09-08 — 2 bug thật tìm ra khi viết `DockerComposeChaosIT` (chaos test kill+phục
+  hồi qua Docker + Redis thật), cả hai đã sửa kèm test hồi quy + prove-it:**
+  1. **`RoomSupervisor` chưa từng gọi `SnapshotEnvelope.unwrap()`.** `RoomSnapshotStore#load` trả
+     nguyên envelope (schema_version/epoch/crc32 header + payload), nhưng `RoomSupervisor.onSnapshotLoaded`
+     đưa thẳng bytes đó vào `RoomActor.create(...)`'s `restoreFromSnapshot` — tham số này đúng ra
+     phải là payload BÊN TRONG (`RoomState.restore` không biết gì về envelope). Hậu quả: **mọi lần
+     phục hồi thật từ Redis đều crash actor** (`ActorInitializationException`, `GamePhase` đọc ra
+     chuỗi rỗng do lệch offset byte) — vô hình với `RoomActorSnapshotTest` vì bộ test đó luôn tự
+     tạo `restoreFromSnapshot` bằng `RoomState.serializeSnapshot()` trực tiếp, chưa từng đi qua
+     `SnapshotEnvelope.wrap`/`unwrap`. Sửa tại `RoomSupervisor.onSnapshotLoaded`: unwrap trước khi
+     spawn, envelope lỗi/sai schema vẫn coi như rỗng (đúng §5.8, không throw). Test mới:
+     `RoomSupervisorTest.should_restoreRosterFromAWrappedSnapshot_when_loadResolvesWithRealEnvelopeBytes`
+     (dùng đúng `SnapshotEnvelope.wrap` + `RoomState.serializeSnapshot()` thật, không giả lập tắt).
+  2. **`LeaseBasedRoomOwnership` cache một lần thua race giành lease là vĩnh viễn.**
+     `ensureAcquired()` chỉ hỏi `cache.containsKey(roomId)` để quyết định bỏ qua — không phân biệt
+     "mình đang giữ" với "người khác đang giữ, có thể đã hết hạn từ lâu". Một pod thua race một
+     lần thì **không bao giờ thử giành lại**, kể cả sau khi pod thắng cuộc đã chết hẳn và TTL đã
+     hết từ lâu — phá vỡ đúng lời hứa cốt lõi của Task 14 ("pod khác giành lại lease"). Sửa:
+     `renewAll()` (đã chạy định kỳ mỗi `ttl/3` từ `EngineNetworkLifecycle`) giờ evict luôn các
+     entry sở hữu bởi pod khác, không chỉ renew entry của chính mình — buộc `ensureAcquired` thử
+     lại thật ở lần gọi kế tiếp, tái dùng đúng nhịp định kỳ sẵn có thay vì phát minh thêm cơ chế
+     TTL/hẹn giờ riêng cho việc này. Test mới:
+     `LeaseBasedRoomOwnershipTest.should_retryAcquisition_when_renewAllRunsAgain_forARoomOwnedByAnotherPod`.
+  Cả hai lỗi chỉ lộ ra khi test thật qua Docker + Redis thật — 179 test đơn vị của Task 14 (kể cả
+  bộ rất kỹ `LeaseBasedRoomOwnershipTest`/`RoomActorSnapshotTest`) chưa từng chạm tổ hợp "ghi qua
+  store thật rồi đọc lại" hay "thua race → chờ hết hạn → giành lại", đúng đúng giới hạn mà
+  `_context.md` mục B1 đã cảnh báo trước ("có code" ≠ "hết rủi ro", cần chaos test thật).
 - **Verification:** Test giành lease đồng thời từ 2 "pod" giả (2 client Redis trỏ cùng key) →
   đúng 1 thắng, khớp `SETNX` semantics. Test hết hạn không renew (TTL cực ngắn trong test) → pod
   thứ hai giành được, epoch tăng đúng 1. Test crash + phục hồi: giết actor, spawn actor mới trên

@@ -254,6 +254,10 @@ enum MessageType {
   TEACHER_COMMAND = 4;
   HEARTBEAT = 5;
   UPDATE_DRAFT = 6;
+  // Synthesized by the gateway itself on channelInactive (never sent by a real client) when
+  // a channel that completed JOIN_ROOM disconnects -- carries no payload, room_id/student_id
+  // in the envelope are enough for RoomState to flip that player's `connected` to false.
+  STUDENT_LEFT = 7;
 
   ROOM_STATE_SNAPSHOT = 20;
   ANSWER_ACK = 21;
@@ -262,6 +266,11 @@ enum MessageType {
   GAME_OVER = 24;
   CONNECTION_DEGRADED = 25;
   COMMITTED_SEQ = 26;
+  // TeacherCommand.KICK_STUDENT's notice to the target student. No payload -- student_id
+  // (envelope) addresses it, same personal-delivery convention as ANSWER_ACK. Unlike
+  // CONNECTION_DEGRADED (deliberately never closes the socket), the gateway closes this
+  // student's channel right after delivering it.
+  STUDENT_KICKED = 27;
 }
 
 enum GamePhase {

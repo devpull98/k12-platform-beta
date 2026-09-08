@@ -6,6 +6,7 @@ import com.uni.realtime.protocol.GameMessage;
 import com.uni.realtime.protocol.JoinRoom;
 import com.uni.realtime.protocol.MessageType;
 import com.uni.realtime.protocol.SubmitAnswer;
+import com.uni.realtime.protocol.TeacherCommand;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelOutboundHandlerAdapter;
@@ -175,6 +176,74 @@ class RoomSupervisorTest {
         assertThat(store.loadCalls.get()).as("resolving must not trigger a second load").isEqualTo(1);
     }
 
+    @Test
+    void should_markDisconnected_when_studentLeftDispatched() throws Exception {
+        ActorRef<RoomSupervisor.Command> supervisor = spawnSupervisor();
+        FakeConnection connection = new FakeConnection();
+        supervisor.tell(new RoomSupervisor.Dispatch(joinRoom("room-7", "student-1", "Alice"), connection.channel));
+        connection.drainSettled();
+
+        supervisor.tell(new RoomSupervisor.Dispatch(studentLeft("room-7", "student-1"), connection.channel));
+
+        connection.takeMatching("a delta showing student-1 disconnected",
+                m -> m.getType() == MessageType.ROOM_STATE_SNAPSHOT
+                        && m.getRoomStateSnapshot().getPlayersList().stream()
+                                .anyMatch(p -> p.getStudentId().equals("student-1") && !p.getConnected()));
+    }
+
+    @Test
+    void should_beNoOp_when_studentLeftDispatchedForARoomNotSpawnedOnThisPod() {
+        ActorRef<RoomSupervisor.Command> supervisor = spawnSupervisor();
+        // No prior JOIN_ROOM for "room-8" on this pod -- must not throw or dead-letter loudly,
+        // there is simply nothing to update.
+        supervisor.tell(new RoomSupervisor.Dispatch(studentLeft("room-8", "student-1"), new FakeConnection().channel));
+    }
+
+    @Test
+    void should_routeKickStudentToRoomActor_when_teacherCommandDispatched() throws Exception {
+        ActorRef<RoomSupervisor.Command> supervisor = spawnSupervisor();
+        FakeConnection connection = new FakeConnection();
+        supervisor.tell(new RoomSupervisor.Dispatch(joinRoom("room-9", "student-1", "Alice"), connection.channel));
+        connection.drainSettled();
+
+        supervisor.tell(new RoomSupervisor.Dispatch(
+                teacherCommand("room-9", TeacherCommand.Command.KICK_STUDENT, "student-1"), connection.channel));
+
+        connection.takeMatching("a STUDENT_KICKED notice addressed to student-1",
+                m -> m.getType() == MessageType.STUDENT_KICKED && m.getStudentId().equals("student-1"));
+    }
+
+    @Test
+    void should_restoreRosterFromAWrappedSnapshot_when_loadResolvesWithRealEnvelopeBytes() throws Exception {
+        // Real-infra chaos test finding: RoomSnapshotStore#load returns the WRAPPED envelope
+        // (SnapshotEnvelope.wrap output), never the bare RoomState.serializeSnapshot() payload
+        // ControllableSnapshotStore's OTHER test above (should_deliverAllQueuedJoins...) happens
+        // to use Optional.empty(), which never exercised this distinction. Build the bytes the
+        // exact same way RoomActor.maybeSnapshot really does, to prove onSnapshotLoaded unwraps
+        // before restoring instead of feeding the envelope straight to RoomState.restore.
+        RoomState priorRoomState = new RoomState("room-preexisting", Clock.systemUTC(), FormulaScoreCalculator.binaryChoice());
+        priorRoomState.joinRoom("student-veteran", "Veteran");
+        byte[] wrappedSnapshot = SnapshotEnvelope.wrap(1L, priorRoomState.serializeSnapshot()).orElseThrow();
+
+        RoomOwnership ownsEverything = new ModuloRoomOwnership("engine-1", List.of("engine-1"));
+        ControllableSnapshotStore store = new ControllableSnapshotStore();
+        ActorRef<RoomSupervisor.Command> supervisor = testKit.spawn(RoomSupervisor.create(
+                ownsEverything, FormulaScoreCalculator.binaryChoice(),
+                new EngineMetrics(new SimpleMeterRegistry()), Clock.systemUTC(), store));
+        FakeConnection newcomer = new FakeConnection();
+
+        supervisor.tell(new RoomSupervisor.Dispatch(joinRoom("room-preexisting", "student-newcomer", "Newcomer"), newcomer.channel));
+        awaitLoadCallsAtLeast(store, 1);
+        store.resolve(Optional.of(wrappedSnapshot));
+
+        GameMessage reply = newcomer.takeMatching("a full snapshot including the restored veteran",
+                m -> m.getType() == MessageType.ROOM_STATE_SNAPSHOT && m.getRoomStateSnapshot().getFull());
+        assertThat(reply.getRoomStateSnapshot().getPlayersList())
+                .as("a genuinely NEW room would have no roster to restore from")
+                .extracting(p -> p.getStudentId())
+                .contains("student-veteran");
+    }
+
     private static void awaitLoadCallsAtLeast(ControllableSnapshotStore store, int expected) throws InterruptedException {
         long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
         while (store.loadCalls.get() < expected && System.nanoTime() < deadlineNanos) {
@@ -234,6 +303,25 @@ class RoomSupervisorTest {
                 .setStudentId(studentId)
                 .setSequence(sequence)
                 .setSubmitAnswer(SubmitAnswer.newBuilder().setQuestionId(questionId).addAnswerIds("a"))
+                .build();
+    }
+
+    /** No oneof payload -- {@code RoomRouteHandler} synthesizes this on {@code channelInactive}. */
+    private static GameMessage studentLeft(String roomId, String studentId) {
+        return GameMessage.newBuilder()
+                .setType(MessageType.STUDENT_LEFT)
+                .setRoomId(roomId)
+                .setStudentId(studentId)
+                .build();
+    }
+
+    private static GameMessage teacherCommand(String roomId, TeacherCommand.Command command, String targetStudentId) {
+        return GameMessage.newBuilder()
+                .setType(MessageType.TEACHER_COMMAND)
+                .setRoomId(roomId)
+                .setTeacherCommand(TeacherCommand.newBuilder()
+                        .setCommand(command)
+                        .setTargetStudentId(targetStudentId))
                 .build();
     }
 

@@ -9,6 +9,8 @@ import com.uni.realtime.protocol.MessageType;
 import com.uni.realtime.protocol.RoutingStatus;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
+import io.netty.channel.ChannelFutureListener;
+import io.netty.handler.codec.http.websocketx.BinaryWebSocketFrame;
 
 import java.util.Set;
 
@@ -47,6 +49,11 @@ public final class EngineResponseRouter {
         GameMessage forClient = message.toBuilder().clearInternal().build();
         ByteBuf frame = Unpooled.wrappedBuffer(forClient.toByteArray());
 
+        if (message.getType() == MessageType.STUDENT_KICKED) {
+            sendToOneStudentAndClose(message.getRoomId(), message.getStudentId(), frame);
+            return;
+        }
+
         // A non-empty student_id addresses this message to one student (AnswerAck always has
         // one; RoomActor.onJoinRoom now stamps its personal full-snapshot reply the same way)
         // -- everything else (coalescing flushes, GameOver, ...) is a genuine room broadcast and
@@ -56,6 +63,22 @@ public final class EngineResponseRouter {
         } else {
             broadcaster.broadcast(message.getRoomId(), frame, deliveryClass);
         }
+    }
+
+    /**
+     * {@code TeacherCommand.KICK_STUDENT}'s notice: unlike every other personal delivery in this
+     * class, the socket must close right after -- deliberately NOT routed through
+     * {@link Broadcaster#sendToOne}, whose backpressure rule only closes a channel that is
+     * already {@code !isWritable()} (correct for ANSWER_ACK, wrong here: a kick must close the
+     * channel regardless of its writability, since nothing else will ever be sent to it again).
+     * A student not present on THIS pod (Engine fans this out to every subscribed Gateway pod,
+     * §B1 -- only one of them actually holds the channel) just releases the frame, same as
+     * {@link #sendToOneStudent} does for the same case.
+     */
+    private void sendToOneStudentAndClose(String roomId, String studentId, ByteBuf frame) {
+        roomRegistry.channelFor(roomId, studentId).ifPresentOrElse(
+                channel -> channel.writeAndFlush(new BinaryWebSocketFrame(frame)).addListener(ChannelFutureListener.CLOSE),
+                frame::release);
     }
 
     /**

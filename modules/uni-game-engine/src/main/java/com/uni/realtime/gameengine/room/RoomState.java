@@ -335,6 +335,37 @@ final class RoomState {
     }
 
     /**
+     * Leave-room flow / kick: flips {@code connected} to {@code false} for a student already in
+     * {@link #players} and marks it dirty so the next coalescing flush carries it (§G2 D3 --
+     * leaving must show up as {@code connected = false}, never as silence). No-op for a student
+     * not on the roster (e.g. a channel that disconnected before ever completing JOIN_ROOM).
+     * Never removes the entry -- score/{@code student_index} history stays intact, matching the
+     * "never removed" convention {@link #buildDeltaSnapshot()} already documents.
+     */
+    void markDisconnected(String studentId) {
+        PlayerRecord record = players.get(studentId);
+        if (record == null) {
+            return;
+        }
+        record.connected = false;
+        dirtyStudentIds.add(studentId);
+    }
+
+    /**
+     * TeacherCommand.KICK_STUDENT's notice to the target student -- static and pure, same shape
+     * as {@link #buildCommittedSeq}, so {@code RoomActor} can send it via {@code broadcastTarget}
+     * (fan-out to every subscribed Gateway pod, §B1) without this class needing to know which
+     * pod actually holds that student's channel.
+     */
+    static GameMessage buildStudentKicked(String roomId, String studentId) {
+        return GameMessage.newBuilder()
+                .setType(MessageType.STUDENT_KICKED)
+                .setRoomId(roomId)
+                .setStudentId(studentId)
+                .build();
+    }
+
+    /**
      * Task 15 / B2: deliberately a static, pure function of its arguments -- not an instance
      * method -- so the async snapshot-write callback in {@code RoomActor} can build a
      * {@code CommittedSeq} from a previously captured {@link #lastSeenSequenceSnapshot()} without
