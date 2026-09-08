@@ -34,6 +34,15 @@ uni:
       ttl-seconds: ${GATEWAY_DEV_JOIN_TOKEN_TTL_SECONDS:300}
       replay-guard-enabled: ${GATEWAY_DEV_JOIN_TOKEN_REPLAY_GUARD_ENABLED:false}
 
+    # Even more permissive than dev-join-token above: ZERO signature check, any
+    # "join-token:<student_id>:<room_id>" string is accepted outright (see
+    # com.uni.realtime.websocketgateway.auth.dev.AlwaysAcceptJoinTokenVerifier's javadoc). NEVER
+    # valid for staging/production -- same dual-gate as dev-join-token. Mutually exclusive with
+    # dev-join-token in practice: enabling both fails Gateway startup (ambiguous JoinTokenVerifier
+    # bean) rather than silently picking one.
+    always-accept-join-token:
+      enabled: ${GATEWAY_ALWAYS_ACCEPT_JOIN_TOKEN_ENABLED:false}
+
 management:
   endpoints:
     web:

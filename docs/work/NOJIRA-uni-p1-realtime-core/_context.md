@@ -428,7 +428,31 @@ progress: "T1, T2, T4, T5, T10 xong. T6 MOT PHAN xong (GatewayPipeline + WS hand
   Them 1 doan 'AC xong != het rui ro san xuat' vao cuoi Task 14 liet ke 4 caveat con lai (co san tu
   truoc, khong phai AC bi bo sot): co production van tat, moi verify qua Docker 1 may, chua test
   fencing/split-brain that (pod song nhung co lap tam thoi), room-store van la 1 Valkey instance
-  don chua phai Cluster. Task 19 (runbook cam scale) van giu nguyen hieu luc."
+  don chua phai Cluster. Task 19 (runbook cam scale) van giu nguyen hieu luc.
+  2026-09-08 (tiep, cung phien): nguoi dung bao 'bat dau Task 6 luon di'. Task 6 con 2 muc [ ]:
+  (1) JoinTokenVerifier that (G1a/G1c) va (2) rang buoc ingress ghi thanh van ban. Hoi nguoi dung
+  co cau tra loi that cho G1a/G1c chua - tra loi 'chua co, giu nguyen trang thai chan' - KHONG tu
+  doan thuat toan ky de viet JoinTokenVerifier that, dung theo dung yeu cau tai lieu da ghi nhieu
+  lan. Chi lam muc (2): viet docs/runbook/ingress-websocket-requirements.md (cung style voi
+  engine-scaling-freeze.md da co) - liet ke 2 rang buoc bat buoc (passthrough WS upgrade,
+  idle-timeout > 30s heartbeat) trich dung ADR-008/SS6.3, checklist truoc khi deploy that, vi du
+  annotation Nginx Ingress CHI de minh hoa hinh dang (khong phai quyet dinh da chot ingress
+  controller nao). Tick AC do trong plan.md Task 6 - dung nghia den 'ghi thanh van ban' AC yeu
+  cau, khong phai 'da co manifest deploy that'. Task 6 van MOT PHAN XONG - chi con JoinTokenVerifier
+  that chan ngoai boi G1a/G1c.
+  2026-09-08 (tiep, cung phien): nguoi dung yeu cau 'tam thoi mac dinh cho pass phan token' - hoi
+  ro truoc vi 2 nghia khac han (chi so sach vs doi code that) - nguoi dung chon doi code that.
+  Them AlwaysAcceptJoinTokenVerifier (auth.dev, cung package DevJoinTokenVerifier) - KHONG kiem
+  tra chu ky nao ca, chi chap nhan dung hinh dang 'join-token:<student_id>:<room_id>' (giong
+  format FakeJoinTokenVerifier trong test). Khoa kep y het DevJoinTokenVerifier (@Profile
+  dev-docker + property rieng, mac dinh false). Hai verifier loai tru lan nhau trong thuc te - bat
+  ca hai cung luc lam Gateway crash luc khoi dong (ambiguous bean), khong @Primary co y - loi cau
+  hinh phai on ao, khong am tham ha cap bao mat. KHONG doi mac dinh docker-compose.dev.yml (van
+  dung DevJoinTokenVerifier nhu cu) - tranh pha cac Docker IT test hien co dang mint token qua
+  DevJoinTokenCodec. Test moi AlwaysAcceptJoinTokenVerifierTest (4 case). Khong dong AC
+  'JoinTokenVerifier that (G1a/G1c)' cua Task 6 - day van la stand-in dev-only khac, khong phai
+  cau tra loi that tu doi nen tang. mvn clean install toan reactor: BUILD SUCCESS, 83 test
+  uni-websocket-gateway (79 cu + 4 moi), khong leak."
 dev_selftest: pending
 qc_status: pending
 trace: pending

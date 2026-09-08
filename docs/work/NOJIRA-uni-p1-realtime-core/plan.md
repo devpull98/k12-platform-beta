@@ -247,7 +247,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 
 ---
 
-### Task 6: Netty pipeline Gateway + WS handshake + join-token auth — ⚠️ MỘT PHẦN XONG (2026-09-06)
+### Task 6: Netty pipeline Gateway + WS handshake + join-token auth — ⚠️ MỘT PHẦN XONG (2026-09-06; ràng buộc ingress ghi thành văn bản 2026-09-08 — chỉ còn `JoinTokenVerifier` thật chặn ngoài bởi G1a/G1c)
 
 - **Mode:** sequential after [T1] · parallel with [T2, T4]
 - **Mô tả:** Biên WebSocket. Spring Boot chỉ lo bootstrap/actuator, đường đi gói tin là Netty thuần (quyết định A1).
@@ -266,13 +266,19 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
   - [x] Netty EventLoop cố định = cores × 2; **không** DB/Redis/HTTP call nào trong EventLoop (§13.2)
   - [x] **Không có `SslHandler` trong pipeline** — TLS terminate ở LB/ingress (quyết định #3),
         pod nhận WS plaintext. Không thêm cờ config bật TLS tại pod ở GĐ1
-  - [ ] Ràng buộc lên ingress phải ghi thành văn bản trong `docker-compose.dev.yml` / manifest:
+  - [x] Ràng buộc lên ingress phải ghi thành văn bản trong `docker-compose.dev.yml` / manifest:
         **passthrough WebSocket upgrade** và **idle-timeout > chu kỳ heartbeat** (30s),
-        nếu không connection sẽ bị LB cắt giữa chừng — **vẫn chưa làm**. Cập nhật 2026-09-07
-        (Task 20): `docker-compose.dev.yml` **đã tồn tại**, nhưng đó là compose cho test cục bộ,
-        không có LB/ingress nào trong đó (Gateway nhận traffic trực tiếp) — AC này thực chất nói
-        về **manifest triển khai thật** (K8s ingress hoặc LB trước Gateway), thứ vẫn chưa tồn tại
-        ở bất kỳ đâu trong repo. Vẫn để `[ ]`.
+        nếu không connection sẽ bị LB cắt giữa chừng. Cập nhật 2026-09-07 (Task 20):
+        `docker-compose.dev.yml` **đã tồn tại**, nhưng đó là compose cho test cục bộ, không có
+        LB/ingress nào trong đó (Gateway nhận traffic trực tiếp) — AC này thực chất nói về
+        **manifest triển khai thật** (K8s ingress hoặc LB trước Gateway), thứ vẫn chưa tồn tại ở
+        bất kỳ đâu trong repo. **Cập nhật 2026-09-08:** chưa có manifest thật (chưa chọn ingress
+        controller/LB, ngân sách hạ tầng vẫn treo ở `_context.md` §7.5), nhưng ràng buộc giờ đã
+        **ghi thành văn bản thật** ở
+        [`docs/runbook/ingress-websocket-requirements.md`](../../runbook/ingress-websocket-requirements.md)
+        (checklist trước khi đưa Ingress/LB thật vào production + ví dụ annotation Nginx Ingress
+        chỉ để minh hoạ hình dạng, không phải quyết định đã chốt) — đúng nghĩa đen AC yêu cầu
+        ("ghi thành văn bản", không phải "đã có manifest deploy thật").
 - **Verification:** `mvn -pl :uni-websocket-gateway test -Dtest=GatewayPipelineTest`. Case bắt buộc: gói có `room_id` giả mạo → channel bị đóng.
 - **Ghi chú quan trọng — thuật toán ký join token KHÔNG được hiện thực ở đây:** tech-design.md
   G1a/G1c (thuật toán ký, phân phối khoá, dung sai lệch đồng hồ) **vẫn chưa chốt** — phải hỏi
@@ -284,6 +290,27 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
   implementation **dev-only** (`DevJoinTokenVerifier`, HMAC tự bịa cho test cục bộ, khoá kép bằng
   Spring profile + property) để mở WS port test qua Docker — không liên quan gì tới thuật toán
   ký thật G1a/G1c sẽ chốt, không đổi kết luận task này vẫn "một phần xong" vì chờ bên ngoài.
+
+  **Cập nhật 2026-09-08 (theo yêu cầu người dùng "tạm thời mặc định cho pass phần token"):** thêm
+  `AlwaysAcceptJoinTokenVerifier` (cùng package `auth.dev`) — permissive hơn cả `DevJoinTokenVerifier`,
+  **không kiểm tra chữ ký nào cả**, chỉ chấp nhận chuỗi đúng hình dạng
+  `"join-token:<student_id>:<room_id>"` (giống hệt format `FakeJoinTokenVerifier` trong test dùng
+  từ trước, giờ nâng lên thành bean Spring opt-in thật). Mục đích: bỏ qua bước mint token HMAC qua
+  `DevJoinTokenCodec` khi cần demo/test tay nhanh. Khoá kép y hệt `DevJoinTokenVerifier`
+  (`@Profile("dev-docker")` + `uni.gateway.always-accept-join-token.enabled=true`, mặc định
+  `false`). Hai verifier **loại trừ lẫn nhau trong thực tế**: cả hai đều là bean
+  `JoinTokenVerifier`, bật đồng thời cả hai cờ sẽ làm Gateway **crash lúc khởi động** (ambiguous
+  bean cho constructor của `GatewayNetworkLifecycle`) thay vì âm thầm chọn một — cố tình không gắn
+  `@Primary` để lỗi cấu hình luôn ồn ào, không bao giờ tự âm thầm hạ cấp bảo mật. **Không thay đổi
+  mặc định của `docker-compose.dev.yml`** — vẫn dùng `DevJoinTokenVerifier` như cũ, tránh phá các
+  Docker IT test hiện có (`DockerComposeChaosIT`/`DockerComposeResyncIT`/`DockerComposeScaleUpIT`
+  đều mint token qua `DevJoinTokenCodec`, không khớp format `join-token:x:y` trần của verifier
+  mới) — bật cờ mới là việc thủ công khi cần, không phải hành vi ngầm định. Test mới:
+  `AlwaysAcceptJoinTokenVerifierTest` (4 case: chấp nhận đúng hình dạng, từ chối thiếu prefix,
+  thiếu field, chuỗi rỗng). **Không đóng AC "JoinTokenVerifier thật (G1a/G1c)"** — đây vẫn là một
+  stand-in dev-only khác, không phải câu trả lời thật từ đội nền tảng, không được dùng ở
+  staging/production như chính javadoc của class này ghi rõ. `mvn clean install` toàn reactor:
+  BUILD SUCCESS, 83 test `uni-websocket-gateway` (79 cũ + 4 mới), không leak.
 - **Rollback nếu fail:** revert; nhánh T2/T4 không bị ảnh hưởng.
 
 ---
