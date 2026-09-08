@@ -173,9 +173,9 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
      * @param missedStepPolicy must be {@link MissedStepPolicy#ZERO} — same fail-fast shape as
      *     {@code tickMode} above. {@link com.uni.realtime.gameengine.definition.DefinitionLoader}
      *     already rejects {@code SKIP}/{@code ALLOW_LATE} at load time; failing fast here too
-     *     catches a caller that bypassed the loader. Not stored as a field: like {@code tickMode},
-     *     its only job in Phase 1 is this gate -- there is no late-join flow yet for a
-     *     non-{@code ZERO} policy to change the behavior of (see plan.md Task 17's "Chưa làm").
+     *     catches a caller that bypassed the loader. Unlike {@code tickMode}, this one IS carried
+     *     through to {@link RoomState} (Task 17, closing B4 for real): a late joiner's missed
+     *     steps are now scored on purpose, not by accident of an unset score defaulting to 0.
      */
     public static Behavior<Command> create(
             String roomId, Clock clock, ScoreCalculator scoreCalculator, EngineMetrics engineMetrics,
@@ -214,7 +214,7 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
         }
         return Behaviors.withTimers(timers -> Behaviors.setup(
                 context -> new RoomActor(context, timers, roomId, clock, scoreCalculator, engineMetrics,
-                        broadcastTarget, snapshotStore, epoch, restoreFromSnapshot, gameEventPublisher)));
+                        broadcastTarget, snapshotStore, epoch, restoreFromSnapshot, missedStepPolicy, gameEventPublisher)));
     }
 
     private final String roomId;
@@ -242,14 +242,14 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
     private RoomActor(ActorContext<Command> context, TimerScheduler<Command> timers, String roomId, Clock clock,
             ScoreCalculator scoreCalculator, EngineMetrics engineMetrics, ActorRef<GameMessage> broadcastTarget,
             RoomSnapshotStore snapshotStore, long epoch, byte[] restoreFromSnapshot,
-            GameEventPublisher gameEventPublisher) {
+            MissedStepPolicy missedStepPolicy, GameEventPublisher gameEventPublisher) {
         super(context);
         this.timers = timers;
         this.roomId = roomId;
         this.clock = clock;
         this.state = restoreFromSnapshot == null
-                ? new RoomState(roomId, clock, scoreCalculator)
-                : RoomState.restore(roomId, clock, scoreCalculator, restoreFromSnapshot);
+                ? new RoomState(roomId, clock, scoreCalculator, missedStepPolicy)
+                : RoomState.restore(roomId, clock, scoreCalculator, missedStepPolicy, restoreFromSnapshot);
         this.processingTimer = engineMetrics.processingLatencyTimer();
         this.engineMetrics = engineMetrics;
         this.broadcastTarget = broadcastTarget;

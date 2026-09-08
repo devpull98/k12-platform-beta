@@ -1086,7 +1086,7 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 
 ---
 
-### Task 17: Nối `missed_step_policy` vào `RoomState`/`RoomActor` — đóng phát hiện B4 — ⚠️ MỘT PHẦN XONG (2 trong 2 lớp fail-fast, 2026-09-07)
+### Task 17: Nối `missed_step_policy` vào `RoomState`/`RoomActor` — đóng phát hiện B4 — ✅ XONG (nối `RoomState` thật 2026-09-08, sau 2 lớp fail-fast của 2026-09-07)
 
 - **Kết quả:** `DefinitionLoader` giờ từ chối lúc nạp bất kỳ `missed_step_policy` nào khác `ZERO`
   (`SKIP`/`ALLOW_LATE`), đúng pattern đã dùng cho `tick_mode: FIXED`. 2 test mới
@@ -1102,17 +1102,50 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
   nào (`RoomSupervisor`, `RoomActorTest`, spike). Test mới trong `TickCoalescingTest`
   (`should_rejectNonZeroMissedStepPolicy_when_creatingRoomActor_because_onlyZeroIsImplemented`) +
   prove-it xác nhận đúng 1 test Red. `mvn clean install` toàn reactor: BUILD SUCCESS, 174 test.
-- **Chưa làm, có chủ đích, không phải quên — lý do:** grep xác nhận `GameDefinition` hoàn toàn
-  **chưa được `RoomActor`/`RoomState` tiêu thụ ở bất kỳ điểm nào** (không chỉ `missedStepPolicy` —
-  cả `steps`, `scoringFormula`, `maxTransitions` cũng vậy, đúng như Task 11 đã ghi chú). "Nối
-  `RoomState` đọc và áp dụng `missedStepPolicy`" theo đúng nghĩa đen đòi hỏi phải có luồng
-  late-join thật (§4.8) để áp dụng chính sách vào — luồng đó **chưa tồn tại** (không phân biệt
-  "vào muộn" với "vào lần đầu" ở `RoomState.joinRoom`). Bịa ra một tham số `MissedStepPolicy`
-  truyền vào `RoomActor.create(...)` chỉ để có gì đó "đọc" mà không có nhánh logic thật dùng tới
-  sẽ là nối dây nửa vời — đúng loại việc dự án này đã nhất quán từ chối làm (Task 3/9's "không nối
-  dây nửa vời trước khi có điểm gắn thật"). Việc còn lại của Task 17 (nối `RoomState` thật) nên
-  gộp chung với một task tương lai wiring toàn bộ `GameDefinition` vào `RoomActor` — chưa có trong
-  `plan.md`, cần thêm khi ai đó nhận việc late-join.
+- **Kết quả (nối `RoomState` thật — 2026-09-08):** Thay vì chờ luồng late-join đầy đủ (§4.8, vẫn
+  chưa tồn tại — không có `TeacherCommand.NEXT_STEP`/step-graph nào lái `startQuestion` cả, đúng
+  như ghi chú "chưa làm" bản gốc bên dưới vẫn đúng cho phần ĐÓ), nhận ra phần **duy nhất cần thiết
+  để "áp dụng thật" `ZERO`** không phụ thuộc vào step-graph: chỉ cần biết **một học sinh join sau
+  khi bao nhiêu câu hỏi đã bắt đầu**, bất kể câu hỏi đó tới từ đâu (hook test/ops hay flow thật sau
+  này). Thêm `RoomState.questionsStartedCount` (tăng mỗi lần `startQuestion` chạy, sống sót qua
+  restore — Hot Snapshot thêm 1 field mới, không đổi `SnapshotEnvelope.SCHEMA_VERSION` vì định dạng
+  nội bộ `serializeSnapshot()` không có version riêng và chưa có dữ liệu production nào phụ thuộc,
+  cờ `room-store.enabled` vẫn tắt mặc định). `PlayerRecord.missedStepsAtJoin` (final, chụp đúng 1
+  lần lúc `computeIfAbsent` tạo record mới — **reconnect không bao giờ chạy lại** nhánh này, đúng
+  tinh thần "reconnect và vào muộn là 2 luồng khác nhau" §4.8). `RoomState.applyMissedStepPolicy`
+  là lớp fail-fast **thứ ba** (sau `DefinitionLoader` và `RoomActor.create`) — chỉ có 1 case `ZERO`
+  thật, `SKIP`/`ALLOW_LATE` ném `IllegalStateException` nếu ai đó vượt qua cả 2 lớp trước. Thêm
+  `RoomState.missedStepsFor(studentId)` (package-private) làm tín hiệu quan sát được, chứng minh
+  nhánh này chạy có chủ đích — khác với trước đây "0 điểm" chỉ là giá trị mặc định tình cờ của
+  `totalScoreByStudent`.
+
+  `MissedStepPolicy` giờ được truyền xuyên suốt: `RoomActor`'s private constructor + cả
+  `new RoomState(...)` lẫn `RoomState.restore(...)` đều có overload mới nhận nó (additive, các
+  overload cũ giữ nguyên, mặc định `ZERO`, không phá bất kỳ call site nào — cùng khuôn các overload
+  `RoomActor.create` đã dùng từ Task 14).
+
+  Test mới: `RoomStateMissedStepPolicyTest` (8 case — join trước/sau câu hỏi, reconnect không tính
+  lại, điểm 0 cho câu đã lỡ, sống sót qua restore cả ở mức phòng lẫn mức từng học sinh, fail-fast
+  khi policy khác `ZERO`, không throw khi không ai vào muộn). **Prove-it**: tạm comment
+  `questionsStartedCount++`, xác nhận đúng 6/8 test Red (2 test còn lại đúng-là-phải-xanh vì không
+  phụ thuộc bộ đếm) trước khi trả lại Green. `mvn clean install` toàn reactor: BUILD SUCCESS,
+  **120 test `uni-game-engine`** (112 cũ + 8 mới), tổng reactor không leak.
+
+  **Vẫn chưa làm, có chủ đích (khác phạm vi Task 17):** luồng late-join thật sự (§4.8) — cách một
+  học sinh late-join THỰC SỰ được join vào một phòng đang `PLAYING` qua đường JOIN_ROOM thật (hiện
+  tại `RoomState.joinRoom` không hề kiểm tra phase, join lúc nào cũng được — đúng hành vi hiện có,
+  Task 17 không mở rộng phạm vi này) — Task này chỉ đảm bảo NẾU một học sinh join muộn (bất kể cơ
+  chế route join đó tới từ đâu) THÌ điểm các câu đã lỡ đúng là 0 có chủ đích. `steps`/
+  `scoringFormula`/`maxTransitions` của `GameDefinition` vẫn chưa được `RoomActor` tiêu thụ — không
+  thuộc phạm vi B4/Task 17 (B4 chỉ nói về `missedStepPolicy`).
+- **Ghi chú gốc (2026-09-07, giữ nguyên giá trị lịch sử):** grep xác nhận `GameDefinition` hoàn
+  toàn chưa được `RoomActor`/`RoomState` tiêu thụ ở bất kỳ điểm nào (không chỉ `missedStepPolicy` —
+  cả `steps`, `scoringFormula`, `maxTransitions` cũng vậy, đúng như Task 11 đã ghi chú). Bịa ra một
+  tham số `MissedStepPolicy` truyền vào `RoomActor.create(...)` chỉ để có gì đó "đọc" mà không có
+  nhánh logic thật dùng tới sẽ là nối dây nửa vời — đúng loại việc dự án này đã nhất quán từ chối
+  làm (Task 3/9's "không nối dây nửa vời trước khi có điểm gắn thật"). **Cập nhật 2026-09-08:**
+  hoá ra có một nhánh logic thật đủ hẹp để làm ngay mà không cần chờ step-graph — xem "Kết quả"
+  ở trên.
 - **Mode:** sequential after [T11] (Game Definition đã có `MissedStepPolicy` trong schema)
 - **Mô tả:** `_context.md` mục B4 ghi nhận: `RoomActor`/`RoomState` không hề tham chiếu
   `GameDefinition`/`MissedStepPolicy` — hành vi "0 điểm khi hết giờ không trả lời" hiện tại chỉ là
@@ -1123,19 +1156,22 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
   `.../room/RoomState.java` (đọc `missedStepPolicy` lúc chuyển sang câu kế tiếp/kết thúc game)
 - **Dependency:** Task 11 (`GameDefinition`/`MissedStepPolicy` đã có trong schema)
 - **Acceptance criteria:**
-  - [ ] GĐ1 **chỉ hiện thực `ZERO`** (mặc định) — làm đúng, có chủ đích, thay vì tình cờ đúng như
-        hiện tại. `RoomState` phải thật sự đọc `missedStepPolicy` và áp dụng, không chỉ nhận tham
-        số rồi bỏ qua. **Chưa làm — xem "Chưa làm" ở trên, chờ luồng late-join thật (§4.8)**
+  - [x] GĐ1 **chỉ hiện thực `ZERO`** (mặc định) — làm đúng, có chủ đích, thay vì tình cờ như trước.
+        `RoomState` giờ thật sự đọc `missedStepPolicy` (field mới) và áp dụng qua
+        `applyMissedStepPolicy` mỗi lần một học sinh MỚI join (`questionsStartedCount` > 0 tại thời
+        điểm đó = late join) — không còn chỉ nhận tham số rồi bỏ qua
   - [x] `SKIP`/`ALLOW_LATE` **fail-fast lúc nạp definition** ở GĐ1 — `DefinitionLoader` từ chối cả
         hai, đúng pattern `tick_mode: FIXED`
-  - [ ] Test xác nhận điểm 0 đi qua đúng nhánh `missedStepPolicy` — **chưa làm**, phụ thuộc AC đầu
-        tiên (chưa có nhánh nào để test qua)
+  - [x] Test xác nhận điểm 0 đi qua đúng nhánh `missedStepPolicy` —
+        `RoomStateMissedStepPolicyTest.should_scoreZeroPoints_forStepsMissedBeforeLateJoin` +
+        `should_recordMissedSteps_whenJoiningAfterQuestionsHaveAlreadyStarted` (dùng
+        `missedStepsFor(...)`, tín hiệu mới thêm riêng để chứng minh có chủ đích, không phải tình
+        cờ) — prove-it xác nhận đúng 6/8 test Red khi tạm tắt `questionsStartedCount++`
   - [x] Test xác nhận: definition khai `missed_step_policy: SKIP` hoặc `ALLOW_LATE` → bị
         `DefinitionLoader` từ chối lúc nạp, không lọt tới `RoomActor`
 - **Verification:** `mvn -pl :uni-game-engine test -Dtest=DefinitionLoaderTest` (case mới: reject
-  `SKIP`/`ALLOW_LATE`) + `mvn -pl :uni-game-engine test -Dtest=RoomActorTest` (case mới: không trả lời
-  trước deadline → 0 điểm qua đúng nhánh `missedStepPolicy`, không phải qua giá trị mặc định tình
-  cờ).
+  `SKIP`/`ALLOW_LATE`) + `mvn -pl :uni-game-engine test -Dtest=RoomStateMissedStepPolicyTest` (8
+  case, xem "Kết quả" ở trên) + `mvn clean install` toàn reactor: BUILD SUCCESS, không leak.
 - **Ghi chú:** Không mở rộng sang hiện thực `SKIP`/`ALLOW_LATE` thật ở GĐ1 — `_context.md` §7.5
   câu 1 (`missed_step_policy` mặc định) vẫn còn treo phía Product, và `ALLOW_LATE` bị cấm dùng
   trong thi đấu theo chính tài liệu (§4.8). Task này chỉ đảm bảo `ZERO` chạy đúng nghĩa và các

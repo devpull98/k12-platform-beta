@@ -1,5 +1,6 @@
 package com.uni.realtime.gameengine.room;
 
+import com.uni.realtime.gameengine.definition.MissedStepPolicy;
 import com.uni.realtime.gameengine.scoring.ScoreCalculator;
 import com.uni.realtime.protocol.AnswerAck;
 import com.uni.realtime.protocol.CommittedSeq;
@@ -57,6 +58,7 @@ final class RoomState {
     private final String roomId;
     private final Clock clock;
     private final ScoreCalculator scoreCalculator;
+    private final MissedStepPolicy missedStepPolicy;
 
     private final Map<String, Long> lastSeenSequence = new HashMap<>();
     private final Map<String, GameMessage> lastAckByStudent = new HashMap<>();
@@ -70,6 +72,13 @@ final class RoomState {
     private int flushesSinceFullSnapshot = 0;
     /** Task 16 / B3: monotonic per-room broadcast counter (proto field 7), never reset on restore. */
     private long broadcastSeq = 0;
+    /**
+     * Task 17 (B4, §4.8): how many times {@link #startQuestion} has run so far, i.e. how many
+     * steps a student joining RIGHT NOW would have missed. Survives restore (§9.2 Rủi ro 4's
+     * lease-handoff case) so a late joiner is still correctly counted as late on whichever pod
+     * ends up owning this room, not just the one that started the game.
+     */
+    private int questionsStartedCount = 0;
 
     private GamePhase phase = GamePhase.LOBBY;
     private String currentQuestionId;
@@ -78,9 +87,19 @@ final class RoomState {
     private long deadlineMs;
 
     RoomState(String roomId, Clock clock, ScoreCalculator scoreCalculator) {
+        this(roomId, clock, scoreCalculator, MissedStepPolicy.ZERO);
+    }
+
+    /**
+     * Task 17 (B4): additive over the three-arg constructor above so every existing caller with
+     * no policy to offer (tests written before this task) keeps compiling unchanged, same shape
+     * {@code RoomActor.create}'s overloads already use for {@code snapshotStore}/{@code epoch}.
+     */
+    RoomState(String roomId, Clock clock, ScoreCalculator scoreCalculator, MissedStepPolicy missedStepPolicy) {
         this.roomId = roomId;
         this.clock = clock;
         this.scoreCalculator = scoreCalculator;
+        this.missedStepPolicy = missedStepPolicy;
     }
 
     /**
@@ -107,6 +126,7 @@ final class RoomState {
             out.writeInt(nextStudentIndex);
             out.writeInt(flushesSinceFullSnapshot);
             out.writeLong(broadcastSeq);
+            out.writeInt(questionsStartedCount);
 
             out.writeInt(players.size());
             for (Map.Entry<String, PlayerRecord> entry : players.entrySet()) {
@@ -116,6 +136,7 @@ final class RoomState {
                 out.writeUTF(player.displayName);
                 out.writeBoolean(player.answeredCurrent);
                 out.writeBoolean(player.connected);
+                out.writeInt(player.missedStepsAtJoin);
             }
 
             out.writeInt(totalScoreByStudent.size());
@@ -154,7 +175,13 @@ final class RoomState {
      * valid checksum), not an expected runtime case.
      */
     static RoomState restore(String roomId, Clock clock, ScoreCalculator scoreCalculator, byte[] payload) {
-        RoomState state = new RoomState(roomId, clock, scoreCalculator);
+        return restore(roomId, clock, scoreCalculator, MissedStepPolicy.ZERO, payload);
+    }
+
+    /** Task 17 (B4): additive over the four-arg {@link #restore} above, same reason as the constructor overload. */
+    static RoomState restore(String roomId, Clock clock, ScoreCalculator scoreCalculator,
+            MissedStepPolicy missedStepPolicy, byte[] payload) {
+        RoomState state = new RoomState(roomId, clock, scoreCalculator, missedStepPolicy);
         try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(payload))) {
             state.phase = GamePhase.valueOf(in.readUTF());
             String questionId = in.readUTF();
@@ -170,6 +197,7 @@ final class RoomState {
             state.nextStudentIndex = in.readInt();
             state.flushesSinceFullSnapshot = in.readInt();
             state.broadcastSeq = in.readLong();
+            state.questionsStartedCount = in.readInt();
 
             int playerCount = in.readInt();
             for (int i = 0; i < playerCount; i++) {
@@ -178,7 +206,8 @@ final class RoomState {
                 String displayName = in.readUTF();
                 boolean answeredCurrent = in.readBoolean();
                 boolean connected = in.readBoolean();
-                PlayerRecord record = new PlayerRecord(index, displayName);
+                int missedStepsAtJoin = in.readInt();
+                PlayerRecord record = new PlayerRecord(index, displayName, missedStepsAtJoin);
                 record.answeredCurrent = answeredCurrent;
                 record.connected = connected;
                 state.players.put(studentId, record);
@@ -214,10 +243,59 @@ final class RoomState {
      * staying stable (§G2 D4).
      */
     GameMessage joinRoom(String studentId, String displayName) {
-        PlayerRecord record = players.computeIfAbsent(studentId, id -> new PlayerRecord(nextStudentIndex++, displayName));
+        // computeIfAbsent's lambda only runs for a GENUINELY new studentId -- a reconnect (§4.8:
+        // "hai luồng hoàn toàn khác nhau") never re-enters it, so missedStepsAtJoin is captured
+        // exactly once, at the student's real first join, and never recomputed on reconnect.
+        PlayerRecord record = players.computeIfAbsent(studentId, id -> {
+            int missedSteps = questionsStartedCount;
+            applyMissedStepPolicy(missedSteps);
+            return new PlayerRecord(nextStudentIndex++, displayName, missedSteps);
+        });
         record.connected = true;
         dirtyStudentIds.add(studentId);
         return buildFullSnapshot();
+    }
+
+    /**
+     * Task 17 (B4): makes {@code ZERO} the deliberate, observable outcome for a late joiner
+     * instead of an accident of {@code totalScoreByStudent} defaulting a missing student to 0
+     * (§9.4/{@link #totalScoreOf}) -- {@link #missedStepsFor} lets a test (or future analytics)
+     * confirm this branch actually ran, not just that the score happens to be 0. A no-op for
+     * {@code missedSteps == 0} (joined before the first question started -- not late at all).
+     *
+     * @throws IllegalStateException if {@link #missedStepPolicy} is anything but {@code ZERO} --
+     *     {@code DefinitionLoader} and {@code RoomActor.create} both already reject
+     *     {@code SKIP}/{@code ALLOW_LATE} before a {@code RoomState} is ever constructed (same
+     *     layered fail-fast {@code tickMode} uses); reaching here with one means a caller bypassed
+     *     both guards.
+     */
+    private void applyMissedStepPolicy(int missedSteps) {
+        if (missedSteps == 0) {
+            return;
+        }
+        switch (missedStepPolicy) {
+            case ZERO -> {
+                // Deliberate no-op: ZERO's whole effect IS the missed steps staying at their
+                // natural default score. The point of this branch is that it's reached on
+                // purpose, not that it changes anything.
+            }
+            case SKIP, ALLOW_LATE -> throw new IllegalStateException(
+                    "RoomState given MissedStepPolicy." + missedStepPolicy + ", but only ZERO is "
+                            + "implemented in Phase 1 -- DefinitionLoader/RoomActor.create should "
+                            + "have rejected this before RoomState was ever constructed");
+        }
+    }
+
+    /**
+     * Task 17 (B4): steps missed by this student at the moment they first joined -- 0 for a
+     * student who joined before the first question started (not late). Fixed for the student's
+     * whole time in the room; a reconnect never changes it (see {@link #joinRoom}). Package-private:
+     * test-only today (no wire field carries this yet), but a real, intentional signal rather than
+     * a debug hook -- see {@link #applyMissedStepPolicy}.
+     */
+    int missedStepsFor(String studentId) {
+        PlayerRecord record = players.get(studentId);
+        return record == null ? 0 : record.missedStepsAtJoin;
     }
 
     void startQuestion(String questionId, long durationMs, List<String> correctAnswerIds) {
@@ -225,6 +303,11 @@ final class RoomState {
         this.currentCorrectAnswerIds = correctAnswerIds;
         this.serverQuestionStartedAtMs = clock.millis();
         this.deadlineMs = serverQuestionStartedAtMs + durationMs;
+        // Task 17 (B4): every question that has ever started is one more step a FUTURE joiner
+        // would have missed -- incremented here, unconditionally, regardless of how this got
+        // called (the real step-graph flow doesn't exist yet; a test/ops hook drives this today,
+        // same as everywhere else in Phase 1 that starts a question).
+        this.questionsStartedCount++;
 
         // A new question invalidates "already answered" from the previous one -- flip it back
         // and let the next coalescing flush carry that change out (no separate broadcast here;
@@ -486,12 +569,15 @@ final class RoomState {
     private static final class PlayerRecord {
         private final int index;
         private final String displayName;
+        /** Task 17 (B4): set once at construction, same lifetime rule as {@code index}. */
+        private final int missedStepsAtJoin;
         private boolean answeredCurrent;
         private boolean connected;
 
-        PlayerRecord(int index, String displayName) {
+        PlayerRecord(int index, String displayName, int missedStepsAtJoin) {
             this.index = index;
             this.displayName = displayName;
+            this.missedStepsAtJoin = missedStepsAtJoin;
         }
     }
 }
