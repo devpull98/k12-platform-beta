@@ -45,7 +45,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(http_server_requests_seconds_count{application=\"$application\"}[$__rate_interval]))",
+          "expr": "sum(rate(http_server_requests_seconds_count{application=\"$application\", uri!~\".*actuator.*|.*health.*|.*ping.*|.*liveness.*|.*readiness.*\"}[$__rate_interval]))",
           "legendFormat": "HTTP",
           "datasource": {
             "type": "prometheus",
@@ -80,7 +80,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(http_server_requests_seconds_count{application=\"$application\", status=~\"5..\"}[$__rate_interval])) or vector(0)",
+          "expr": "sum(rate(http_server_requests_seconds_count{application=\"$application\", status=~\"5..\", uri!~\".*actuator.*|.*health.*|.*ping.*|.*liveness.*|.*readiness.*\"}[$__rate_interval])) or vector(0)",
           "legendFormat": "HTTP - 5xx",
           "datasource": {
             "type": "prometheus",
@@ -229,7 +229,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(http_server_requests_seconds_count{application=\"$application\"}[$__rate_interval])) by (status)",
+          "expr": "sum(rate(http_server_requests_seconds_count{application=\"$application\", uri!~\".*actuator.*|.*health.*|.*ping.*|.*liveness.*|.*readiness.*\"}[$__rate_interval])) by (status)",
           "legendFormat": "status={{status}}",
           "datasource": {
             "type": "prometheus",
@@ -1349,17 +1349,18 @@
           "mode": "multi"
         }
       },
+      "description": "mongodb_driver_pool_checkoutfailed_total không phải metric có thật (Micrometer MongoMetricsConnectionPoolListener không emit counter này) — dùng mongodb_driver_commands_seconds_count{status!=\"SUCCESS\"} từ MongoMetricsCommandListener thay thế, đã confirm có data thật trên cluster Prometheus.",
       "targets": [
         {
-          "expr": "rate(mongodb_driver_pool_checkoutfailed_total{application=\"$application\"}[$__rate_interval])",
-          "legendFormat": "checkout failed",
+          "expr": "sum(rate(mongodb_driver_commands_seconds_count{application=\"$application\", status!=\"SUCCESS\"}[$__rate_interval])) by (command)",
+          "legendFormat": "{{command}} failed",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus-k12"
           }
         }
       ],
-      "title": "MongoDB Checkout Failures (rate)",
+      "title": "MongoDB Command Failures (rate)",
       "type": "timeseries"
     },
     {
@@ -1410,8 +1411,8 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(lettuce_seconds_sum{application=\"$application\"}[$__rate_interval])) by (db_operation) / sum(rate(lettuce_seconds_count{application=\"$application\"}[$__rate_interval])) by (db_operation)",
-          "legendFormat": "{{db_operation}}",
+          "expr": "sum(rate(redis_command_seconds_sum{application=\"$application\"}[$__rate_interval])) by (command) / sum(rate(redis_command_seconds_count{application=\"$application\"}[$__rate_interval])) by (command)",
+          "legendFormat": "{{command}}",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus-k12"
@@ -1457,7 +1458,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(lettuce_seconds_count{application=\"$application\"}[$__rate_interval]))",
+          "expr": "sum(rate(redis_command_seconds_count{application=\"$application\"}[$__rate_interval]))",
           "legendFormat": "commands/s",
           "datasource": {
             "type": "prometheus",
@@ -1465,7 +1466,7 @@
           }
         },
         {
-          "expr": "sum(rate(lettuce_seconds_count{application=\"$application\", error!=\"none\"}[$__rate_interval])) or sum(rate(lettuce_seconds_count{application=\"$application\"}[$__rate_interval])) * 0",
+          "expr": "sum(rate(redis_command_errors_total{application=\"$application\"}[$__rate_interval])) or sum(rate(redis_command_seconds_count{application=\"$application\"}[$__rate_interval])) * 0",
           "legendFormat": "errors/s",
           "datasource": {
             "type": "prometheus",
@@ -2531,6 +2532,92 @@
       "id": 301,
       "title": "Buffer Pools",
       "type": "row"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 9000
+      },
+      "id": 500,
+      "title": "Aerospike Client",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "description": "aerospike_client_connected (Gauge, shared lib k12-logging, bean aerospikeMetricsBinder) — 1 = connected, 0 = disconnected, mỗi client 1 series (label client). Service không dùng Aerospike sẽ không có series nào (No data), không phải bug.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "🔴 DISCONNECTED",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "🟢 CONNECTED",
+                  "color": "green"
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 9001
+      },
+      "id": 501,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "aerospike_client_connected{application=\"$application\"}",
+          "legendFormat": "{{client}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "Aerospike Client Connection Status",
+      "type": "stat"
     }
   ],
   "refresh": "10s",

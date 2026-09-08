@@ -74,7 +74,7 @@
             "uid": "prometheus-k12"
           },
           "editorMode": "code",
-          "expr": "count(count by (application) (label_replace(up{namespace=\"k12\", job!~\".*-monitor\"}, \"application\", \"$1\", \"job\", \"(.*)\") or label_replace(up{namespace=\"k12\", job=~\".*-monitor\"}, \"application\", \"$1\", \"job\", \"(.*)-monitor\")))",
+          "expr": "count(count by (application) (label_replace(up{job!~\".*-monitor\"}, \"application\", \"$1\", \"job\", \"(.*)\") or label_replace(up{job=~\".*-monitor\"}, \"application\", \"$1\", \"job\", \"(.*)-monitor\")))",
           "legendFormat": "Total Services",
           "range": false,
           "refId": "A"
@@ -82,7 +82,7 @@
       ],
       "title": "Total Microservices",
       "type": "stat",
-      "description": "Số job Java đã đăng ký scrape trong namespace k12 (kể cả đang DOWN) — không phải số job đang có metric sống."
+      "description": "Số job Java đã đăng ký scrape (kể cả đang DOWN) — không phải số job đang có metric sống."
     },
     {
       "datasource": {
@@ -140,7 +140,7 @@
             "uid": "prometheus-k12"
           },
           "editorMode": "code",
-          "expr": "count((label_replace(up{namespace=\"k12\", job!~\".*-monitor\"}, \"application\", \"$1\", \"job\", \"(.*)\") or label_replace(up{namespace=\"k12\", job=~\".*-monitor\"}, \"application\", \"$1\", \"job\", \"(.*)-monitor\")) == 1)",
+          "expr": "count((label_replace(up{job!~\".*-monitor\"}, \"application\", \"$1\", \"job\", \"(.*)\") or label_replace(up{job=~\".*-monitor\"}, \"application\", \"$1\", \"job\", \"(.*)-monitor\")) == 1)",
           "legendFormat": "Healthy Instances",
           "range": false,
           "refId": "A"
@@ -193,7 +193,7 @@
             "uid": "prometheus-k12"
           },
           "editorMode": "code",
-          "expr": "sum(rate(http_server_requests_seconds_count[$__rate_interval]))",
+          "expr": "sum(rate(http_server_requests_seconds_count{uri!~\".*actuator.*|.*health.*|.*ping.*|.*liveness.*|.*readiness.*\"}[$__rate_interval]))",
           "legendFormat": "System RPS",
           "range": false,
           "refId": "A"
@@ -262,7 +262,7 @@
             "uid": "prometheus-k12"
           },
           "editorMode": "code",
-          "expr": "sum(rate(http_server_requests_seconds_count{status=~\"5..\"}[$__rate_interval])) / sum(rate(http_server_requests_seconds_count[$__rate_interval]))",
+          "expr": "sum(rate(http_server_requests_seconds_count{status=~\"5..\", uri!~\".*actuator.*|.*health.*|.*ping.*|.*liveness.*|.*readiness.*\"}[$__rate_interval])) / sum(rate(http_server_requests_seconds_count{uri!~\".*actuator.*|.*health.*|.*ping.*|.*liveness.*|.*readiness.*\"}[$__rate_interval]))",
           "legendFormat": "Global 5xx Error Rate",
           "range": false,
           "refId": "A"
@@ -315,7 +315,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "Status (UP/DOWN)"
+              "options": "Scrape Status (UP/DOWN)"
             },
             "properties": [
               {
@@ -597,6 +597,122 @@
                 }
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Real Health (UP/DOWN)"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "🔴 DOWN",
+                        "color": "red"
+                      },
+                      "1": {
+                        "text": "🟢 UP",
+                        "color": "green"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "noValue",
+                "value": "N/A (chưa bật app_health_status)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Scheduler Job Failures (rate)"
+            },
+            "properties": [
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 0.001
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "noValue",
+                "value": "N/A (không có scheduled job)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Aerospike Connected"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "🔴 DOWN",
+                        "color": "red"
+                      },
+                      "1": {
+                        "text": "🟢 UP",
+                        "color": "green"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "noValue",
+                "value": "N/A (không dùng Aerospike)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Mongo Pool Wait Queue"
+            },
+            "properties": [
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "noValue",
+                "value": "N/A (chưa có metric MongoDB pool)"
+              }
+            ]
           }
         ]
       },
@@ -626,7 +742,7 @@
             "uid": "prometheus-k12"
           },
           "editorMode": "code",
-          "expr": "max by (application) (label_replace(up{namespace=\"k12\", job!~\".*-monitor\"}, \"application\", \"$1\", \"job\", \"(.*)\") or label_replace(up{namespace=\"k12\", job=~\".*-monitor\"}, \"application\", \"$1\", \"job\", \"(.*)-monitor\"))",
+          "expr": "min by (application) (label_replace(up{job!~\".*-monitor\"}, \"application\", \"$1\", \"job\", \"(.*)\") or label_replace(up{job=~\".*-monitor\"}, \"application\", \"$1\", \"job\", \"(.*)-monitor\"))",
           "format": "table",
           "instant": true,
           "legendFormat": "Status",
@@ -638,7 +754,7 @@
             "uid": "prometheus-k12"
           },
           "editorMode": "code",
-          "expr": "sum(rate(http_server_requests_seconds_count[$__rate_interval])) by (application)",
+          "expr": "sum(rate(http_server_requests_seconds_count{uri!~\".*actuator.*|.*health.*|.*ping.*|.*liveness.*|.*readiness.*\"}[$__rate_interval])) by (application)",
           "format": "table",
           "instant": true,
           "legendFormat": "RPS",
@@ -650,7 +766,7 @@
             "uid": "prometheus-k12"
           },
           "editorMode": "code",
-          "expr": "sum(rate(http_server_requests_seconds_count{status=~\"5..\"}[$__rate_interval])) by (application) / sum(rate(http_server_requests_seconds_count[$__rate_interval])) by (application)",
+          "expr": "sum(rate(http_server_requests_seconds_count{status=~\"5..\", uri!~\".*actuator.*|.*health.*|.*ping.*|.*liveness.*|.*readiness.*\"}[$__rate_interval])) by (application) / sum(rate(http_server_requests_seconds_count{uri!~\".*actuator.*|.*health.*|.*ping.*|.*liveness.*|.*readiness.*\"}[$__rate_interval])) by (application)",
           "format": "table",
           "instant": true,
           "legendFormat": "ErrorRate",
@@ -662,7 +778,7 @@
             "uid": "prometheus-k12"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket[$__rate_interval])) by (le, application))",
+          "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{uri!~\".*actuator.*|.*health.*|.*ping.*|.*liveness.*|.*readiness.*\"}[$__rate_interval])) by (le, application))",
           "format": "table",
           "instant": true,
           "legendFormat": "LatencyP95",
@@ -722,7 +838,7 @@
             "uid": "prometheus-k12"
           },
           "editorMode": "code",
-          "expr": "sum(rate(mongodb_driver_pool_checkoutfailed_total[$__rate_interval])) by (application)",
+          "expr": "sum(rate(mongodb_driver_commands_seconds_count{status!=\"SUCCESS\"}[$__rate_interval])) by (application)",
           "format": "table",
           "instant": true,
           "legendFormat": "MongoFailed",
@@ -734,7 +850,7 @@
             "uid": "prometheus-k12"
           },
           "editorMode": "code",
-          "expr": "sum(rate(lettuce_seconds_count{error!=\"none\"}[$__rate_interval])) by (application) or sum(rate(lettuce_seconds_count[$__rate_interval])) by (application) * 0",
+          "expr": "sum(rate(redis_command_errors_total[$__rate_interval])) by (application) or sum(rate(redis_command_seconds_count[$__rate_interval])) by (application) * 0",
           "format": "table",
           "instant": true,
           "legendFormat": "RedisErrors",
@@ -751,6 +867,54 @@
           "instant": true,
           "legendFormat": "KafkaErrors",
           "refId": "K"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          },
+          "editorMode": "code",
+          "expr": "min by (application) (app_health_status)",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "RealHealth",
+          "refId": "L"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(scheduler_job_failures_total[$__rate_interval])) by (application)",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "SchedulerJobFailures",
+          "refId": "M"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          },
+          "editorMode": "code",
+          "expr": "min by (application) (aerospike_client_connected)",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "AerospikeConnected",
+          "refId": "N"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          },
+          "editorMode": "code",
+          "expr": "sum(mongodb_driver_pool_waitqueuesize) by (application)",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "MongoPoolWaitQueue",
+          "refId": "O"
         }
       ],
       "transformations": [
@@ -776,6 +940,10 @@
               "Time 8": true,
               "Time 9": true,
               "Time 10": true,
+              "Time 11": true,
+              "Time 12": true,
+              "Time 13": true,
+              "Time 14": true,
               "__name__": true,
               "__name__ 1": true,
               "__name__ 2": true,
@@ -787,6 +955,10 @@
               "__name__ 8": true,
               "__name__ 9": true,
               "__name__ 10": true,
+              "__name__ 11": true,
+              "__name__ 12": true,
+              "__name__ 13": true,
+              "__name__ 14": true,
               "instance": true,
               "instance 1": true,
               "instance 2": true,
@@ -798,6 +970,10 @@
               "instance 8": true,
               "instance 9": true,
               "instance 10": true,
+              "instance 11": true,
+              "instance 12": true,
+              "instance 13": true,
+              "instance 14": true,
               "job": true,
               "job 1": true,
               "job 2": true,
@@ -809,6 +985,10 @@
               "job 8": true,
               "job 9": true,
               "job 10": true,
+              "job 11": true,
+              "job 12": true,
+              "job 13": true,
+              "job 14": true,
               "le": true,
               "pool": true,
               "service_type": true,
@@ -835,7 +1015,7 @@
             },
             "renameByName": {
               "application": "Service",
-              "Value #A": "Status (UP/DOWN)",
+              "Value #A": "Scrape Status (UP/DOWN)",
               "Value #B": "Throughput",
               "Value #C": "5xx Error Rate",
               "Value #D": "P95 Response Time",
@@ -845,14 +1025,18 @@
               "Value #H": "MySQL Timeout (rate)",
               "Value #I": "MongoDB Failed (rate)",
               "Value #J": "Redis Errors (rate)",
-              "Value #K": "Kafka Producer Errors (rate)"
+              "Value #K": "Kafka Producer Errors (rate)",
+              "Value #L": "Real Health (UP/DOWN)",
+              "Value #M": "Scheduler Job Failures (rate)",
+              "Value #N": "Aerospike Connected",
+              "Value #O": "Mongo Pool Wait Queue"
             }
           }
         }
       ],
       "title": "All Services Stability Matrix (Real-time)",
       "type": "table",
-      "description": "Status dùng job (đã strip suffix -monitor) làm application — hiện đúng cả service đang DOWN (metric khác sẽ trống với hàng đó, không phải bug)."
+      "description": "Status dùng job (đã strip suffix -monitor) làm application — hiện đúng cả service đang DOWN (metric khác sẽ trống với hàng đó, không phải bug). QUAN TRỌNG: 'Scrape Status (UP/DOWN)' chỉ nghĩa là Prometheus scrape /actuator/prometheus thành công (process còn sống) — KHÔNG phải health thật của service. Job/dependency lỗi (DB, Kafka, Rabbit, Redis, hoặc @Scheduled job fail âm thầm) vẫn hiện 🟢 UP nếu app process/actuator endpoint còn phản hồi. Luôn đọc kèm các cột 5xx Error Rate / MySQL Timeout / MongoDB Failed / Redis Errors / Kafka Producer Errors bên cạnh, đừng chỉ nhìn cột Status. Áp dụng cho mọi service Java trên dashboard này, không riêng service nào. 'Real Health (UP/DOWN)' đọc từ metric app_health_status (Gauge bind từ /actuator/health aggregate, source: shared lib k12-logging, bean k12HealthMetricsBinder) — phản ánh health thật (bao gồm DB/Kafka/Rabbit/Redis/Mongo), không chỉ scrape reachable. 'Scheduler Job Failures (rate)' đọc từ scheduler_job_failures_total (Counter tăng khi @Scheduled job throw exception không bắt). Cả 2 metric này CHỈ có ở service đã bật tương ứng @EnableK12Metrics / TaskScheduler.setErrorHandler — service chưa áp dụng sẽ hiện 'N/A' ở 2 cột này (không phải lỗi dashboard, là chưa rollout xong cho service đó). 'Redis Errors (rate)' đã đổi sang metric redis_command_errors_total (Counter, AOP RedisMetricsAspect quanh RedisService trong shared lib k12-redis) — KHÔNG còn dùng lettuce_seconds_count vì hệ thống dùng JedisCluster/Redisson, không phải Lettuce. 'Aerospike Connected' đọc từ aerospike_client_connected (Gauge, shared lib k12-logging, bean aerospikeMetricsBinder) — service không dùng Aerospike sẽ hiện 'N/A'. 'MongoDB Failed (rate)' đã sửa từ mongodb_driver_pool_checkoutfailed_total (KHÔNG phải metric có thật — verify qua Prometheus API confirm không tồn tại) sang mongodb_driver_commands_seconds_count{status!=\"SUCCESS\"} (metric thật từ MongoMetricsCommandListener, đã confirm có data thật trên cluster). 'Mongo Pool Wait Queue' đọc mongodb_driver_pool_waitqueuesize — số thread đang phải đợi vì hết connection trong pool, đây là tín hiệu pool exhaustion THẬT (khác với 'MongoDB Failed' là lỗi command). Lưu ý: mongodb_driver_pool_size là số connection đang mở thật (tự giãn theo tải), KHÔNG phải giới hạn max cấu hình — đừng suy ra % utilization từ checkedout/size, chỉ cần theo dõi waitqueuesize > 0 kéo dài là đủ."
     },
     {
       "collapsed": false,
@@ -949,7 +1133,7 @@
             "uid": "prometheus-k12"
           },
           "editorMode": "code",
-          "expr": "sum(rate(http_server_requests_seconds_count[$__rate_interval])) by (application)",
+          "expr": "sum(rate(http_server_requests_seconds_count{uri!~\".*actuator.*|.*health.*|.*ping.*|.*liveness.*|.*readiness.*\"}[$__rate_interval])) by (application)",
           "legendFormat": "{{application}}",
           "range": true,
           "refId": "A"
@@ -1049,7 +1233,7 @@
             "uid": "prometheus-k12"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket[$__rate_interval])) by (le, application))",
+          "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{uri!~\".*actuator.*|.*health.*|.*ping.*|.*liveness.*|.*readiness.*\"}[$__rate_interval])) by (le, application))",
           "legendFormat": "{{application}} p95",
           "range": true,
           "refId": "A"
