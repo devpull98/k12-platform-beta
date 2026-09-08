@@ -144,8 +144,21 @@ code that passes a naive test and breaks in production.
 
 ## Known Phase 1 trade-offs — deliberate, documented, not bugs to fix
 
-- No Cluster Sharding: losing an engine pod kills its rooms until the pod returns. Accepted
-  at 2–3k CCU, **must go before Phase 2**, and the UI has to show it.
+- No Cluster Sharding — but this trade-off is narrower than it used to sound (updated
+  2026-09-08). Split into what's actually true today:
+  - **Engine pod crash:** solved and chaos-tested (`LeaseBasedRoomOwnership` + Hot Snapshot,
+    plan.md Task 14) — a killed pod's rooms are re-acquired and restored by a surviving pod, no
+    Cluster Sharding needed. Still off by default (`uni.engine.room-store.enabled=false` in
+    `application.yml`); only turned on in `docker-compose.dev.yml`.
+  - **Adding a brand-new engine pod mid-session:** still not possible, for an unrelated reason —
+    the gateway's `uni.gateway.engine.pods` list is read once at boot
+    (`GatewayNetworkLifecycle`) and never grows afterward, so a pod gateway didn't know about at
+    startup is simply unreachable regardless of what ownership algorithm Engine runs. This is
+    `plan.md` Task 21 (open), documented by a deliberately `@Disabled` red test
+    (`DockerComposeScaleUpIT`). Cluster Sharding is one way to close this, not the only one — see
+    `system-architecture.md` §7.6 and §9.2 Risk 4.
+  - The UI still has to show degraded state for whichever of the two isn't fixed yet in a given
+    deployment.
 - No `RESYNCING` state, no dashboard fan-in, no LZ4. Valkey Cluster (join-token dedup + Hot
   Snapshot) and Kafka Cluster (event streaming) **are** in Phase 1 scope, off the hot path —
   see the note above; this used to say "no Redis, no Kafka" before the 2026-09-05 decision

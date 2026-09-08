@@ -152,6 +152,48 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # Game Engine Pod 2 -- deliberately NOT listed in `gateway`/`gateway-1`'s ENGINE_PODS below.
+  # Exists only for DockerComposeScaleUpIT (plan.md Task 21): started mid-test to simulate an SRE
+  # adding Engine capacity without restarting Gateway, so the test can prove whether Gateway ever
+  # routes a room to it. Not part of `docker compose up -d` by default in the sense that nothing
+  # depends_on it -- start it explicitly (`docker compose up -d engine-2`) when running that test.
+  engine-2:
+    build:
+      context: .
+      dockerfile: modules/uni-game-engine/Dockerfile
+    container_name: uni-engine-2
+    restart: unless-stopped
+    environment:
+      SERVER_PORT: "8090"
+      ENGINE_FRAME_PORT: "9100"
+      ENGINE_POD_ID: "engine-2"
+      ENGINE_POD_COUNT: "2"
+      ENGINE_ROOM_STORE_ENABLED: "true"
+      ENGINE_ROOM_STORE_URI: "redis://room-store:6379"
+      ENGINE_KAFKA_ENABLED: "true"
+      ENGINE_KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+      ENGINE_KAFKA_TOPIC: "game.events.v1"
+    ports:
+      - "18092:8090"
+    depends_on:
+      room-store:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks: [uni-dev-net]
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          memory: 256M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   # WebSocket Gateway Edge
   gateway:
     build:

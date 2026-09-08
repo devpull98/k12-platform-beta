@@ -38,6 +38,21 @@ final class DockerComposeControl {
     }
 
     /**
+     * {@code docker compose up -d <service>} -- creates the container if it doesn't exist yet
+     * (unlike {@link #start}, which requires one already created). This is the operation an SRE
+     * actually runs to add a brand-new pod that was declared in the compose file but never
+     * started -- see {@code DockerComposeScaleUpIT}.
+     */
+    static void up(String service) throws IOException, InterruptedException {
+        run("up", "-d", service);
+    }
+
+    /** {@code docker compose stop <service>} -- graceful stop, container/state kept for a later {@link #start}. */
+    static void stop(String service) throws IOException, InterruptedException {
+        run("stop", service);
+    }
+
+    /**
      * {@code docker compose restart <service>} -- a fresh process, not just a fresh container
      * state. Needed for {@code gateway}: {@code FrameChannelClient} dials every Engine pod ONCE
      * at Gateway startup and never reconnects a pod it already marked dead (no retry loop exists

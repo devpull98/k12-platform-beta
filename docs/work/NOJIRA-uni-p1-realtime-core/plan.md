@@ -865,6 +865,15 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
         **vẫn** `ModuloRoomOwnership` — cờ chỉ bật ở compose test cục bộ, không đổi mặc định. Điều
         CHƯA test: thêm pod thứ 3 **giữa lúc** 2 pod kia đang chạy phòng thật (mid-session
         scale-up) — Task 20 khởi động cả 2 pod cùng lúc từ đầu, không mô phỏng scale động.
+        **Cập nhật 2026-09-08 (rà lại Task 14, xem `_context.md` phát hiện B5):** đây **không chỉ
+        là "chưa test"** — đã xác nhận bằng cách đọc code rằng kịch bản này **không thể hoạt động**
+        với Gateway hiện tại, độc lập với Task 14. `GatewayNetworkLifecycle.run()` đọc
+        `uni.gateway.engine.pods` đúng một lần lúc khởi động; `FrameChannelClient` không có cơ chế
+        thêm pod mới sau đó. Một pod Engine mới hoàn toàn (không có trong `ENGINE_PODS` lúc Gateway
+        boot) không nhận được gói tin nào, dù `LeaseBasedRoomOwnership` đã bật + đúng 100%. Đã mở
+        `plan.md` Task 21 (mới) cho đúng gap này; AC "Scale thêm pod giữa ca thi" của Task 14 **chỉ
+        tính là đóng cho phần Engine** (N không còn ý nghĩa với ownership) — phần Gateway (route
+        được tới pod mới) thuộc phạm vi Task 21, không phải Task 14.
   - [x] Pod crash thật → pod khác giành lại + nạp snapshot — **Cập nhật 2026-09-08:** đóng bằng
         `DockerComposeChaosIT.should_recoverRoomOnAnotherPod_when_itsOwningEngineIsKilled` —
         join thật, xác nhận Hot Snapshot đã ghi (`redis-cli EXISTS room:snap:*`), `docker compose
@@ -1359,6 +1368,62 @@ Ba nhánh **T2 / T4 / T6** độc lập hoàn toàn sau T1 — ba người làm 
 - **Rollback nếu fail:** revert toàn bộ file Task 20; `RoomActor`/`RoomSupervisor` quay lại không
   xử lý `RESYNC` (hành vi cũ), Gateway quay lại không mở port WS nếu không có `JoinTokenVerifier`
   bean nào khác được thêm.
+
+---
+
+### Task 21: Gateway dynamic Engine-pod discovery — đóng phát hiện B5, phần Gateway của §9.2 Rủi ro 4 — 🆕 CHƯA LÀM (mở ra 2026-09-08, rà lại Task 14)
+
+- **Mô tả:** `_context.md` mục B5 ghi nhận: `LeaseBasedRoomOwnership` (Task 14) làm quyền sở hữu
+  phòng ở Engine hết phụ thuộc vào `N`, nhưng Gateway vẫn chặn đúng kịch bản "SRE thêm pod Engine
+  giữa ca thi" theo một cơ chế hoàn toàn khác. `GatewayNetworkLifecycle.run()` đọc
+  `uni.gateway.engine.pods` (cấu hình tĩnh, comma-separated `host:port`) đúng **một lần** lúc Spring
+  Boot khởi động, gọi `FrameChannelClient.connect(...)` **đồng bộ** cho từng entry — một pod không
+  có trong danh sách lúc boot **không bao giờ** được dial. `FrameChannelClient.knownPods`/
+  `podChannels` chỉ co lại khi pod ngắt kết nối (`handleDisconnect`), không có chiều ngược lại.
+  Muốn thêm năng lực Engine thật sự hiện chỉ có một cách: khởi động lại Gateway với danh sách pod
+  mới — nhưng khởi động lại Gateway tự đóng mọi WebSocket đang mở trên đúng pod đó (vi phạm tinh
+  thần §9.7: mất 1 Engine pod không được đóng socket; mất 1 Gateway pod thì đương nhiên đóng, vì
+  socket vật lý nằm trên chính process đó).
+- **File dự kiến:** `modules/uni-websocket-gateway/src/main/java/.../boot/GatewayNetworkLifecycle.java`,
+  `.../routing/FrameChannelClient.java` (cần thêm đường thêm pod mới sau khi đã `run()`, không chỉ
+  lúc khởi tạo), cấu hình mới (ví dụ polling `uni.gateway.engine.pods` định kỳ, hoặc service
+  discovery thật qua DNS/K8s API — chưa chốt phương án, xem "Phương án cân nhắc" bên dưới).
+- **Dependency:** Task 14 (đã xong phần Engine — Task 21 chỉ còn thiếu phần Gateway để hai thứ
+  cộng lại mới thành "scale-up giữa phiên an toàn" theo đúng nghĩa vận hành).
+- **Phương án cân nhắc (chưa chốt, cần quyết định trước khi code):**
+  1. **Poll lại config định kỳ:** Gateway tự đọc lại `uni.gateway.engine.pods` mỗi N giây, dial
+     thêm pod mới xuất hiện trong danh sách. Đơn giản nhất, không cần hạ tầng ngoài, nhưng vẫn cần
+     ai đó cập nhật config (file/env var) và Gateway phải hỗ trợ đọc lại config đang chạy (Spring
+     `@RefreshScope` hoặc tự poll file) — **không tự phát hiện** pod mới nếu không ai sửa config.
+  2. **Service discovery thật (DNS/K8s Endpoints API):** Gateway tự hỏi K8s "Service nào có
+     Endpoint nào" theo chu kỳ, tự dial pod mới xuất hiện mà không cần sửa config thủ công. Đúng
+     hướng dài hạn nhưng kéo theo phụ thuộc K8s API/DNS mới, không nhẹ.
+  3. **Cluster Sharding đầy đủ (ADR-002, GĐ2):** giải quyết đồng thời cả bài toán Gateway lẫn
+     Engine bằng một cơ chế cluster-native duy nhất, nhưng chi phí triển khai lớn hơn nhiều so với
+     (1)/(2) chỉ để đóng riêng gap này — xem `system-architecture.md` §7.6 ghi chú 2026-09-08.
+  **Không tự chọn phương án ở đây** — cần quyết định kỹ thuật (ai vận hành, có K8s API access từ
+  Gateway pod hay không) trước khi bắt đầu code, giống tinh thần G1a/G1c/G2a/G2b đã áp dụng cho
+  các quyết định ngoài tầm kiểm soát nội bộ.
+- **Acceptance criteria:**
+  - [ ] Gateway phát hiện được (bằng phương án đã chốt ở trên) một Engine pod khởi động **sau**
+        khi Gateway đã chạy, không cần khởi động lại Gateway
+      - [ ] Pod mới bắt đầu nhận được lưu lượng (round-robin cho room mới) trong một khoảng thời
+            gian giới hạn, đo được cụ thể (không phải "cuối cùng thì có")
+      - [ ] Room đang chạy trên pod cũ **không bị gián đoạn** trong lúc Gateway phát hiện pod mới
+            (không đóng socket, không mất route đang có trong `RouteCache`)
+  - [ ] `DockerComposeScaleUpIT.should_routeNewRoomsToAFreshlyStartedEnginePod_withoutRestartingGateway`
+        (`modules/uni-e2e`, đã viết sẵn ở dạng `@Disabled` — xem javadoc class đó) **bỏ `@Disabled`,
+        chạy pass thật** qua `docker-compose.dev.yml` (`engine-2` đã có sẵn trong compose, cố tình
+        không nằm trong `ENGINE_PODS` của `gateway`/`gateway-1`) — không sửa assertion, chỉ gỡ annotation
+  - [ ] Sau khi AC trên pass: cập nhật `system-architecture.md` §9.2 Rủi ro 4 + §7.6 (đánh dấu gap
+        Gateway đã đóng) và `_context.md` phát hiện B5 (đổi trạng thái từ "chưa xử lý" sang "xong")
+  - [ ] `plan.md` Task 19 (runbook cấm auto-scale) chỉ được nới lỏng sau khi **cả** Task 14 (bật
+        production + verify staging thật) **và** Task 21 đều xong — không tự động gỡ ràng buộc chỉ
+        vì một trong hai đã xong
+- **Verification:** chạy `DockerComposeScaleUpIT` thật (không phải chỉ đọc code), đo thời gian từ
+  lúc `docker compose up -d engine-2` tới lúc room đầu tiên route được sang pod đó.
+- **Rollback nếu fail:** revert; Gateway giữ hành vi tĩnh hiện tại (danh sách pod cố định lúc boot),
+  Task 19 (runbook cấm scale) tiếp tục là lưới an toàn duy nhất — không regress so với hiện trạng.
 
 ---
 

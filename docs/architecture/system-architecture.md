@@ -689,6 +689,21 @@ Các bước nâng cấp tiếp theo:
 ```
 *Lưu ý: Toàn bộ quá trình nâng cấp từ bước 1 đến bước 3 chỉ diễn ra ở Engine pod, hoàn toàn không làm thay đổi Gateway.*
 
+> [!NOTE]
+> **Cập nhật 2026-09-08:** Bước 1 ở trên **không còn là điều kiện bắt buộc để giải quyết rủi ro
+> "N thay đổi làm vỡ hash"** — `LeaseBasedRoomOwnership` (GĐ1, Task 14) đã đóng đúng rủi ro đó,
+> verify bằng chaos test thật (xem [§9.2 Rủi ro 4](#92-rủi-ro-tầng-runtime--chấm-điểm-jvm--actor)).
+> Cluster Sharding vẫn giữ vai trò trong lộ trình vì hai lý do khác, không phải lý do gốc: (a) là
+> phương án dài hạn cho **thành viên cluster động** thật sự (pod tham gia/rời không cần biết trước
+> danh sách tĩnh) — điều `LeaseBasedRoomOwnership` chưa làm được ở phía Gateway (xem phát hiện mới
+> ở §9.2 Rủi ro 4: `uni.gateway.engine.pods` là danh sách tĩnh, đọc một lần lúc boot); (b) các lợi
+> ích khác của Pekko Cluster (rebalancing có kiểm soát, SBR built-in) mà tự ghép Valkey lease +
+> cơ chế discovery riêng cho Gateway sẽ phải tự xây lại một phần. Nói cách khác: bước 1 vẫn là
+> *phương án dài hạn/dự phòng* khi hệ thống thật sự cần scale-up/down linh hoạt trong giờ thi đấu
+> mà không chấp nhận khởi động lại Gateway — không phải điều kiện tiên quyết cho GĐ2 nói chung.
+> Cách đóng gap trước mắt (nhẹ hơn nhiều so với đưa cả Pekko Cluster vào) là `plan.md` Task 21 —
+> Gateway tự phát hiện/hot-reload danh sách Engine pod.
+
 ---
 
 ## 8. Hồ Sơ Quyết Định Kiến Trúc (Architecture Decision Records — ADR)
@@ -768,13 +783,25 @@ update là một lần nghi ngờ split-brain) · `requests = limits` · theo d�
 `zombie_actor_stopped_total`, bất kỳ giá trị > 0 đều đáng điều tra.
 
 > [!NOTE]
-> **GĐ1 (cập nhật 2026-09-07):** Cluster Sharding **chưa bật**. Quyền sở hữu hiện tại là
-> `room_id % N` tĩnh (`ModuloRoomOwnership`), cô lập sau interface `RoomOwnership`
-> ([ADR-007](#adr-007)) — **chưa có ghi Valkey Snapshot nào trong code hiện tại**, nên một Engine
-> pod crash làm mất **toàn bộ** state phòng trên pod đó, không phải phục hồi trong 10–50ms như
-> câu cũ ở đây từng ghi. Đã chốt chuyển sang `LeaseBasedRoomOwnership` + Hot Snapshot thật
-> (`plan.md` Task 14, **chưa triển khai**) — con số 10–50ms chỉ được ghi lại **sau khi** Task 14
-> đo được bằng số thật, không phải hiện trạng hay mục tiêu chưa kiểm chứng.
+> **GĐ1 (cập nhật 2026-09-08):** Cluster Sharding **chưa bật, và không còn là điều kiện bắt buộc
+> để đóng rủi ro pod crash** — `LeaseBasedRoomOwnership` + Hot Snapshot thật (`plan.md` Task 14) đã
+> có code, đã verify bằng chaos test thật (`DockerComposeChaosIT`, kill container Engine đang giữ
+> phòng, đợi hết lease TTL, xác nhận pod sống sót giành lại + phục hồi đúng roster từ Valkey).
+> Quyền sở hữu phòng khi cờ `uni.engine.room-store.enabled=true` không còn suy ra từ `room_id % N`
+> nữa mà là ai giữ được lease Valkey — nên đổi `N` (thêm/bớt pod) không còn làm vỡ hash toàn cụm
+> như hành vi mặc định `ModuloRoomOwnership` vẫn có. Cờ này **vẫn `false` trong `application.yml`
+> mặc định** — chưa ai bật thật ngoài `docker-compose.dev.yml` test cục bộ.
+>
+> **Phát hiện mới (2026-09-08), tách biệt với Task 14:** dù Engine đã hết phụ thuộc `N`, **Gateway
+> vẫn không route được tới một Engine pod hoàn toàn mới** — `uni.gateway.engine.pods` là danh sách
+> tĩnh, `GatewayNetworkLifecycle` chỉ đọc và dial (`FrameChannelClient.connect`) đúng **một lần**
+> lúc Gateway khởi động, không có cơ chế nào thêm pod vào `knownPods` sau đó. Vì vậy "scale-up giữa
+> phiên" theo đúng nghĩa vận hành (SRE thêm pod Engine mới mà không khởi động lại Gateway) **vẫn
+> chưa khả thi**, bất kể `RoomOwnership` phía Engine dùng thuật toán gì — xem `plan.md` Task 21
+> (mới, mở ra từ phát hiện này) và test đỏ có chủ đích `DockerComposeScaleUpIT`
+> (`@Disabled`, tài liệu hoá gap bằng test thật thay vì chỉ ghi chú). Cluster Sharding vẫn là
+> phương án dài hạn cho đúng bài toán này (thành viên cluster động, cả hai chiều Gateway lẫn
+> Engine) — không phải cho rủi ro pod-crash đã đóng ở trên.
 
 ---
 
@@ -1021,23 +1048,42 @@ khỏi phần **đề xuất cho GĐ2** (cần ADR riêng, chưa được phép 
      pause **vẫn tồn tại** ở GĐ1 — chỉ được giảm nhẹ bằng tuning GC, chưa được loại bỏ triệt để.
 
 #### ⚠️ Rủi ro 4: "Cái bẫy" Modulo Hash (`room_id % N`) khi thay đổi số Pod
-- **Hiện trạng (2026-09-07):** GĐ1 hiện tại vẫn chạy `ModuloRoomOwnership`. **Đã chốt thay bằng
-  `LeaseBasedRoomOwnership`** (xem [ADR-007](#adr-007)) qua `plan.md` Task 14 — **chưa triển
-  khai**, nên rủi ro dưới đây vẫn có hiệu lực đầy đủ tới khi task đó xong và được verify bằng
-  chaos test thật (không tự động coi là đã giải quyết chỉ vì đã có quyết định).
-- **Nguy cơ:** Trong lúc các lớp học đang diễn ra (4.500 phòng đang chơi), nếu 1 pod bị chết hoặc SRE thấy tải cao muốn scale-up từ 12 pod lên 14 pod:
+- **Hiện trạng (cập nhật 2026-09-08):** Phần Engine của rủi ro này **đã đóng và verify bằng chaos
+  test thật** — `LeaseBasedRoomOwnership` (`plan.md` Task 14) đã có code, đã chạy
+  `DockerComposeChaosIT` kill container Engine thật đang giữ phòng, xác nhận pod sống sót giành
+  lại lease + phục hồi đúng roster từ Hot Snapshot Valkey. Quyền sở hữu không còn suy ra từ `N`
+  nữa (không còn `room_id % N`) khi cờ `uni.engine.room-store.enabled=true` — cờ này **vẫn `false`
+  mặc định trong `application.yml` production**, mới chỉ bật ở `docker-compose.dev.yml` test cục
+  bộ. **Chưa đóng:** xem mục "Nguy cơ còn lại" ngay dưới — Gateway có một giới hạn riêng, độc lập
+  với Task 14, cũng chặn đúng kịch bản "SRE thêm pod giữa ca thi".
+- **Nguy cơ (bản gốc, Engine — đã có giải pháp code + chaos test thật):** Trong lúc các lớp học đang diễn ra (4.500 phòng đang chơi), nếu 1 pod bị chết hoặc SRE thấy tải cao muốn scale-up từ 12 pod lên 14 pod:
   - Giá trị $N$ thay đổi → Hầu hết các kết quả của phép tính `room_id % N` sẽ bị **nhảy sang pod khác**!
   - **Hệ quả:** Gateway gửi gói tin sang nhầm pod, actor mới khởi tạo ở pod mới không có dữ liệu phòng cũ, làm vỡ trận hàng nghìn phòng thi đấu!
+- **Nguy cơ còn lại (phát hiện 2026-09-08, chưa có giải pháp):** Dù Engine hết phụ thuộc `N`,
+  **Gateway đọc `uni.gateway.engine.pods` đúng một lần lúc khởi động** (`GatewayNetworkLifecycle`)
+  và không có cơ chế thêm pod mới sau đó (`FrameChannelClient.knownPods` chỉ co lại khi pod ngắt
+  kết nối, không bao giờ lớn thêm). Một pod Engine hoàn toàn mới — SRE mới thêm, Gateway chưa từng
+  biết tới lúc boot — **không thể nhận được gói tin nào**, bất kể `RoomOwnership` phía Engine đúng
+  hay sai. Tức là "scale-up giữa phiên" theo đúng nghĩa vận hành vẫn **chưa khả thi** tới khi có
+  giải pháp riêng cho Gateway (xem `plan.md` Task 21, mới) — không phải lỗi của Task 14, mà là một
+  giới hạn kiến trúc khác ở tầng Gateway.
 - **Chiến lược phòng ngừa:**
-  1. **Quy tắc vận hành cứng (tạm thời, `plan.md` Task 19):** Tuyệt đối KHÔNG scale-up/scale-down
-     Engine pod khi hệ thống đang chạy chế độ Modulo — có hiệu lực cho tới khi mục 2 triển khai
-     xong và được đo bằng chaos test thật.
-  2. **`LeaseBasedRoomOwnership` (đã chốt, `plan.md` Task 14):** `SET room:owner:{room_id}
-     "{pod_id}:{epoch}" EX <ttl> NX` để ghim pod sở hữu phòng, cho phép scale pod động mà không
-     xáo trộn phòng đang chơi. **Bắt buộc**: `ttl` ngắn (khuyến nghị 15–30s) kèm renew định kỳ +
-     fencing bằng `epoch` (dùng đúng `InternalHeader.epoch` đã có sẵn trên wire) — một TTL dài
-     cỡ độ dài phiên (ví dụ vài giờ) mà không renew sẽ tự gây split-brain ngay cả khi không pod
-     nào crash, vì lease tự hết hạn dưới một `RoomActor` vẫn đang sống.
+  1. **Quy tắc vận hành cứng (`plan.md` Task 19) vẫn có hiệu lực đầy đủ** — không chỉ vì Task 14
+     chưa bật production, mà còn vì Task 21 (Gateway) chưa tồn tại. Gỡ quy tắc này cần **cả hai**
+     điều kiện: Task 14 bật + verify staging thật, **và** Task 21 xong + verify.
+  2. **`LeaseBasedRoomOwnership` (đã chốt + có code + chaos test thật, `plan.md` Task 14):** `SET
+     room:owner:{room_id}` + `INCR room:epoch:{room_id}` (2 key tách biệt, xem AC Task 14) để ghim
+     pod sở hữu phòng, giải quyết đúng phần "N thay đổi làm vỡ hash" ở phía Engine. `ttl` mặc định
+     20s (`lease-ttl-seconds`, trong khoảng khuyến nghị 15–30s) kèm renew định kỳ (`ttl/3`) +
+     fencing bằng `epoch` — đã áp dụng thật trong `docker-compose.dev.yml`, chưa bật production.
+  3. **Gateway dynamic pod discovery (`plan.md` Task 21, mới — chưa có giải pháp):** cần một cơ
+     chế đọc lại/hot-reload `uni.gateway.engine.pods` hoặc tự phát hiện pod mới (service discovery)
+     mà không cần khởi động lại Gateway (khởi động lại Gateway tự nó đóng mọi WebSocket đang mở
+     trên pod đó — khác hẳn mất 1 Engine pod, vốn được thiết kế để không đóng socket, §9.7). Cluster
+     Sharding là một trong các phương án cho vấn đề này (cùng lúc giải quyết luôn việc phát hiện
+     thành viên cho cả Gateway lẫn Engine), nhưng không phải điều kiện bắt buộc duy nhất — một cơ
+     chế discovery/hot-reload riêng cho Gateway (nhẹ hơn nhiều so với đưa cả Pekko Cluster vào) cũng
+     có thể đóng được đúng gap này mà không cần đổi cách Engine quản lý ownership.
 
 ---
 
