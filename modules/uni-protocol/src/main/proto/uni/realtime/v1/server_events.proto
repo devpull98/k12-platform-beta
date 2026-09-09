@@ -1,0 +1,76 @@
+syntax = "proto3";
+
+package uni.realtime.v1;
+
+import "uni/realtime/v1/common.proto";
+
+option java_package = "com.uni.realtime.protocol";
+option java_multiple_files = true;
+
+message RoomStateSnapshot {
+  bool full = 1;
+  GamePhase phase = 2;
+  repeated PlayerState players = 3;
+  string current_question_id = 4;
+  int64 server_question_started_at_ms = 5;
+  int64 deadline_ms = 6;
+  uint64 broadcast_seq = 7;
+  GameMode game_mode = 8;
+  repeated TeamAssignment teams = 9;
+
+  ProgressMeterSnapshot progress = 10;
+  SharedResourceState shared_resource = 11;
+}
+
+message AnswerAck {
+  string question_id = 1;
+  uint64 acked_sequence = 2;
+  bool accepted = 3;
+  RejectReason reject_reason = 4;
+  uint32 awarded_points = 5;
+  uint32 total_score = 6;
+
+  int64 server_received_at_ms = 7;
+  uint32 response_time_ms = 8;
+}
+
+message QuestionStarted {
+  string question_id = 1;
+  uint32 step_index = 2;
+  string prompt = 3;
+  repeated Choice choices = 4;
+  int64 server_question_started_at_ms = 5;
+  uint32 duration_ms = 6;
+}
+
+message StudentJoined {
+  string student_id = 1;
+  uint32 student_index = 2;
+  string display_name = 3;
+}
+
+message GameOver {
+  repeated PlayerState final_standings = 1;
+  string reason = 2;
+  string winner_id = 3;
+}
+
+message ConnectionDegraded {
+  enum Reason {
+    REASON_UNSPECIFIED = 0;
+    ENGINE_UNREACHABLE = 1;
+    ROOM_UNAVAILABLE = 2;
+    OVERLOADED = 3;
+  }
+  Reason reason = 1;
+  string message = 2;
+  bool retryable = 3;
+}
+
+message CommittedSeq {
+  message Entry {
+    string student_id = 1;
+    uint64 sequence = 2;
+  }
+  repeated Entry committed = 1;
+}

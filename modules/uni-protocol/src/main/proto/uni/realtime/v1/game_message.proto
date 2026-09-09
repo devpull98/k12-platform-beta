@@ -1,0 +1,43 @@
+syntax = "proto3";
+
+package uni.realtime.v1;
+
+import "uni/realtime/v1/common.proto";
+import "uni/realtime/v1/internal.proto";
+import "uni/realtime/v1/client_events.proto";
+import "uni/realtime/v1/server_events.proto";
+
+option java_package = "com.uni.realtime.protocol";
+option java_multiple_files = true;
+
+message Resync {
+  uint64 last_acked_seq = 1;
+  repeated GameMessage pending = 2;
+}
+
+message GameMessage {
+  MessageType type = 1;
+  string room_id = 2;
+  string student_id = 3;
+  uint32 student_index = 4;
+  uint64 sequence = 5;
+  int64 client_timestamp_ms = 6;
+  InternalHeader internal = 7;
+
+  oneof payload {
+    JoinRoom join_room = 20;
+    SubmitAnswer submit_answer = 21;
+    Resync resync = 22;
+    TeacherCommand teacher_command = 23;
+    DraftUpdate draft_update = 24;
+
+    // server -> client
+    RoomStateSnapshot room_state_snapshot = 40;
+    AnswerAck answer_ack = 41;
+    QuestionStarted question_started = 42;
+    StudentJoined student_joined = 43;
+    GameOver game_over = 44;
+    ConnectionDegraded connection_degraded = 45;
+    CommittedSeq committed_seq = 46;
+  }
+}

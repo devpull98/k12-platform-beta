@@ -1,0 +1,86 @@
+syntax = "proto3";
+
+package uni.realtime.v1;
+
+option java_package = "com.uni.realtime.protocol";
+option java_multiple_files = true;
+
+enum MessageType {
+  MESSAGE_TYPE_UNSPECIFIED = 0;
+  JOIN_ROOM = 1;
+  SUBMIT_ANSWER = 2;
+  RESYNC = 3;
+  TEACHER_COMMAND = 4;
+  HEARTBEAT = 5;
+  UPDATE_DRAFT = 6;
+  STUDENT_LEFT = 7;
+
+  ROOM_STATE_SNAPSHOT = 20;
+  ANSWER_ACK = 21;
+  QUESTION_STARTED = 22;
+  STUDENT_JOINED = 23;
+  GAME_OVER = 24;
+  CONNECTION_DEGRADED = 25;
+  COMMITTED_SEQ = 26;
+  STUDENT_KICKED = 27;
+}
+
+enum GamePhase {
+  GAME_PHASE_UNSPECIFIED = 0;
+  LOBBY = 1;
+  PLAYING = 2;
+  FINISHED = 3;
+  RESYNCING = 4;
+}
+
+enum RejectReason {
+  REJECT_REASON_UNSPECIFIED = 0;
+  NONE = 1;
+  PAST_DEADLINE = 2;
+  DUPLICATE_SEQUENCE = 3;
+  UNKNOWN_QUESTION = 4;
+  WRONG_PHASE = 5;
+  RATE_LIMIT_EXCEEDED = 6;
+}
+
+enum GameMode {
+  GAME_MODE_UNSPECIFIED = 0;
+  GAME_MODE_SOLO = 1;
+  GAME_MODE_COOPERATIVE = 2;
+  GAME_MODE_TEAM = 3;
+  GAME_MODE_INDIVIDUAL = 4;
+}
+
+message PlayerState {
+  string student_id = 1;
+  uint32 student_index = 2;
+  string display_name = 3;
+  uint32 score = 4;
+  bool answered_current = 5;
+  bool connected = 6;
+  string team_id = 7;
+}
+
+message TeamAssignment {
+  string team_id = 1;
+  string team_name = 2;
+  repeated string student_ids = 3;
+  int32 team_score = 4;
+}
+
+message Choice {
+  string answer_id = 1;
+  string text = 2;
+}
+
+message ProgressMeterSnapshot {
+  int32 current_progress = 1;
+  int32 target_progress = 2;
+  int32 progress_percentage = 3;
+  int32 stage_index = 4;
+}
+
+message SharedResourceState {
+  string resource_type = 1;
+  int32 remaining_lives = 2;
+}

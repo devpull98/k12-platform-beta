@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package uni.realtime.v1;
+
+option java_package = "com.uni.realtime.protocol";
+option java_multiple_files = true;
+
+enum DeliveryClass {
+  DELIVERY_CLASS_UNSPECIFIED = 0;
+  CRITICAL = 1;
+  BEST_EFFORT = 2;
+}
+
+enum RoutingStatus {
+  ROUTING_STATUS_UNSPECIFIED = 0;
+  OK = 1;
+  NOT_OWNER = 2;
+}
+
+message InternalHeader {
+  string owner_pod_id = 1;
+  uint64 epoch = 2;
+  string trace_id = 3;
+  string gateway_pod_id = 4;
+  RoutingStatus routing_status = 5;
+  DeliveryClass delivery_class = 6;
+}

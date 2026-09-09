@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package uni.realtime.v1;
+
+option java_package = "com.uni.realtime.protocol";
+option java_multiple_files = true;
+
+message JoinRoom {
+  string join_token = 1;
+  string display_name = 2;
+  string client_version = 3;
+}
+
+message SubmitAnswer {
+  string question_id = 1;
+  repeated string answer_ids = 2;
+  string free_text = 3;
+}
+
+message TeacherCommand {
+  enum Command {
+    COMMAND_UNSPECIFIED = 0;
+    START_GAME = 1;
+    NEXT_STEP = 2;
+    PAUSE = 3;
+    END_GAME = 4;
+    KICK_STUDENT = 5;
+  }
+  Command command = 1;
+  string target_student_id = 2;
+}
+
+message DraftUpdate {
+  string team_id = 1;
+  string student_id = 2;
+  string draft_content = 3;
+  int64 client_timestamp_ms = 4;
+}

@@ -1,5 +1,6 @@
 package com.uni.realtime.gameengine.room;
 
+import com.uni.realtime.gameengine.definition.GameDefinition;
 import com.uni.realtime.gameengine.definition.MissedStepPolicy;
 import com.uni.realtime.gameengine.definition.ProgressStage;
 import com.uni.realtime.gameengine.definition.ScoreAggregation;
@@ -34,58 +35,38 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
 public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
-    private static final long WATCHDOG_THRESHOLD_MS = 10;
+
+    private static final Logger snapshotLog = LoggerFactory.getLogger("com.uni.realtime.gameengine.room.snapshot");
+
+    public interface Command {}
+
+    public record StartGame() implements Command {}
+    public record StartQuestion(String questionId, long durationMs, List<String> correctAnswerIds) implements Command {}
+    public record JoinRoom(String studentId, String displayName, ActorRef<GameMessage> replyTo) implements Command {}
+    public record SubmitAnswer(String studentId, long sequence, String questionId, List<String> answerIds, long clientTimestampMs, ActorRef<GameMessage> replyTo) implements Command {}
+    public record Resync(String studentId, long lastAckedSeq, List<GameMessage> pending, ActorRef<GameMessage> replyTo) implements Command {}
+    public record EndGame() implements Command {}
+    public record StudentDisconnected(String studentId) implements Command {}
+    public record KickStudent(String studentId) implements Command {}
+    public record UpdateDraft(String studentId, String draftContent) implements Command {}
+
+    public enum LeaseLost implements Command {
+        INSTANCE
+    }
+
+    enum Flush implements Command {
+        INSTANCE
+    }
+
     private static final long MIN_FLUSH_INTERVAL_MS = 200;
-    private static final long SNAPSHOT_MIN_INTERVAL_MS = 2_000;
-
-    private static final Logger snapshotLog = LoggerFactory.getLogger(RoomActor.class);
-
-    public sealed interface Command {
-    }
-
-    public record StartGame() implements Command {
-    }
-
-    public record StartQuestion(String questionId, long durationMs, List<String> correctAnswerIds) implements Command {
-    }
-
-    public record JoinRoom(String studentId, String displayName, ActorRef<GameMessage> replyTo) implements Command {
-    }
-
-    public record SubmitAnswer(
-            String studentId,
-            long sequence,
-            String questionId,
-            List<String> answerIds,
-            long clientTimestampMs,
-            ActorRef<GameMessage> replyTo) implements Command {
-    }
-
-    public record Resync(String studentId, long lastAckedSeq, List<GameMessage> pending,
-                         ActorRef<GameMessage> replyTo) implements Command {
-    }
-
-    public record UpdateDraft(String studentId, String draftContent) implements Command {
-    }
-
-    public record EndGame() implements Command {
-    }
-
-    public record StudentDisconnected(String studentId) implements Command {
-    }
-
-    public record KickStudent(String studentId) implements Command {
-    }
-
-    private enum Flush implements Command {INSTANCE}
-
-    private enum LeaseLost implements Command {INSTANCE}
+    private static final long SNAPSHOT_MIN_INTERVAL_MS = 2000;
+    private static final long WATCHDOG_THRESHOLD_MS = 10;
 
     public static Behavior<Command> create(
             String roomId, Clock clock, ScoreCalculator scoreCalculator, EngineMetrics engineMetrics,
             TickMode tickMode, ActorRef<GameMessage> broadcastTarget) {
         return create(roomId, clock, scoreCalculator, engineMetrics, tickMode, broadcastTarget,
-                NoopRoomSnapshotStore.INSTANCE, 0L, null);
+                NoopRoomSnapshotStore.INSTANCE, 0, null);
     }
 
     public static Behavior<Command> create(
@@ -124,6 +105,15 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
             GameMode gameMode, int progressTarget, List<ProgressStage> progressStages,
             SharedResourceType sharedResourceType, int sharedResourcePenalty,
             List<TeamAssignment> teamRosters, ScoreAggregation scoreAggregation, WinCondition winCondition) {
+        RoomDependencies deps = RoomDependencies.of(clock, scoreCalculator, engineMetrics, broadcastTarget, snapshotStore, gameEventPublisher);
+        GameDefinition gameDef = new GameDefinition(gameMode, progressTarget, progressStages, sharedResourceType,
+                sharedResourcePenalty, teamRosters, scoreAggregation, winCondition);
+        return create(roomId, deps, gameDef, tickMode, missedStepPolicy, epoch, restoreFromSnapshot);
+    }
+
+    public static Behavior<Command> create(
+            String roomId, RoomDependencies deps, GameDefinition gameDef,
+            TickMode tickMode, MissedStepPolicy missedStepPolicy, long epoch, byte[] restoreFromSnapshot) {
         if (tickMode != TickMode.COALESCE) {
             throw new IllegalArgumentException(
                     "RoomActor only implements TickMode.COALESCE in Phase 1, got " + tickMode);
@@ -133,10 +123,7 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
                     "RoomActor only implements MissedStepPolicy.ZERO in Phase 1, got " + missedStepPolicy);
         }
         return Behaviors.withTimers(timers -> Behaviors.setup(
-                context -> new RoomActor(context, timers, roomId, clock, scoreCalculator, engineMetrics,
-                        broadcastTarget, snapshotStore, epoch, restoreFromSnapshot, missedStepPolicy, gameEventPublisher,
-                        gameMode, progressTarget, progressStages, sharedResourceType, sharedResourcePenalty,
-                        teamRosters, scoreAggregation, winCondition)));
+                context -> new RoomActor(context, timers, roomId, deps, gameDef, missedStepPolicy, epoch, restoreFromSnapshot)));
     }
 
     private final String roomId;
@@ -155,29 +142,24 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
     private long lastFlushAtMs = 0;
     private long lastSnapshotAtMs = 0;
 
-    private RoomActor(ActorContext<Command> context, TimerScheduler<Command> timers, String roomId, Clock clock,
-                      ScoreCalculator scoreCalculator, EngineMetrics engineMetrics, ActorRef<GameMessage> broadcastTarget,
-                      RoomSnapshotStore snapshotStore, long epoch, byte[] restoreFromSnapshot,
-                      MissedStepPolicy missedStepPolicy, GameEventPublisher gameEventPublisher,
-                      GameMode gameMode, int progressTarget, List<ProgressStage> progressStages,
-                      SharedResourceType sharedResourceType, int sharedResourcePenalty,
-                      List<TeamAssignment> teamRosters, ScoreAggregation scoreAggregation, WinCondition winCondition) {
+    private RoomActor(ActorContext<Command> context, TimerScheduler<Command> timers, String roomId,
+                      RoomDependencies deps, GameDefinition gameDef, MissedStepPolicy missedStepPolicy,
+                      long epoch, byte[] restoreFromSnapshot) {
         super(context);
         this.timers = timers;
         this.roomId = roomId;
-        this.clock = clock;
+        this.clock = deps.clock();
         this.state = restoreFromSnapshot == null
-                ? new RoomState(roomId, clock, scoreCalculator, missedStepPolicy, gameMode, progressTarget,
-                progressStages, sharedResourceType, sharedResourcePenalty, teamRosters, scoreAggregation,
-                winCondition)
-                : RoomState.restore(roomId, clock, scoreCalculator, missedStepPolicy, gameMode, progressTarget,
-                progressStages, sharedResourceType, sharedResourcePenalty, teamRosters, scoreAggregation,
-                winCondition, restoreFromSnapshot);
-        this.processingTimer = engineMetrics.processingLatencyTimer();
-        this.engineMetrics = engineMetrics;
-        this.broadcastTarget = broadcastTarget;
-        this.snapshotStore = snapshotStore;
-        this.gameEventPublisher = gameEventPublisher;
+                ? new RoomState(roomId, deps.clock(), deps.scoreCalculator(), missedStepPolicy, gameDef)
+                : RoomState.restore(roomId, deps.clock(), deps.scoreCalculator(), missedStepPolicy,
+                gameDef.gameMode(), gameDef.progressTarget(), gameDef.progressStages(),
+                gameDef.sharedResourceType(), gameDef.sharedResourcePenalty(),
+                gameDef.teamRosters(), gameDef.scoreAggregation(), gameDef.winCondition(), restoreFromSnapshot);
+        this.processingTimer = deps.engineMetrics().processingLatencyTimer();
+        this.engineMetrics = deps.engineMetrics();
+        this.broadcastTarget = deps.broadcastTarget();
+        this.snapshotStore = deps.snapshotStore();
+        this.gameEventPublisher = deps.gameEventPublisher();
         this.epoch = epoch;
         this.self = context.getSelf();
     }
@@ -251,10 +233,18 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
         return this;
     }
 
+    private static final int MAX_PENDING_RESYNC_ITEMS = 20;
+
     private Behavior<Command> onResync(Resync command) {
         getContext().getLog().info("room {}: RESYNC from {} (client last_acked_seq={}, {} pending)",
                 roomId, command.studentId(), command.lastAckedSeq(), command.pending().size());
-        for (GameMessage pending : command.pending()) {
+        List<GameMessage> pendingList = command.pending();
+        if (pendingList.size() > MAX_PENDING_RESYNC_ITEMS) {
+            getContext().getLog().warn("room {}: RESYNC pending items count {} exceeds maximum allowed {}, capping execution",
+                    roomId, pendingList.size(), MAX_PENDING_RESYNC_ITEMS);
+            pendingList = pendingList.subList(0, MAX_PENDING_RESYNC_ITEMS);
+        }
+        for (GameMessage pending : pendingList) {
             if (pending.getPayloadCase() != GameMessage.PayloadCase.SUBMIT_ANSWER) {
                 getContext().getLog().warn("room {}: ignoring non-SUBMIT_ANSWER entry in RESYNC.pending from {}",
                         roomId, command.studentId());
@@ -264,6 +254,10 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
                     pending.getSubmitAnswer().getQuestionId(), pending.getSubmitAnswer().getAnswerIdsList());
             command.replyTo().tell(ack);
             publishGameEvent(ack);
+            if (ack.getAnswerAck().getAccepted() && state.phase() == GamePhase.FINISHED) {
+                broadcastTarget.tell(state.buildGameOver());
+                return Behaviors.stopped();
+            }
         }
         scheduleFlushIfDirty();
         command.replyTo().tell(state.resyncSnapshot(command.studentId()));

@@ -21,6 +21,17 @@ public record GameDefinition(
         ScoreAggregation scoreAggregation,
         WinCondition winCondition) {
 
+    public static GameDefinition defaultSoloDefinition() {
+        return new GameDefinition(List.of(), "", TickMode.COALESCE, new ScoringFormula.IsCorrect(), MissedStepPolicy.ZERO, 100);
+    }
+
+    public GameDefinition(GameMode gameMode, int progressTarget, List<ProgressStage> progressStages,
+                          SharedResourceType sharedResourceType, int sharedResourcePenalty,
+                          List<TeamAssignment> teamRosters, ScoreAggregation scoreAggregation, WinCondition winCondition) {
+        this(List.of(), "", TickMode.COALESCE, new ScoringFormula.IsCorrect(), MissedStepPolicy.ZERO, 100,
+                gameMode, progressTarget, progressStages, sharedResourceType, sharedResourcePenalty, teamRosters, scoreAggregation, winCondition);
+    }
+
     public GameDefinition(List<Step> steps, String startStepId, TickMode tickMode,
             ScoringFormula scoringFormula, MissedStepPolicy missedStepPolicy, int maxTransitions) {
         this(steps, startStepId, tickMode, scoringFormula, missedStepPolicy, maxTransitions,

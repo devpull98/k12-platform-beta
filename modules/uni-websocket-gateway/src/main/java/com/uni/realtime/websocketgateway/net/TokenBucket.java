@@ -5,31 +5,33 @@ import java.time.Duration;
 
 final class TokenBucket {
 
-    private final int capacity;
+    private final double capacity;
     private final long refillPeriodMillis;
     private final Clock clock;
 
-    private int available;
-    private long windowStartMillis;
+    private double availableTokens;
+    private long lastRefillMillis;
 
     TokenBucket(int capacity, Duration refillPeriod, Clock clock) {
         this.capacity = capacity;
-        this.refillPeriodMillis = refillPeriod.toMillis();
+        this.refillPeriodMillis = Math.max(1, refillPeriod.toMillis());
         this.clock = clock;
-        this.available = capacity;
-        this.windowStartMillis = clock.millis();
+        this.availableTokens = capacity;
+        this.lastRefillMillis = clock.millis();
     }
 
-    boolean tryConsume() {
+    synchronized boolean tryConsume() {
         long now = clock.millis();
-        if (now - windowStartMillis >= refillPeriodMillis) {
-            available = capacity;
-            windowStartMillis = now;
+        long elapsedMillis = now - lastRefillMillis;
+        if (elapsedMillis > 0) {
+            double tokensToAdd = (double) elapsedMillis * capacity / refillPeriodMillis;
+            this.availableTokens = Math.min(capacity, this.availableTokens + tokensToAdd);
+            this.lastRefillMillis = now;
         }
-        if (available <= 0) {
+        if (this.availableTokens < 1.0) {
             return false;
         }
-        available--;
+        this.availableTokens -= 1.0;
         return true;
     }
 }

@@ -15,6 +15,7 @@ public final class RateLimitHandler extends SimpleChannelInboundHandler<GameMess
     private final TokenBucket submitAnswerBucket;
     private final TokenBucket updateDraftBucket;
     private final TokenBucket heartbeatBucket;
+    private final TokenBucket resyncBucket;
 
     public RateLimitHandler() {
         this(Clock.systemUTC());
@@ -24,6 +25,7 @@ public final class RateLimitHandler extends SimpleChannelInboundHandler<GameMess
         this.submitAnswerBucket = new TokenBucket(3, Duration.ofSeconds(1), clock);
         this.updateDraftBucket = new TokenBucket(10, Duration.ofSeconds(10), clock);
         this.heartbeatBucket = new TokenBucket(2, Duration.ofSeconds(30), clock);
+        this.resyncBucket = new TokenBucket(1, Duration.ofSeconds(5), clock);
     }
 
     @Override
@@ -33,7 +35,7 @@ public final class RateLimitHandler extends SimpleChannelInboundHandler<GameMess
                 if (submitAnswerBucket.tryConsume()) {
                     ctx.fireChannelRead(message);
                 } else {
-                    ctx.writeAndFlush(rateLimitedAck(message));
+                    ctx.writeAndFlush(rateLimitedAck(ctx, message));
                 }
             }
             case UPDATE_DRAFT -> {
@@ -48,15 +50,32 @@ public final class RateLimitHandler extends SimpleChannelInboundHandler<GameMess
                 }
                 // else: dropped -- HEARTBEAT has no ack in the schema at all.
             }
+            case RESYNC -> {
+                if (resyncBucket.tryConsume()) {
+                    ctx.fireChannelRead(message);
+                }
+                // else: dropped when resync rate limit exceeded
+            }
             default -> ctx.fireChannelRead(message); // not rate-limited by this task's AC
         }
     }
 
-    private static GameMessage rateLimitedAck(GameMessage message) {
+    private static GameMessage rateLimitedAck(ChannelHandlerContext ctx, GameMessage message) {
+        String roomId = message.getRoomId();
+        if (roomId == null || roomId.isEmpty()) {
+            String boundRoomId = ctx.channel().attr(ChannelAttributes.ROOM_ID).get();
+            roomId = boundRoomId != null ? boundRoomId : "";
+        }
+        String studentId = message.getStudentId();
+        if (studentId == null || studentId.isEmpty()) {
+            String boundStudentId = ctx.channel().attr(ChannelAttributes.STUDENT_ID).get();
+            studentId = boundStudentId != null ? boundStudentId : "";
+        }
+
         return GameMessage.newBuilder()
                 .setType(MessageType.ANSWER_ACK)
-                .setRoomId(message.getRoomId())
-                .setStudentId(message.getStudentId())
+                .setRoomId(roomId)
+                .setStudentId(studentId)
                 .setSequence(message.getSequence())
                 .setAnswerAck(AnswerAck.newBuilder()
                         .setQuestionId(message.getSubmitAnswer().getQuestionId())

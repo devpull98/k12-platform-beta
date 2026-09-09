@@ -27,8 +27,8 @@ public final class GatewayPipeline {
         pipeline.addLast(new HttpObjectAggregator(MAX_HTTP_AGGREGATED_CONTENT_BYTES));
         pipeline.addLast(new WebSocketServerProtocolHandler(WEBSOCKET_PATH));
         pipeline.addLast(new JoinTokenAuthHandler(joinTokenVerifier, roomRegistry, gatewayMetrics, studentHandshakeAdmission));
-        pipeline.addLast(new RateLimitHandler());
         pipeline.addLast(new GameMessageDecoder());
+        pipeline.addLast(new RateLimitHandler());
         pipeline.addLast(new RoomRouteHandler(roomRegistry, engineSender));
     }
 }

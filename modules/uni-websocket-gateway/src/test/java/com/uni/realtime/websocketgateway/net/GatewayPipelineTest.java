@@ -64,8 +64,8 @@ class GatewayPipelineTest {
                 "HttpObjectAggregator",
                 "WebSocketServerProtocolHandler",
                 "JoinTokenAuthHandler",
-                "RateLimitHandler",
                 "GameMessageDecoder",
+                "RateLimitHandler",
                 "RoomRouteHandler");
         assertThat(channel.pipeline().get(SslHandler.class)).isNull();
         channel.finishAndReleaseAll();
