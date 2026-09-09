@@ -1,15 +1,20 @@
 package com.uni.realtime.gameengine.room;
 
 import com.uni.realtime.gameengine.definition.MissedStepPolicy;
+import com.uni.realtime.gameengine.definition.ProgressStage;
+import com.uni.realtime.gameengine.definition.SharedResourceType;
 import com.uni.realtime.gameengine.scoring.ScoreCalculator;
 import com.uni.realtime.protocol.AnswerAck;
 import com.uni.realtime.protocol.CommittedSeq;
 import com.uni.realtime.protocol.GameMessage;
+import com.uni.realtime.protocol.GameMode;
 import com.uni.realtime.protocol.GamePhase;
 import com.uni.realtime.protocol.MessageType;
 import com.uni.realtime.protocol.PlayerState;
+import com.uni.realtime.protocol.ProgressMeterSnapshot;
 import com.uni.realtime.protocol.RejectReason;
 import com.uni.realtime.protocol.RoomStateSnapshot;
+import com.uni.realtime.protocol.SharedResourceState;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -60,6 +65,21 @@ final class RoomState {
     private final ScoreCalculator scoreCalculator;
     private final MissedStepPolicy missedStepPolicy;
 
+    /**
+     * P2 Task 21 (INCLASS-GAME-001): all five fields below are fixed room CONFIG, mirroring
+     * {@code missedStepPolicy}'s shape above -- set once at construction from
+     * {@code GameDefinition}, never mutated, and deliberately NOT part of {@link #serializeSnapshot()}
+     * (a restore always re-supplies them fresh, same reasoning as {@code missedStepPolicy}). Only
+     * {@link #roomProgress} below is mutable room STATE and needs to survive a restore.
+     */
+    private final GameMode gameMode;
+    private final int progressTarget;
+    private final List<ProgressStage> progressStages;
+    private final SharedResourceType sharedResourceType;
+    private final int sharedResourcePenalty;
+    /** Room-wide count of correct answers so far, {@code GAME_MODE_COOPERATIVE} only. */
+    private int roomProgress = 0;
+
     private final Map<String, Long> lastSeenSequence = new HashMap<>();
     private final Map<String, GameMessage> lastAckByStudent = new HashMap<>();
     private final Map<String, Integer> totalScoreByStudent = new HashMap<>();
@@ -96,10 +116,27 @@ final class RoomState {
      * {@code RoomActor.create}'s overloads already use for {@code snapshotStore}/{@code epoch}.
      */
     RoomState(String roomId, Clock clock, ScoreCalculator scoreCalculator, MissedStepPolicy missedStepPolicy) {
+        this(roomId, clock, scoreCalculator, missedStepPolicy, GameMode.GAME_MODE_SOLO, 0, List.of(),
+                SharedResourceType.NONE, 0);
+    }
+
+    /**
+     * P2 Task 21: the true master constructor, adding cooperative-mode config on top of the
+     * four-arg constructor above (now just delegating here with SOLO/no-op defaults) -- same
+     * additive-overload shape Task 14/17 already used.
+     */
+    RoomState(String roomId, Clock clock, ScoreCalculator scoreCalculator, MissedStepPolicy missedStepPolicy,
+            GameMode gameMode, int progressTarget, List<ProgressStage> progressStages,
+            SharedResourceType sharedResourceType, int sharedResourcePenalty) {
         this.roomId = roomId;
         this.clock = clock;
         this.scoreCalculator = scoreCalculator;
         this.missedStepPolicy = missedStepPolicy;
+        this.gameMode = gameMode;
+        this.progressTarget = progressTarget;
+        this.progressStages = progressStages;
+        this.sharedResourceType = sharedResourceType;
+        this.sharedResourcePenalty = sharedResourcePenalty;
     }
 
     /**
@@ -150,6 +187,8 @@ final class RoomState {
                 out.writeUTF(entry.getKey());
                 out.writeLong(entry.getValue());
             }
+
+            out.writeInt(roomProgress); // P2 Task 21: appended at the end, additive format
         } catch (IOException e) {
             // ByteArrayOutputStream/DataOutputStream never actually throw IOException in
             // practice (no real I/O underneath) -- this is here only so the try-with-resources
@@ -181,7 +220,17 @@ final class RoomState {
     /** Task 17 (B4): additive over the four-arg {@link #restore} above, same reason as the constructor overload. */
     static RoomState restore(String roomId, Clock clock, ScoreCalculator scoreCalculator,
             MissedStepPolicy missedStepPolicy, byte[] payload) {
-        RoomState state = new RoomState(roomId, clock, scoreCalculator, missedStepPolicy);
+        return restore(roomId, clock, scoreCalculator, missedStepPolicy, GameMode.GAME_MODE_SOLO, 0, List.of(),
+                SharedResourceType.NONE, 0, payload);
+    }
+
+    /** P2 Task 21: additive over the five-arg {@link #restore} above, same reason as the constructor overload. */
+    static RoomState restore(String roomId, Clock clock, ScoreCalculator scoreCalculator,
+            MissedStepPolicy missedStepPolicy, GameMode gameMode, int progressTarget,
+            List<ProgressStage> progressStages, SharedResourceType sharedResourceType, int sharedResourcePenalty,
+            byte[] payload) {
+        RoomState state = new RoomState(roomId, clock, scoreCalculator, missedStepPolicy, gameMode, progressTarget,
+                progressStages, sharedResourceType, sharedResourcePenalty);
         try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(payload))) {
             state.phase = GamePhase.valueOf(in.readUTF());
             String questionId = in.readUTF();
@@ -222,6 +271,8 @@ final class RoomState {
             for (int i = 0; i < sequenceCount; i++) {
                 state.lastSeenSequence.put(in.readUTF(), in.readLong());
             }
+
+            state.roomProgress = in.readInt(); // P2 Task 21
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
@@ -383,10 +434,50 @@ final class RoomState {
             dirtyStudentIds.add(studentId);
         }
 
+        if (gameMode == GameMode.GAME_MODE_COOPERATIVE) {
+            applyCooperativeOutcome(isCorrectAnswer(answerIds, currentCorrectAnswerIds));
+        }
+
         GameMessage ack = buildAck(studentId, sequence, questionId, true, RejectReason.NONE,
                 awarded, newTotal, serverReceivedAtMs, responseTimeMs);
         remember(studentId, sequence, ack);
         return ack;
+    }
+
+    /**
+     * P2 Task 21 (INCLASS-GAME-001-v2.1 §4/§5.6): the whole room shares one progress counter --
+     * a correct answer from ANY student advances it, independent of that student's own score.
+     * A wrong answer costs the room its configured {@link #sharedResourceType}. Deliberately
+     * separate from {@link #scoreCalculator}'s own notion of correctness (points earned): a
+     * future non-binary scoring formula could award partial credit with no clean "fully correct"
+     * signal from points alone, so this reads {@code answerIds} directly instead.
+     *
+     * <p>{@link RoomActor} processes one {@code SubmitAnswer} at a time (single-threaded actor
+     * mailbox), so only one call can ever be "the one that crosses {@link #progressTarget}" --
+     * the very next submission after {@link #phase} flips to {@link GamePhase#FINISHED} is
+     * rejected by the {@code phase != PLAYING} check at the top of {@link #submitAnswer} before
+     * it reaches here, so double-completion is structurally impossible without extra locking.
+     * This is only the {@code progress_completed} slice of the win condition -- {@code
+     * first_to_finish}/{@code most_points_when_time_up} need per-team state that does not exist
+     * until P2 Task 22, and belong in a dedicated evaluator (plan.md P2 Task 23) once they do.
+     */
+    private void applyCooperativeOutcome(boolean correct) {
+        if (correct) {
+            roomProgress++;
+            if (progressTarget > 0 && roomProgress >= progressTarget) {
+                phase = GamePhase.FINISHED;
+            }
+        } else if (sharedResourceType == SharedResourceType.TIME) {
+            deadlineMs -= sharedResourcePenalty * 1000L;
+        }
+    }
+
+    /**
+     * Same definition of "correct" {@code FormulaScoreCalculator.award} uses internally, kept
+     * here too because {@link ScoreCalculator} exposes points, not a correctness verdict.
+     */
+    private static boolean isCorrectAnswer(List<String> answerIds, List<String> correctAnswerIds) {
+        return !answerIds.isEmpty() && Set.copyOf(answerIds).equals(Set.copyOf(correctAnswerIds));
     }
 
     /**
@@ -500,12 +591,44 @@ final class RoomState {
     }
 
     private RoomStateSnapshot.Builder baseSnapshotBuilder(boolean full) {
-        return RoomStateSnapshot.newBuilder()
+        RoomStateSnapshot.Builder builder = RoomStateSnapshot.newBuilder()
                 .setFull(full)
                 .setPhase(phase)
                 .setCurrentQuestionId(currentQuestionId == null ? "" : currentQuestionId)
                 .setServerQuestionStartedAtMs(serverQuestionStartedAtMs)
-                .setDeadlineMs(deadlineMs);
+                .setDeadlineMs(deadlineMs)
+                .setGameMode(gameMode);
+        if (gameMode == GameMode.GAME_MODE_COOPERATIVE) {
+            builder.setProgress(buildProgressMeterSnapshot());
+            if (sharedResourceType != SharedResourceType.NONE) {
+                builder.setSharedResource(SharedResourceState.newBuilder()
+                        .setResourceType(sharedResourceType.name()));
+            }
+        }
+        return builder;
+    }
+
+    /** §5.6 luật biên 6: floor, never round -- 33.33% must read as 33%, not 33 nor 34. */
+    private ProgressMeterSnapshot buildProgressMeterSnapshot() {
+        int percentage = progressTarget <= 0 ? 0 : (int) Math.floor(100.0 * roomProgress / progressTarget);
+        return ProgressMeterSnapshot.newBuilder()
+                .setCurrentProgress(roomProgress)
+                .setTargetProgress(progressTarget)
+                .setProgressPercentage(percentage)
+                .setStageIndex(stageIndexFor(percentage))
+                .build();
+    }
+
+    /** {@link #progressStages} is guaranteed ascending by {@code DefinitionLoader} (P2 Task 21). */
+    private int stageIndexFor(int percentage) {
+        int stageIndex = 0;
+        for (int i = 0; i < progressStages.size(); i++) {
+            if (progressStages.get(i).milestonePercent() > percentage) {
+                break;
+            }
+            stageIndex = i;
+        }
+        return stageIndex;
     }
 
     private GameMessage buildSnapshotMessage(RoomStateSnapshot.Builder snapshot) {

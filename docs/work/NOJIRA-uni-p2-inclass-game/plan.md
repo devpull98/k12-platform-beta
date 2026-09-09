@@ -35,20 +35,27 @@ Giai đoạn 2 bổ sung các chế độ chơi tương tác nhóm và tập th�
 
 ## 2. Task List
 
-### Task 20: Mở rộng Schema Protobuf (`game_message.proto`)
+### Task 20: Mở rộng Schema Protobuf (`game_message.proto`) — ✅ XONG (2026-09-09)
 - **Mô tả:** Thêm enum `GameMode` (`SOLO`, `COOPERATIVE`, `TEAM`, `INDIVIDUAL`), các message payload cho `TeamAssignment`, `DraftUpdate`, `ProgressMeterSnapshot`, `SharedResourceState`.
 - **File:** `modules/uni-protocol/src/main/proto/game_message.proto`
 - **Acceptance Criteria:**
-  - [ ] Support payload `TeamAssignment` chứa `team_id`, `member_student_ids`
-  - [ ] Support `DraftUpdate` mang `draft_content` và `team_id`
-  - [ ] Support `ProgressMeterSnapshot` mang `current_progress`, `target_progress`, `stage_index`
+  - [x] Support payload `TeamAssignment` chứa `team_id`, `student_ids` (field đổi tên từ `member_student_ids` theo đúng schema block trong tech-design.md §3 — đây là tài liệu chính xác hơn, `plan.md` gốc chỉ mô tả sơ)
+  - [x] Support `DraftUpdate` mang `draft_content` và `team_id` — wired vào `GameMessage.oneof payload` (field 24), tái dùng `MessageType.UPDATE_DRAFT` đã có sẵn từ Task 7 (P1)
+  - [x] Support `ProgressMeterSnapshot` mang `current_progress`, `target_progress`, `stage_index` (+ `progress_percentage`)
+- **Quyết định thiết kế:** `TeamAssignment`/`ProgressMeterSnapshot`/`SharedResourceState` là state FRAGMENT nhúng vào `RoomStateSnapshot` (field 8-11: `game_mode`, `teams`, `progress`, `shared_resource`), không phải oneof payload riêng — đi theo đúng cơ chế coalesce (ADR-4) thay vì bypass như `AnswerAck`/`GameOver`. Chỉ `DraftUpdate` là oneof payload thật vì nó là event 2 chiều riêng biệt.
+- **Verification:** `GameMessageRoundTripTest` (7/7, thêm 2 test: `draftUpdateRoundTrips`, `roomStateSnapshotCarriesPhase2Fields`).
 
-### Task 21: Nâng cấp `GameDefinition` & `RoomState` cho Cooperative Mode
+### Task 21: Nâng cấp `GameDefinition` & `RoomState` cho Cooperative Mode — ✅ XONG (2026-09-09)
 - **Mô tả:** Cấu hình `progress_target`, `progress_stages` trong `GameDefinition`. `RoomState` theo dõi tổng điểm/câu đúng cả phòng.
-- **File:** `modules/uni-game-engine/.../definition/GameDefinition.java`, `modules/uni-game-engine/.../room/RoomState.java`
+- **File:** `modules/uni-game-engine/.../definition/GameDefinition.java`, `modules/uni-game-engine/.../definition/DefinitionLoader.java`, `modules/uni-game-engine/.../room/RoomState.java`
 - **Acceptance Criteria:**
-  - [ ] Tính toán `% = (tổng_câu_đúng / progress_target) * 100` khi có `SubmitAnswer` hợp lệ
-  - [ ] Tự động chuyển `stage_index` visual khi đạt mốc % tương ứng
+  - [x] Tính toán `% = (tổng_câu_đúng / progress_target) * 100` khi có `SubmitAnswer` hợp lệ — floor, không round (§5.6 luật biên 6, có test riêng `should_floorThePercentage_ratherThanRound`)
+  - [x] Tự động chuyển `stage_index` visual khi đạt mốc % tương ứng
+- **Thêm ngoài 2 AC gốc (cần thiết để BDD cooperative-boss.feature pass hết):**
+  - `applyCooperativeOutcome`: FSM tự chuyển `FINISHED` khi progress chạm `progress_target` (lát cắt hẹp của Task 23 — chỉ `progress_completed`, KHÔNG phải `first_to_finish`/`most_points_when_time_up` vì cần state theo nhóm chưa tồn tại tới Task 22).
+  - `shared_resource type=TIME`: trừ `penalty_seconds` vào `deadline_ms` khi trả lời sai. `type=LIVES` bị `DefinitionLoader` từ chối tại load-time (chưa implement, không có số "lives ban đầu" nào được đặc tả trong PO V2.1 — theo đúng tinh thần fail-fast của `missed_step_policy SKIP/ALLOW_LATE`).
+  - `DefinitionLoader` từ chối `game_mode TEAM`/`INDIVIDUAL` tại load-time (chưa có `RoomState` implementation — Task 22).
+- **Verification:** `RoomStateCooperativeModeTest` (7/7 case mới) + `DefinitionLoaderTest` (17/17, +7 case) + `RoomStateSnapshotTest` (6/6, không regress). Prove-it: tạm vô hiệu `roomProgress++`, xác nhận đúng 4/7 test Red trước khi trả lại Green. `mvn clean install` toàn reactor: BUILD SUCCESS, 5 protocol + 86 gateway + 134 engine (120 cũ + 14 mới) + 2 e2e.
 
 ### Task 22: Triển khai Chế độ Chia Nhóm (`Team` Mode) & Scoped Draft Sync
 - **Mô tả:** Quản lý danh sách đội nhóm trong `RoomState`. Xử lý sự kiện `UPDATE_DRAFT` và broadcast scoped trong nhóm.

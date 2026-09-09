@@ -52,6 +52,12 @@ message GameMessage {
     SubmitAnswer submit_answer = 21;
     Resync resync = 22;
     TeacherCommand teacher_command = 23;
+    // Phase 2 (Task 20, INCLASS-GAME-001 §5.6 luật biên 3): same message both directions --
+    // a client sends this (type=UPDATE_DRAFT) to share a draft answer with its team, and the
+    // server relays the identical payload back out to the OTHER members of that team (never
+    // the whole room -- tech-design.md §4 "Scoped Fan-out"). MessageType.UPDATE_DRAFT already
+    // existed (Task 7 rate limiting anticipated it); this is the payload it was missing.
+    DraftUpdate draft_update = 24;
 
     // server -> client
     RoomStateSnapshot room_state_snapshot = 40;
@@ -154,6 +160,29 @@ message RoomStateSnapshot {
   // this field only gives PH-3 something to detect gaps with, it does not itself define a
   // RESYNC protocol for broadcasts.
   uint64 broadcast_seq = 7;
+
+  // ------------------------- Phase 2 (Task 20, INCLASS-GAME-001) -------------------------
+  // All four fields below are state FRAGMENTS, not standalone events -- they ride the existing
+  // coalesced snapshot (ADR-4) instead of bypassing it, matching Phase 1's rule that only
+  // truly critical events (AnswerAck, GameOver, ...) skip coalescing (system-architecture.md
+  // §6.2). Unset/empty for GAME_MODE_SOLO rooms, so Phase 1's wire shape is unchanged.
+
+  // The room's mode -- decides how a client should render the screen (solo/cooperative/team/
+  // individual). Set on every snapshot; a Phase 1 room sends GAME_MODE_SOLO explicitly, which
+  // the client should treat exactly like today's solo screen (same as an unset/UNSPECIFIED
+  // value would).
+  GameMode game_mode = 8;
+
+  // Team roster, `game_mode == GAME_MODE_TEAM` only. Sent on join/full snapshot -- rosters are
+  // assigned once in WAITING_FOR_PLAYERS (INCLASS-GAME-001-v2.1 §4) and do not change mid-game.
+  repeated TeamAssignment teams = 9;
+
+  // `game_mechanic == progress_meter` only (`cooperative`/`individual`/`team` modes).
+  ProgressMeterSnapshot progress = 10;
+
+  // `shared_resource != none` only (`cooperative` mode). Absent when the room has no shared
+  // resource configured, same as `progress` above.
+  SharedResourceState shared_resource = 11;
 }
 
 message PlayerState {
@@ -242,6 +271,49 @@ message CommittedSeq {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 2: In-class group & cooperative games (Task 20, INCLASS-GAME-001)
+// ---------------------------------------------------------------------------
+
+// One team's roster, embedded in RoomStateSnapshot.teams (`GAME_MODE_TEAM` only).
+message TeamAssignment {
+  string team_id = 1;
+  string team_name = 2;
+  repeated string student_ids = 3;
+}
+
+// Client -> server: a student shares a draft answer with their team (INCLASS-GAME-001-v2.1
+// §5.6 luật biên 3). Server -> client: the SAME message, relayed to the other members of
+// `team_id` only (never the room). MessageType.UPDATE_DRAFT (already existed) carries this.
+message DraftUpdate {
+  string team_id = 1;
+  string student_id = 2;
+  string draft_content = 3;
+  // TELEMETRY ONLY, same rule as GameMessage.client_timestamp_ms (9.4 rule 5) -- a draft has
+  // no scoring path, but this field must not become one by accident later.
+  int64 client_timestamp_ms = 4;
+}
+
+// Embedded in RoomStateSnapshot.progress (`game_mechanic == progress_meter`). Percentage is
+// pre-computed and floored server-side (INCLASS-GAME-001-v2.1 §5.6 luật biên 6) so the client
+// never has to replicate rounding logic.
+message ProgressMeterSnapshot {
+  int32 current_progress = 1;
+  int32 target_progress = 2;
+  int32 progress_percentage = 3;
+  int32 stage_index = 4;
+}
+
+// Embedded in RoomStateSnapshot.shared_resource (`cooperative` mode, `shared_resource !=
+// none`). Only one of the two fields below is meaningful per room -- which one is decided by
+// GameDefinition's shared_resource_type (Task 21), not by which field happens to be set here.
+// Time-based penalties already have a wire home (RoomStateSnapshot.deadline_ms shrinks
+// directly); `remaining_lives` is the one Phase 1 has no field for yet.
+message SharedResourceState {
+  string resource_type = 1; // "TIME" | "LIVES", mirrors GameDefinition's shared_resource_type.
+  int32 remaining_lives = 2;
+}
+
+// ---------------------------------------------------------------------------
 // Enums
 // ---------------------------------------------------------------------------
 
@@ -307,4 +379,16 @@ enum RoutingStatus {
   // The receiving engine pod does not own this room. owner_pod_id carries the pod that
   // does, so the gateway can correct its cache on the next send (8.2).
   NOT_OWNER = 2;
+}
+
+// Task 20 (INCLASS-GAME-001): decides a room's TEAM STRUCTURE, orthogonal to game_mechanic
+// (§2 PO V2.1 "Nguyên tắc thiết kế cốt lõi" -- Mode vs Mechanic are deliberately separate axes).
+// GAME_MODE_UNSPECIFIED and GAME_MODE_SOLO both render as today's Phase 1 solo screen; the
+// distinction exists so a room can say "solo" explicitly instead of relying on an absent field.
+enum GameMode {
+  GAME_MODE_UNSPECIFIED = 0;
+  GAME_MODE_SOLO = 1;
+  GAME_MODE_COOPERATIVE = 2;
+  GAME_MODE_TEAM = 3;
+  GAME_MODE_INDIVIDUAL = 4;
 }

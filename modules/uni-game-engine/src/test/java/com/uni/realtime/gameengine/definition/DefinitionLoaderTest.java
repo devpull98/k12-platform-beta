@@ -1,5 +1,6 @@
 package com.uni.realtime.gameengine.definition;
 
+import com.uni.realtime.protocol.GameMode;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -150,6 +151,100 @@ class DefinitionLoaderTest {
                 List.of(), "q1", TickMode.COALESCE, new ScoringFormula.Constant(100), MissedStepPolicy.ZERO, 50);
 
         assertThatThrownBy(() -> loader.load(definition)).isInstanceOf(DefinitionRejectedException.class);
+    }
+
+    // ------------------------- P2 Task 21 (INCLASS-GAME-001) -------------------------
+
+    @Test
+    void should_returnDefinition_when_cooperativeModeIsValid() throws DefinitionRejectedException {
+        GameDefinition definition = cooperativeQuiz(10, SharedResourceType.TIME, 5);
+
+        assertThat(loader.load(definition)).isEqualTo(definition);
+    }
+
+    @Test
+    void should_rejectAtLoadTime_when_cooperativeModeHasNonPositiveProgressTarget() {
+        GameDefinition definition = cooperativeQuiz(0, SharedResourceType.NONE, 0);
+
+        assertThatThrownBy(() -> loader.load(definition))
+                .isInstanceOf(DefinitionRejectedException.class)
+                .hasMessageContaining("progress_target");
+    }
+
+    @Test
+    void should_rejectAtLoadTime_when_progressStageMilestoneOutOfRange() {
+        GameDefinition definition = withProgressStages(cooperativeQuiz(10, SharedResourceType.NONE, 0),
+                List.of(new ProgressStage(0, "a.svg"), new ProgressStage(150, "b.svg")));
+
+        assertThatThrownBy(() -> loader.load(definition))
+                .isInstanceOf(DefinitionRejectedException.class)
+                .hasMessageContaining("milestone");
+    }
+
+    @Test
+    void should_rejectAtLoadTime_when_progressStagesNotAscending() {
+        GameDefinition definition = withProgressStages(cooperativeQuiz(10, SharedResourceType.NONE, 0),
+                List.of(new ProgressStage(70, "a.svg"), new ProgressStage(30, "b.svg")));
+
+        assertThatThrownBy(() -> loader.load(definition))
+                .isInstanceOf(DefinitionRejectedException.class)
+                .hasMessageContaining("ascending");
+    }
+
+    @Test
+    void should_rejectAtLoadTime_when_sharedResourceTimeHasNonPositivePenalty() {
+        GameDefinition definition = cooperativeQuiz(10, SharedResourceType.TIME, 0);
+
+        assertThatThrownBy(() -> loader.load(definition))
+                .isInstanceOf(DefinitionRejectedException.class)
+                .hasMessageContaining("penalty");
+    }
+
+    @Test
+    void should_rejectAtLoadTime_when_sharedResourceTypeIsLives() {
+        // RoomState has no lives-tracking implementation yet (no spec'd starting count either) --
+        // same fail-fast-until-implemented posture as missed_step_policy SKIP/ALLOW_LATE.
+        GameDefinition definition = cooperativeQuiz(10, SharedResourceType.LIVES, 1);
+
+        assertThatThrownBy(() -> loader.load(definition))
+                .isInstanceOf(DefinitionRejectedException.class)
+                .hasMessageContaining("LIVES");
+    }
+
+    @Test
+    void should_rejectAtLoadTime_when_gameModeIsTeam() {
+        // No RoomState team-mode implementation yet -- P2 Task 22.
+        GameDefinition base = cooperativeQuiz(10, SharedResourceType.NONE, 0);
+        GameDefinition definition = new GameDefinition(base.steps(), base.startStepId(), base.tickMode(),
+                base.scoringFormula(), base.missedStepPolicy(), base.maxTransitions(),
+                GameMode.GAME_MODE_TEAM, base.progressTarget(), base.progressStages(),
+                base.sharedResourceType(), base.sharedResourcePenalty());
+
+        assertThatThrownBy(() -> loader.load(definition))
+                .isInstanceOf(DefinitionRejectedException.class)
+                .hasMessageContaining("TEAM");
+    }
+
+    private static GameDefinition cooperativeQuiz(int progressTarget, SharedResourceType sharedResourceType,
+            int sharedResourcePenalty) {
+        return new GameDefinition(
+                List.of(new Step("q1", 25_000, List.of())),
+                "q1",
+                TickMode.COALESCE,
+                new ScoringFormula.Multiply(new ScoringFormula.IsCorrect(), new ScoringFormula.Constant(100)),
+                MissedStepPolicy.ZERO,
+                50,
+                GameMode.GAME_MODE_COOPERATIVE,
+                progressTarget,
+                List.of(),
+                sharedResourceType,
+                sharedResourcePenalty);
+    }
+
+    private static GameDefinition withProgressStages(GameDefinition base, List<ProgressStage> stages) {
+        return new GameDefinition(base.steps(), base.startStepId(), base.tickMode(), base.scoringFormula(),
+                base.missedStepPolicy(), base.maxTransitions(), base.gameMode(), base.progressTarget(), stages,
+                base.sharedResourceType(), base.sharedResourcePenalty());
     }
 
     private static GameDefinition linearQuiz() {

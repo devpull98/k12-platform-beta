@@ -147,6 +147,59 @@ class GameMessageRoundTripTest {
         assertThat(parsedKicked.getPayloadCase()).isEqualTo(GameMessage.PayloadCase.PAYLOAD_NOT_SET);
     }
 
+    @Test
+    @DisplayName("Task 20: DraftUpdate is reachable through the oneof, both directions reuse the same shape")
+    void draftUpdateRoundTrips() throws InvalidProtocolBufferException {
+        assertThat(payloadCaseOf(b -> b.setDraftUpdate(DraftUpdate.getDefaultInstance())))
+                .isEqualTo(GameMessage.PayloadCase.DRAFT_UPDATE);
+
+        GameMessage original = GameMessage.newBuilder()
+                .setType(MessageType.UPDATE_DRAFT)
+                .setRoomId("room-team-202")
+                .setStudentId("student-01")
+                .setDraftUpdate(DraftUpdate.newBuilder()
+                        .setTeamId("team-a")
+                        .setStudentId("student-01")
+                        .setDraftContent("Phuong trinh bac 2")
+                        .setClientTimestampMs(1_764_000_000_000L))
+                .build();
+
+        GameMessage parsed = GameMessage.parseFrom(original.toByteArray());
+
+        assertThat(parsed).isEqualTo(original);
+        assertThat(parsed.getDraftUpdate().getTeamId()).isEqualTo("team-a");
+        assertThat(parsed.getDraftUpdate().getDraftContent()).isEqualTo("Phuong trinh bac 2");
+    }
+
+    @Test
+    @DisplayName("Task 20: RoomStateSnapshot carries game_mode, teams, progress and shared_resource")
+    void roomStateSnapshotCarriesPhase2Fields() throws InvalidProtocolBufferException {
+        RoomStateSnapshot original = RoomStateSnapshot.newBuilder()
+                .setFull(true)
+                .setGameMode(GameMode.GAME_MODE_TEAM)
+                .addTeams(TeamAssignment.newBuilder()
+                        .setTeamId("team-a")
+                        .setTeamName("Team A")
+                        .addAllStudentIds(List.of("student-01", "student-02", "student-03")))
+                .setProgress(ProgressMeterSnapshot.newBuilder()
+                        .setCurrentProgress(3)
+                        .setTargetProgress(10)
+                        .setProgressPercentage(30)
+                        .setStageIndex(1))
+                .setSharedResource(SharedResourceState.newBuilder()
+                        .setResourceType("LIVES")
+                        .setRemainingLives(2))
+                .build();
+
+        RoomStateSnapshot parsed = RoomStateSnapshot.parseFrom(original.toByteArray());
+
+        assertThat(parsed).isEqualTo(original);
+        assertThat(parsed.getGameMode()).isEqualTo(GameMode.GAME_MODE_TEAM);
+        assertThat(parsed.getTeams(0).getStudentIdsList()).containsExactly("student-01", "student-02", "student-03");
+        assertThat(parsed.getProgress().getProgressPercentage()).isEqualTo(30);
+        assertThat(parsed.getSharedResource().getRemainingLives()).isEqualTo(2);
+    }
+
     private static GameMessage.PayloadCase payloadCaseOf(java.util.function.Consumer<GameMessage.Builder> setPayload) {
         GameMessage.Builder builder = GameMessage.newBuilder();
         setPayload.accept(builder);

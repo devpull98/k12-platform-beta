@@ -1,5 +1,7 @@
 package com.uni.realtime.gameengine.definition;
 
+import com.uni.realtime.protocol.GameMode;
+
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -36,6 +38,8 @@ public final class DefinitionLoader {
                             + " has no Phase 1 implementation (only ZERO is honored -- plan.md Task 17)");
         }
 
+        checkCooperativeMode(definition);
+
         Map<String, Step> stepsById = new HashMap<>();
         for (Step step : definition.steps()) {
             stepsById.put(step.id(), step);
@@ -57,6 +61,47 @@ public final class DefinitionLoader {
         rejectCycles(stepsById);
 
         return definition;
+    }
+
+    /**
+     * P2 Task 21 (INCLASS-GAME-001-v2.1 §3): guardrails for the cooperative-progress fields --
+     * same fail-fast-before-anything-sees-it posture as every other check in this class. Modes
+     * without a {@code RoomState} implementation yet are rejected outright rather than silently
+     * behaving like SOLO, same reasoning as {@code missed_step_policy} above.
+     */
+    private void checkCooperativeMode(GameDefinition definition) throws DefinitionRejectedException {
+        if (definition.gameMode() == GameMode.GAME_MODE_TEAM
+                || definition.gameMode() == GameMode.GAME_MODE_INDIVIDUAL) {
+            throw new DefinitionRejectedException(
+                    "game_mode " + definition.gameMode()
+                            + " has no Phase 2 RoomState implementation yet (only COOPERATIVE and SOLO -- plan.md P2 Task 22)");
+        }
+        if (definition.gameMode() != GameMode.GAME_MODE_COOPERATIVE) {
+            return;
+        }
+        if (definition.progressTarget() <= 0) {
+            throw new DefinitionRejectedException("progress_target must be positive for GAME_MODE_COOPERATIVE");
+        }
+        int previousMilestone = -1;
+        for (ProgressStage stage : definition.progressStages()) {
+            if (stage.milestonePercent() < 0 || stage.milestonePercent() > 100) {
+                throw new DefinitionRejectedException(
+                        "progress_stages milestone_pct " + stage.milestonePercent() + " must be within [0, 100]");
+            }
+            if (stage.milestonePercent() <= previousMilestone) {
+                throw new DefinitionRejectedException(
+                        "progress_stages must be strictly ascending by milestone_pct");
+            }
+            previousMilestone = stage.milestonePercent();
+        }
+        if (definition.sharedResourceType() == SharedResourceType.LIVES) {
+            throw new DefinitionRejectedException(
+                    "shared_resource_type LIVES has no Phase 2 RoomState implementation yet "
+                            + "(no spec'd starting lives count -- plan.md P2 Task 23)");
+        }
+        if (definition.sharedResourceType() == SharedResourceType.TIME && definition.sharedResourcePenalty() <= 0) {
+            throw new DefinitionRejectedException("shared_resource penalty must be positive when type is TIME");
+        }
     }
 
     /** Classic white/gray/black DFS: a back-edge to a node still on the current path is a cycle. */
