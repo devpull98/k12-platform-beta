@@ -1057,6 +1057,25 @@
               "service 2": true,
               "service 3": true
             },
+            "indexByName": {
+              "application": 0,
+              "Value #A": 1,
+              "Value #L": 2,
+              "Value #B": 3,
+              "Value #C": 4,
+              "Value #D": 5,
+              "Value #E": 6,
+              "Value #F": 7,
+              "Value #G": 8,
+              "Value #H": 9,
+              "Value #I": 10,
+              "Value #J": 11,
+              "Value #K": 12,
+              "Value #M": 13,
+              "Value #N": 14,
+              "Value #O": 15,
+              "Value #P": 16
+            },
             "renameByName": {
               "application": "Service",
               "Value #A": "Scrape Status (UP/DOWN)",
@@ -1786,14 +1805,13 @@
             "uid": "prometheus-k12"
           },
           "editorMode": "code",
-          "expr": "sum(rate(mongodb_driver_pool_checkout_failed_total[$__rate_interval])) by (application)",
+          "expr": "sum(rate(mongodb_driver_commands_seconds_count{status!=\"SUCCESS\"}[$__rate_interval])) by (application)",
           "legendFormat": "{{application}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "description": "Chờ BUG-B (NOJIRA-platform-mongodb-driver-event-metrics-gap) — mongodb_driver_pool_checkout_failed_total chưa có data trên cluster.",
-      "title": "MongoDB — Checkout Failed (rate) per Service — pending BUG-B",
+      "title": "MongoDB — Command Failures (rate) per Service",
       "type": "timeseries"
     },
     {
@@ -1989,12 +2007,109 @@
       "type": "timeseries"
     },
     {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 53
+      },
+      "id": 48,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          },
+          "editorMode": "code",
+          "expr": "sum(mongodb_driver_pool_waitqueuesize) by (application)",
+          "legendFormat": "{{application}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "MongoDB — Pool Wait Queue per Service",
+      "description": "waitqueuesize > 0 kéo dài = pool exhaustion thật, đã có ở dạng cột bảng Stability Matrix, đây là view theo thời gian để thấy xu hướng.",
+      "type": "timeseries"
+    },
+    {
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 53
+        "y": 61
       },
       "id": 105,
       "title": "Availability",
@@ -2047,7 +2162,7 @@
         "h": 6,
         "w": 24,
         "x": 0,
-        "y": 54
+        "y": 62
       },
       "id": 47,
       "options": {
