@@ -2,7 +2,7 @@
 
 Nền tảng game học tập thời gian thực: giáo viên mở phiên, học sinh vào phòng từ thiết bị
 riêng, trả lời câu hỏi có đếm giờ, bảng điểm cập nhật trực tiếp cho cả phòng.
-Giai đoạn 1 nhắm 2–3k học sinh đồng thời; thiết kế viết cho 50k+.
+Giai đoạn 1 nhắm 10k học sinh đồng thời (CCU); thiết kế dài hạn nhắm ~50k CCU.
 
 > Repo này trước đây chứa project học DDD bán vé (Spring/JPA). Toàn bộ code đó đã được
 > thay bằng hệ thống hiện tại; **chỉ phần observability được giữ lại**. Lịch sử git trước
@@ -26,7 +26,7 @@ Giai đoạn 1 nhắm 2–3k học sinh đồng thời; thiết kế viết cho 
 | Logging | Logback JSON + Promtail → Loki |
 | Alerting | Alertmanager → Telegram / Google Chat |
 
-Giai đoạn 1 **không có datastore trên hot path** — không MySQL, không Valkey, không Kafka.
+Giai đoạn 1 **không có datastore trên hot path** nộp bài — Valkey được dùng bất đồng bộ ngoài hot path cho Hot Snapshot (<5KB), Room Ownership Lease & Gateway Dynamic Engine-pod Discovery.
 
 ## Prerequisites
 
@@ -44,11 +44,10 @@ module: `docs/`, `observability/` (compose stack Grafana), `scripts/`.
 ```
 modules/
   uni-protocol/             game_message.proto + code sinh ra. Cả hai service cùng phụ thuộc
-  uni-observability/        observability dùng chung: Prometheus/OTLP, log JSON, Kafka log
-                             appender, relay webhook Alertmanager
-  uni-websocket-gateway/    biên WebSocket: handshake, join-token auth, rate limit, fan-out,
-                             backpressure, định tuyến học được từ engine
-  uni-game-engine/          RoomActor FSM, chấm điểm, dedupe, tick coalescing, sở hữu phòng
+  uni-observability/        observability dùng chung: Prometheus/OTLP, log JSON, Kafka log appender
+  uni-websocket-gateway/    biên WebSocket: handshake, join-token auth, rate limit, fan-out, backpressure, dynamic engine-pod discovery
+  uni-game-engine/          RoomActor FSM, chấm điểm, dedupe, tick coalescing, lease-based room ownership, snapshot
+  uni-e2e/                  kiểm thử tích hợp end-to-end (Walking Skeleton, Resync, Chaos, Scale-up IT)
 docs/
 observability/         <- compose stack Grafana/Prometheus/Loki/Tempo
 scripts/
@@ -147,6 +146,7 @@ Env: `PROMETHEUS_URL` (mặc định `http://localhost:9090`), `REPORT_DIR` (m�
 | File | Nội dung |
 |------|----------|
 | `docs/specs/tech-design/EdTech_Game_Realtime_Architecture_v3.0.md` | Thiết kế hợp nhất — nguồn sự thật |
+| `docs/specs/client/CLIENT_WEB_APP_INTEGRATION_GUIDE.md` | Hướng dẫn tích hợp WebSocket Client (Web & Mobile App) |
 | `docs/work/NOJIRA-uni-p1-realtime-core/_context.md` | Phạm vi Giai đoạn 1, quyết định đã chốt, rủi ro đã biết |
-| `docs/work/NOJIRA-uni-p1-realtime-core/plan.md` | 13 task + 1 spike, kèm acceptance criteria |
+| `docs/work/NOJIRA-uni-p1-realtime-core/plan.md` | 21 task + 1 spike, kèm acceptance criteria |
 | `CLAUDE.md` | Ràng buộc bất biến khi sửa code trong repo này |

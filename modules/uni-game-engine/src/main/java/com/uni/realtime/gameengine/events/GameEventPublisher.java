@@ -8,20 +8,6 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.atomic.AtomicLong;
 
-/**
- * Task 18 (system-architecture.md §9.3 Rủi ro 6): the isolation layer between {@code RoomActor}
- * and Kafka. {@code RoomActor} must never call a Kafka producer directly -- if the broker lags
- * and the producer's own buffer fills, a default-configured {@code send()} blocks for up to
- * {@code max.block.ms} (60s default), which on the actor's own dispatcher thread freezes every
- * room sharing it, not just the one that tried to publish.
- *
- * <p>{@link #publish} runs on the caller's thread (the actor dispatcher) and does exactly one
- * thing there: a non-blocking {@link BlockingQueue#offer}. A full queue drops the event and
- * returns {@code false} -- analytics/audit data loss under sustained overload, which §9.3
- * explicitly prefers over blocking the game itself. The actual Kafka call
- * ({@link GameEventSink#send}) happens only on {@link #worker}, a single dedicated thread that
- * never touches actor state.
- */
 public final class GameEventPublisher {
 
     private static final Logger log = LoggerFactory.getLogger(GameEventPublisher.class);
@@ -46,16 +32,7 @@ public final class GameEventPublisher {
         worker.start();
     }
 
-    /**
-     * Never blocks and never throws -- the one contract {@code RoomActor} is allowed to depend
-     * on. Returns {@code false} if the event was dropped (queue full), purely for tests and
-     * metrics; callers on the hot path have nothing useful to do with a {@code false} beyond
-     * that, since retrying synchronously would reintroduce the exact blocking this class exists
-     * to prevent.
-     */
     public boolean publish(String partitionKey, byte[] payload) {
-        // Prove-it (2026-09-07): hardcoding offered=true here turned exactly the
-        // queue-full-drop test red -- confirms it exercises this return value, not the offer call.
         boolean offered = queue.offer(new Event(partitionKey, payload));
         if (!offered) {
             long droppedTotal = droppedEvents.incrementAndGet();
@@ -85,7 +62,6 @@ public final class GameEventPublisher {
         }
     }
 
-    /** Stops the worker and closes the sink. Best-effort: queued events not yet sent are dropped, not flushed. */
     public void close() {
         running = false;
         worker.interrupt();

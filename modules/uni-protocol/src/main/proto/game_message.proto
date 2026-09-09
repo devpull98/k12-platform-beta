@@ -5,7 +5,7 @@ package uni.realtime.v1;
 option java_package = "com.uni.realtime.protocol";
 option java_multiple_files = true;
 
-// One schema for BOTH hops (ADR-1):
+// One schema for BOTH hops
 //   * client  <-> gateway   over WebSocket binary frames
 //   * gateway <-> engine    over the length-prefixed internal frame channel
 //
@@ -19,44 +19,18 @@ option java_multiple_files = true;
 
 message GameMessage {
   MessageType type = 1;
-
-  // Authoritative room identity. On the client hop the gateway OVERWRITES this from the
-  // channel attributes bound at handshake -- a client-supplied room_id is never trusted
-  // (10.6). A mismatch is a security event, not a routing hint.
   string room_id = 2;
-
   string student_id = 3;
-
-  // Dense per-room index assigned at join. Deltas address players by index instead of by
-  // student_id so a broadcast stays small.
   uint32 student_index = 4;
-
-  // Monotonic per-student counter, assigned by the client. Basis of dedupe (9.5):
-  // sequence <= last_seen replays the stored ack instead of scoring twice.
   uint64 sequence = 5;
-
-  // TELEMETRY ONLY. Client wall clock, unverifiable, trivially forged.
-  //
-  // MUST NOT be read anywhere on the scoring path (9.4 rule 5).
-  // Response time is server_received_at minus server_question_started_at, both stamped by
-  // the engine. If you find yourself reaching for this field to compute a score, the
-  // design has drifted -- stop and re-read 9.4.
   int64 client_timestamp_ms = 6;
-
-  // Set on the internal frame channel only; absent on the WebSocket hop.
   InternalHeader internal = 7;
 
   oneof payload {
-    // client -> server
     JoinRoom join_room = 20;
     SubmitAnswer submit_answer = 21;
     Resync resync = 22;
     TeacherCommand teacher_command = 23;
-    // Phase 2 (Task 20, INCLASS-GAME-001 §5.6 luật biên 3): same message both directions --
-    // a client sends this (type=UPDATE_DRAFT) to share a draft answer with its team, and the
-    // server relays the identical payload back out to the OTHER members of that team (never
-    // the whole room -- tech-design.md §4 "Scoped Fan-out"). MessageType.UPDATE_DRAFT already
-    // existed (Task 7 rate limiting anticipated it); this is the payload it was missing.
     DraftUpdate draft_update = 24;
 
     // server -> client
@@ -72,28 +46,11 @@ message GameMessage {
 
 // Gateway <-> Engine only. Never reaches a client.
 message InternalHeader {
-  // Stamped by the engine pod that owns the room. The gateway LEARNS routing from this
-  // value (8.2) instead of computing a hash itself -- which is the whole reason Phase 2
-  // can swap modulo ownership for Cluster Sharding without touching the gateway.
   string owner_pod_id = 1;
-
-  // Fencing token: incremented every time a room actor (re)starts, so a zombie actor
-  // cannot overwrite newer state. Phase 1 always sends 0 -- the field exists now so
-  // Phase 2 does not have to renumber the schema.
   uint64 epoch = 2;
-
-  // Generated at the WebSocket handshake and carried all the way into the actor, so a
-  // log line in the engine joins to the gateway span that produced it (15.3).
   string trace_id = 3;
-
-  // Which gateway pod the frame came from. Engine sends ONE copy per gateway pod and the
-  // gateway fans out locally (decision B1) -- this is the return address for that copy.
   string gateway_pod_id = 4;
-
   RoutingStatus routing_status = 5;
-
-  // Decides bypass-coalescing and drop-under-backpressure behaviour (5.4). Carried
-  // explicitly so the gateway does not have to re-derive it from `type`.
   DeliveryClass delivery_class = 6;
 }
 
@@ -116,7 +73,6 @@ message SubmitAnswer {
   string free_text = 3;
 }
 
-// Sent after a reconnect (9.3). Carries what the client believes it has, so the server
 // can replay the gap instead of the student losing the round.
 message Resync {
   uint64 last_acked_seq = 1;
@@ -143,38 +99,14 @@ message TeacherCommand {
 // ---------------------------------------------------------------------------
 
 message RoomStateSnapshot {
-  // true only on join/resync. Steady-state broadcasts are deltas (6.2) -- sending full
-  // state on every tick is exactly the cost coalescing exists to avoid.
   bool full = 1;
   GamePhase phase = 2;
   repeated PlayerState players = 3;
   string current_question_id = 4;
   int64 server_question_started_at_ms = 5;
   int64 deadline_ms = 6;
-
-  // Task 16 / B3 (docs/work/.../_context.md): monotonic per-room counter, assigned by the
-  // SERVER on every broadcast (full or delta) -- unlike GameMessage.sequence (client-assigned,
-  // SubmitAnswer dedupe only, 9.5), this is what lets a client detect a dropped broadcast:
-  // any gap between the last broadcast_seq it saw and the next one means it missed (next -
-  // last - 1) updates. Introduced with no consumer yet on the client side (PH-3 unresolved) --
-  // this field only gives PH-3 something to detect gaps with, it does not itself define a
-  // RESYNC protocol for broadcasts.
   uint64 broadcast_seq = 7;
-
-  // ------------------------- Phase 2 (Task 20, INCLASS-GAME-001) -------------------------
-  // All four fields below are state FRAGMENTS, not standalone events -- they ride the existing
-  // coalesced snapshot (ADR-4) instead of bypassing it, matching Phase 1's rule that only
-  // truly critical events (AnswerAck, GameOver, ...) skip coalescing (system-architecture.md
-  // §6.2). Unset/empty for GAME_MODE_SOLO rooms, so Phase 1's wire shape is unchanged.
-
-  // The room's mode -- decides how a client should render the screen (solo/cooperative/team/
-  // individual). Set on every snapshot; a Phase 1 room sends GAME_MODE_SOLO explicitly, which
-  // the client should treat exactly like today's solo screen (same as an unset/UNSPECIFIED
-  // value would).
   GameMode game_mode = 8;
-
-  // Team roster, `game_mode == GAME_MODE_TEAM` only. Sent on join/full snapshot -- rosters are
-  // assigned once in WAITING_FOR_PLAYERS (INCLASS-GAME-001-v2.1 §4) and do not change mid-game.
   repeated TeamAssignment teams = 9;
 
   // `game_mechanic == progress_meter` only (`cooperative`/`individual`/`team` modes).
@@ -192,28 +124,21 @@ message PlayerState {
   uint32 score = 4;
   bool answered_current = 5;
   bool connected = 6;
-  // P2 Task 22, `GAME_MODE_TEAM` only. Empty for every other mode (Phase 1 wire shape unchanged).
   string team_id = 7;
 }
 
-// CRITICAL (5.4): bypasses coalescing, never dropped under backpressure.
 message AnswerAck {
   string question_id = 1;
-  // Echoes GameMessage.sequence being acked. A replayed ack carries the ORIGINAL values,
-  // not a recomputed score (9.5).
   uint64 acked_sequence = 2;
   bool accepted = 3;
   RejectReason reject_reason = 4;
   uint32 awarded_points = 5;
   uint32 total_score = 6;
 
-  // Both stamped by the engine off its injected Clock, the moment the message left the
-  // mailbox. The pair below is the ONLY sanctioned basis for response time (9.4).
   int64 server_received_at_ms = 7;
   uint32 response_time_ms = 8;
 }
 
-// CRITICAL: starts the scoring window, so it cannot wait for a coalescing tick.
 message QuestionStarted {
   string question_id = 1;
   uint32 step_index = 2;
@@ -238,13 +163,9 @@ message StudentJoined {
 message GameOver {
   repeated PlayerState final_standings = 1;
   string reason = 2;
-  // P2 Task 23: student_id for an individual winner, team_id for GAME_MODE_TEAM, empty when
-  // there is no single winner (GAME_MODE_COOPERATIVE -- the whole room wins together; a tied
-  // most_points_when_time_up; SOLO).
   string winner_id = 3;
 }
 
-// CRITICAL. Sent when the engine hop is broken (9.7). The WebSocket stays OPEN on
 // purpose: closing it would trigger a reconnect storm against a system already in
 // trouble, and the client can render a degraded banner instead.
 message ConnectionDegraded {
@@ -259,15 +180,6 @@ message ConnectionDegraded {
   bool retryable = 3;
 }
 
-// BEST_EFFORT (Task 15 / B2, docs/work/.../_context.md): sent AFTER the engine confirms a Hot
-// Snapshot write succeeded, carrying the sequence each student's answer is now durably
-// persisted at. ANSWER_ACK stays the immediate, optimistic acknowledgement -- it is NOT the
-// signal a client should discard a RingBuffer entry on, because it fires before the async
-// snapshot write, not after (the exact gap that made a pod crash between the two lose an
-// already-acked answer). A client is only safe to discard sequence N for a student once it has
-// seen a CommittedSeq entry for that student with sequence >= N. Losing an occasional
-// CommittedSeq is harmless and self-heals: the next successful snapshot write reports a higher
-// sequence covering it.
 message CommittedSeq {
   message Entry {
     string student_id = 1;
@@ -276,38 +188,20 @@ message CommittedSeq {
   repeated Entry committed = 1;
 }
 
-// ---------------------------------------------------------------------------
-// Phase 2: In-class group & cooperative games (Task 20, INCLASS-GAME-001)
-// ---------------------------------------------------------------------------
-
-// One team's roster + live aggregated score, embedded in RoomStateSnapshot.teams
-// (`GAME_MODE_TEAM` only). Roster is fixed at team-assignment time (WAITING_FOR_PLAYERS,
-// INCLASS-GAME-001-v2.1 §4); team_score is recomputed and re-sent on every snapshot, same as
-// RoomStateSnapshot.progress is for `cooperative` mode.
 message TeamAssignment {
   string team_id = 1;
   string team_name = 2;
   repeated string student_ids = 3;
-  // Aggregated per `score_aggregation` (Task 22 AC: sum_all | average -- plan.md's own two
-  // values; the PO's broader list also has first_correct_only/majority_vote, not implemented).
   int32 team_score = 4;
 }
 
-// Client -> server: a student shares a draft answer with their team (INCLASS-GAME-001-v2.1
-// §5.6 luật biên 3). Server -> client: the SAME message, relayed to the other members of
-// `team_id` only (never the room). MessageType.UPDATE_DRAFT (already existed) carries this.
 message DraftUpdate {
   string team_id = 1;
   string student_id = 2;
   string draft_content = 3;
-  // TELEMETRY ONLY, same rule as GameMessage.client_timestamp_ms (9.4 rule 5) -- a draft has
-  // no scoring path, but this field must not become one by accident later.
   int64 client_timestamp_ms = 4;
 }
 
-// Embedded in RoomStateSnapshot.progress (`game_mechanic == progress_meter`). Percentage is
-// pre-computed and floored server-side (INCLASS-GAME-001-v2.1 §5.6 luật biên 6) so the client
-// never has to replicate rounding logic.
 message ProgressMeterSnapshot {
   int32 current_progress = 1;
   int32 target_progress = 2;
@@ -315,32 +209,20 @@ message ProgressMeterSnapshot {
   int32 stage_index = 4;
 }
 
-// Embedded in RoomStateSnapshot.shared_resource (`cooperative` mode, `shared_resource !=
-// none`). Only one of the two fields below is meaningful per room -- which one is decided by
-// GameDefinition's shared_resource_type (Task 21), not by which field happens to be set here.
-// Time-based penalties already have a wire home (RoomStateSnapshot.deadline_ms shrinks
-// directly); `remaining_lives` is the one Phase 1 has no field for yet.
 message SharedResourceState {
   string resource_type = 1; // "TIME" | "LIVES", mirrors GameDefinition's shared_resource_type.
   int32 remaining_lives = 2;
 }
 
-// ---------------------------------------------------------------------------
-// Enums
-// ---------------------------------------------------------------------------
 
 enum MessageType {
   MESSAGE_TYPE_UNSPECIFIED = 0;
-
   JOIN_ROOM = 1;
   SUBMIT_ANSWER = 2;
   RESYNC = 3;
   TEACHER_COMMAND = 4;
   HEARTBEAT = 5;
   UPDATE_DRAFT = 6;
-  // Synthesized by the gateway itself on channelInactive (never sent by a real client) when
-  // a channel that completed JOIN_ROOM disconnects -- carries no payload, room_id/student_id
-  // in the envelope are enough for RoomState to flip that player's `connected` to false.
   STUDENT_LEFT = 7;
 
   ROOM_STATE_SNAPSHOT = 20;
@@ -350,10 +232,6 @@ enum MessageType {
   GAME_OVER = 24;
   CONNECTION_DEGRADED = 25;
   COMMITTED_SEQ = 26;
-  // TeacherCommand.KICK_STUDENT's notice to the target student. No payload -- student_id
-  // (envelope) addresses it, same personal-delivery convention as ANSWER_ACK. Unlike
-  // CONNECTION_DEGRADED (deliberately never closes the socket), the gateway closes this
-  // student's channel right after delivering it.
   STUDENT_KICKED = 27;
 }
 
@@ -362,13 +240,9 @@ enum GamePhase {
   LOBBY = 1;
   PLAYING = 2;
   FINISHED = 3;
-  // Phase 2 (9.6). Declared now so the client state machine does not need a breaking
-  // update later; the Phase 1 engine never emits it.
   RESYNCING = 4;
 }
 
-// 5.4. CRITICAL bypasses tick coalescing and is never dropped when a channel goes
-// non-writable -- the channel is closed instead. BEST_EFFORT is coalesced and dropped.
 enum DeliveryClass {
   DELIVERY_CLASS_UNSPECIFIED = 0;
   CRITICAL = 1;
@@ -388,15 +262,9 @@ enum RejectReason {
 enum RoutingStatus {
   ROUTING_STATUS_UNSPECIFIED = 0;
   OK = 1;
-  // The receiving engine pod does not own this room. owner_pod_id carries the pod that
-  // does, so the gateway can correct its cache on the next send (8.2).
   NOT_OWNER = 2;
 }
 
-// Task 20 (INCLASS-GAME-001): decides a room's TEAM STRUCTURE, orthogonal to game_mechanic
-// (§2 PO V2.1 "Nguyên tắc thiết kế cốt lõi" -- Mode vs Mechanic are deliberately separate axes).
-// GAME_MODE_UNSPECIFIED and GAME_MODE_SOLO both render as today's Phase 1 solo screen; the
-// distinction exists so a room can say "solo" explicitly instead of relying on an absent field.
 enum GameMode {
   GAME_MODE_UNSPECIFIED = 0;
   GAME_MODE_SOLO = 1;

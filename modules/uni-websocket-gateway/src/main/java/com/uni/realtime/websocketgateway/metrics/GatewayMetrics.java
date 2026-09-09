@@ -4,12 +4,6 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 
-/**
- * system-architecture.md §15.1 metrics for the Gateway pod, all registered eagerly in this
- * constructor (plan.md Task 12) so every one of them appears in a {@code /actuator/prometheus}
- * scrape from process start -- not only after the first connection or broadcast exercises a
- * handler that used to register its own metric lazily on first use.
- */
 public final class GatewayMetrics {
 
     private final Counter channelNotWritableCounter;
@@ -28,7 +22,6 @@ public final class GatewayMetrics {
         channelNotWritableCounter.increment();
     }
 
-    /** Called once per successful handshake (JoinTokenAuthHandler) -- PromQL's rate() over this gives handshake_rate its name. */
     public void recordHandshake() {
         handshakeCounter.increment();
     }

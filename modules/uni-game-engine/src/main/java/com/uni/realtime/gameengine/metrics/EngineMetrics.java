@@ -7,14 +7,7 @@ import io.micrometer.core.instrument.Timer;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-/**
- * system-architecture.md §15.1 metrics for the Engine pod, all registered eagerly in this
- * constructor so every one of them appears in a {@code /actuator/prometheus} scrape from
- * process start (plan.md Task 12: "không chờ tới cuối mới gắn"). Pod-wide, not per-room: a
- * per-room tag would mean the metric can't exist before a room does, defeating "present from
- * startup" -- Prometheus already computes cross-room percentiles from one histogram at query
- * time.
- */
+
 public final class EngineMetrics {
 
     private final Timer processingLatencyTimer;
@@ -37,13 +30,6 @@ public final class EngineMetrics {
         channelNotWritableCounter.increment();
     }
 
-    /**
-     * Not called by any production code path yet: nothing sends a message into a real
-     * RoomActor's mailbox from outside a test (that ingress is Task 13's job). The gauge
-     * honestly reads 0 until that wiring exists -- wiring only {@link #recordMessageDequeued}
-     * without a matching enqueue call site would make it go negative under RoomActorTest's own
-     * message sends, which is worse than an honest, if currently unused, zero.
-     */
     public void recordMessageEnqueued() {
         mailboxDepth.incrementAndGet();
     }

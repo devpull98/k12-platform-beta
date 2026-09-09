@@ -10,28 +10,6 @@ import org.slf4j.LoggerFactory;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * Task 21's chosen {@link EnginePodResolver}: reads back the registry Engine's
- * {@code EnginePodPresence} writes into the same room-store (Valkey) instance Task 14 already
- * uses for room leases -- no new infra, reuses infra already in Phase 1 scope
- * (system-architecture.md §9.2 Rủi ro 4). Each Engine pod owns a TTL-bound key
- * {@code engine:pod:<podId>} = {@code "<host>:<port>"}, re-announced on the same cadence as its
- * lease renewal; a pod that stops renewing (crash, partition) ages out of the scan below on its
- * own, nothing here needs to notice and delete it.
- *
- * <p>{@code SCAN} (cursor-based, non-blocking on the server), not {@code KEYS} -- the standard
- * production-safe substitute, even though the key count here (dozens of pods, not millions of
- * rooms) would make {@code KEYS} harmless in practice; matching the safe idiom costs nothing.
- *
- * <p>Uses blocking (sync) Lettuce commands deliberately -- this is only ever called from {@link
- * EnginePodDiscovery}'s own background poll thread, never a Netty EventLoop (ADR-005), so there
- * is no async-chaining benefit to buy here, only complexity.
- *
- * <p><b>NOT verified against a real store instance by a unit test</b> -- same convention as
- * Engine's {@code DistributedRoomLeaseStore} (Task 14): faking Lettuce's command surface buys
- * little confidence over exercising the real client. Verified instead by
- * {@code DockerComposeScaleUpIT} against a real Valkey container.
- */
 public final class ValkeyEnginePodResolver implements EnginePodResolver {
 
     private static final Logger log = LoggerFactory.getLogger(ValkeyEnginePodResolver.class);

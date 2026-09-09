@@ -2,54 +2,27 @@ spring:
   application:
     name: uni-websocket-gateway
 
-# Virtual threads are deliberately NOT enabled. The hot path is Netty event loops, and the
-# servlet container here only serves actuator — turning them on would suggest the request
-# path works differently than it does.
-
 server:
-  # Actuator/management only. Game traffic uses the Netty port below.
   port: ${SERVER_PORT:8080}
 
 uni:
   gateway:
-    # Plaintext WebSocket. TLS terminates at the LB/ingress, which must pass the WS upgrade
-    # through and keep its idle timeout above the client heartbeat period (30s).
     ws-port: ${GATEWAY_WS_PORT:9000}
-    # Netty event loops = cores x 2, fixed. Never do DB/store/HTTP work on one.
     event-loop-multiplier: 2
 
     engine:
-      # Every engine pod the gateway holds a frame-channel connection to. Room ownership is
-      # LEARNED from owner_pod_id on responses, so this list is only the dial list — the
-      # gateway never hashes a room id itself.
       pods: ${ENGINE_PODS:localhost:9100}
-
-      # Task 21: closes the gap where a brand-new Engine pod (absent from `pods` above at Gateway
-      # boot) was otherwise unreachable without a Gateway restart (system-architecture.md §9.2
-      # Rủi ro 4). Off by default, same off-by-default-until-verified posture as
-      # uni.engine.room-store.enabled -- reuses the SAME Valkey instance, both flipped on together
-      # in docker-compose.dev.yml and verified together via DockerComposeScaleUpIT.
       pod-discovery:
         enabled: ${GATEWAY_ENGINE_POD_DISCOVERY_ENABLED:false}
         room-store-uri: ${GATEWAY_ENGINE_POD_DISCOVERY_ROOM_STORE_URI:redis://localhost:6379}
         poll-interval-seconds: ${GATEWAY_ENGINE_POD_DISCOVERY_POLL_INTERVAL_SECONDS:5}
 
-    # Local-Docker-only stand-in for the still-blocked G1a/G1c join token verifier (see the
-    # com.uni.realtime.websocketgateway.auth.dev package javadoc). NEVER valid for staging/production --
-    # gated behind BOTH this flag AND the "dev-docker" Spring profile so neither alone can
-    # accidentally light it up.
     dev-join-token:
       enabled: ${GATEWAY_DEV_JOIN_TOKEN_ENABLED:false}
       hmac-secret: ${GATEWAY_DEV_JOIN_TOKEN_SECRET:}
       ttl-seconds: ${GATEWAY_DEV_JOIN_TOKEN_TTL_SECONDS:300}
       replay-guard-enabled: ${GATEWAY_DEV_JOIN_TOKEN_REPLAY_GUARD_ENABLED:false}
 
-    # Even more permissive than dev-join-token above: ZERO signature check, any
-    # "join-token:<student_id>:<room_id>" string is accepted outright (see
-    # com.uni.realtime.websocketgateway.auth.dev.AlwaysAcceptJoinTokenVerifier's javadoc). NEVER
-    # valid for staging/production -- same dual-gate as dev-join-token. Mutually exclusive with
-    # dev-join-token in practice: enabling both fails Gateway startup (ambiguous JoinTokenVerifier
-    # bean) rather than silently picking one.
     always-accept-join-token:
       enabled: ${GATEWAY_ALWAYS_ACCEPT_JOIN_TOKEN_ENABLED:false}
 
@@ -65,14 +38,9 @@ management:
       probes:
         enabled: true
       group:
-        # Liveness stays internal-only: an engine outage must not make Kubernetes restart a
-        # perfectly alive gateway.
         liveness:
           include: livenessState
           show-components: always
-        # The gateway has no hard dependency to gate readiness on. It is deliberately
-        # useful even when every engine pod is unreachable — it answers CONNECTION_DEGRADED
-        # instead of dropping sockets (9.7).
         readiness:
           include: readinessState
           show-components: always

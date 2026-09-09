@@ -10,24 +10,6 @@ import io.netty.channel.SimpleChannelInboundHandler;
 import java.time.Clock;
 import java.time.Duration;
 
-/**
- * Per-connection token buckets keyed conceptually by {@code student_id} (§5.6, §10.1) --
- * {@link GatewayPipeline} builds a fresh handler instance per channel, and a channel belongs
- * to exactly one student once {@code JoinTokenAuthHandler} has bound it, so no shared map across
- * connections is needed here.
- *
- * <p>Deliberately never keyed by IP: a school behind one NAT IP can put 500+ students on it,
- * and IP-based limiting would throttle all of them for one student's excess (plan.md Task 7's
- * mandated test). L1's IP-based admission control (300 handshake/min, §5.6) is a connection-time
- * concern for the ingress/handshake layer, not this per-message handler -- it is not
- * implemented here.
- *
- * <p>Only {@code SUBMIT_ANSWER}'s rejection can actually ride the wire: {@code AnswerAck}'s
- * {@code reject_reason} is the only field the schema has for this. {@code UPDATE_DRAFT} and
- * {@code HEARTBEAT} have no ack payload at all ({@code UPDATE_DRAFT}'s doesn't even exist yet
- * in the oneof -- tech-design.md §G3), so an over-limit message of either type is dropped
- * silently; the channel is never closed either way.
- */
 public final class RateLimitHandler extends SimpleChannelInboundHandler<GameMessage> {
 
     private final TokenBucket submitAnswerBucket;

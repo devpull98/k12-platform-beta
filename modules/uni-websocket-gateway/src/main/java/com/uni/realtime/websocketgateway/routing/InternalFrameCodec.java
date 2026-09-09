@@ -15,13 +15,6 @@ import org.slf4j.LoggerFactory;
 
 import java.util.List;
 
-/**
- * Framing + protobuf codec for the Gateway side of the internal frame channel (ADR-001): the
- * same length-prefixed wire format {@code uni-game-engine}'s {@code FrameCodec} implements, kept
- * as its own small class here rather than shared -- gateway and engine are separate
- * deployables with independent Netty pipelines, and only the protobuf schema
- * ({@code uni-protocol}) is shared between them, never Netty handler code.
- */
 public final class InternalFrameCodec {
 
     public static final int MAX_FRAME_LENGTH = 1024 * 1024;

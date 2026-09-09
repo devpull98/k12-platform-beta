@@ -29,31 +29,6 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.util.List;
 
-/**
- * Task 13: actually starts the WebSocket edge on process boot.
- *
- * <p>Gated on a real {@link JoinTokenVerifier} bean existing -- there isn't one yet (G1a/G1c,
- * tech-design.md §9.1, still waiting on the platform team for the signing algorithm and clock
- * skew tolerance). {@code JoinTokenAuthHandler}'s own javadoc already forbids wiring a temporary
- * verifier into staging/production, so the correct behavior with no real bean present is for
- * this component to simply not exist -- the app still boots and serves {@code /actuator/*}, it
- * just never opens the game WebSocket. Once G1a/G1c resolve, adding one {@code @Bean
- * JoinTokenVerifier} is the only change needed to light this up; nothing here changes.
- *
- * <p>{@code uni.gateway.engine.pods} entries are assigned pod ids by list position
- * ("engine-0", "engine-1", ...) -- a Phase 1 simplification, since the config today is a flat
- * host:port list with no id of its own. This requires each Engine pod's own {@code
- * uni.engine.pod-id} to match its position in this list; PH-1 / real service discovery should
- * replace this once it exists.
- *
- * <p>Task 21 (2026-09-09): the list above is still read exactly once here, at boot -- that part
- * is unchanged and, on its own, is the whole reason Gateway used to be unable to reach an Engine
- * pod started later (system-architecture.md §9.2 Rủi ro 4). When {@code
- * uni.gateway.engine.pod-discovery.enabled}, {@link EnginePodDiscovery} is additionally started
- * on its own background thread, polling {@link ValkeyEnginePodResolver} and dialing any pod not
- * already connected -- see that class's javadoc for why Valkey and not a Kubernetes-native
- * mechanism.
- */
 @Component
 @ConditionalOnBean(JoinTokenVerifier.class)
 public final class GatewayNetworkLifecycle implements ApplicationRunner, DisposableBean {
@@ -106,9 +81,6 @@ public final class GatewayNetworkLifecycle implements ApplicationRunner, Disposa
         }
 
         if (podDiscoveryEnabled) {
-            // Task 21: separate connection from Engine's own room-store client (different
-            // process), same store instance. Off the Netty EventLoop entirely -- both this
-            // connect and every subsequent poll run on EnginePodDiscovery's own thread.
             podDiscoveryRoomStoreClient = RedisClient.create(podDiscoveryRoomStoreUri);
             podDiscoveryConnection = podDiscoveryRoomStoreClient.connect();
             ValkeyEnginePodResolver resolver = new ValkeyEnginePodResolver(podDiscoveryConnection.sync());

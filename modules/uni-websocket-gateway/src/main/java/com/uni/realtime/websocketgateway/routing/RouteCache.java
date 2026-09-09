@@ -6,17 +6,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * {@code room_id -> engine_pod_id}, learned lazily from {@code InternalHeader.owner_pod_id}
- * on Engine responses (§4.5, §8.2, decision PH-2). Deliberately no TTL: a stale entry is
- * corrected the next time it is used (a {@code NOT_OWNER} response re-learns it), and
- * {@link #evictPod} wipes entries immediately when a pod's connection drops. Nothing here
- * knows about {@code room_id % N} -- ownership is entirely Engine's {@code RoomOwnership}
- * (Task 10); a wrong guess here just costs one extra internal hop, never correctness.
- *
- * <p>Accessed from whichever Netty event-loop thread a given pod connection happens to run
- * on, so the map is a {@link ConcurrentHashMap} rather than assuming single-threaded access.
- */
 public final class RouteCache {
 
     private final Map<String, String> roomToPod = new ConcurrentHashMap<>();

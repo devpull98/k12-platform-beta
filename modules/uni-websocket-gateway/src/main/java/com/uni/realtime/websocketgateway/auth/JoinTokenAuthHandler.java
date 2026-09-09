@@ -14,33 +14,6 @@ import org.slf4j.LoggerFactory;
 
 import java.util.UUID;
 
-/**
- * The first WebSocket data frame on a connection must be a {@code JOIN_ROOM} carrying the
- * one-time joinToken (§3.4). This handler verifies it exactly once, binds
- * {@link ChannelAttributes}, then removes itself so nothing after it re-checks a signature
- * per packet -- the joinToken has no relevance once identity is bound to the channel.
- *
- * <p>The verified {@code JoinRoom} message is re-emitted as an already-decoded
- * {@link GameMessage} (not the raw frame) so it is not parsed twice: the codec handler later
- * in the pipeline is typed to {@link BinaryWebSocketFrame} and simply passes a
- * {@link GameMessage} object straight through.
- *
- * <p>This is also the only point in the pipeline where the room a channel belongs to becomes
- * known, so it registers the channel into {@link RoomRegistry} here (Task 8) -- removal
- * happens in {@code RoomRouteHandler}, which (unlike this handler) stays in the pipeline for
- * the channel's whole life.
- *
- * <p>Task 12 / §15.3: a fresh {@code trace_id} is generated here (not carried by the joinToken)
- * and bound alongside identity, so {@code RoomRouteHandler} can stamp it into
- * {@code InternalHeader} for every message this connection ever sends onward. Every successful
- * verification also counts toward {@code handshake_rate}.
- *
- * <p>§5.6 L2: once a joinToken verifies who is connecting, {@link StudentHandshakeAdmissionController}
- * caps how often that SAME {@code student_id} may complete a handshake (10/phút) -- distinct
- * from L1's IP-keyed budget ({@code IpAdmissionHandler}, deliberately generous because a whole
- * school shares one NAT IP) and from {@code RateLimitHandler}'s in-game message limits (governs
- * an already-open connection, not how often a new one may be opened).
- */
 public final class JoinTokenAuthHandler extends SimpleChannelInboundHandler<BinaryWebSocketFrame> {
 
     private static final Logger log = LoggerFactory.getLogger(JoinTokenAuthHandler.class);

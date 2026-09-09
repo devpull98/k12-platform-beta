@@ -1,11 +1,5 @@
 package com.uni.realtime.gameengine.room;
 
-/**
- * Task 10 / decision B2: which Engine pod owns a room, behind exactly one interface. Phase 2
- * replaces the single Phase-1 implementation with Cluster Sharding without touching
- * {@code FrameChannelServer}, the Gateway's {@code RouteCache}, or {@code RoomActor} --
- * nothing outside this interface's implementation may know how ownership is actually decided.
- */
 public interface RoomOwnership {
 
     boolean isOwner(String roomId);

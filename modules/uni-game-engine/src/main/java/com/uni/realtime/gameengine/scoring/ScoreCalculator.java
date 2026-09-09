@@ -2,11 +2,6 @@ package com.uni.realtime.gameengine.scoring;
 
 import java.util.List;
 
-/**
- * Isolated on purpose: RoomState never has to know how a formula decides correctness or
- * points, only that it can ask for a score given what the student submitted, what would have
- * been correct, and how fast they answered.
- */
 public interface ScoreCalculator {
 
     /**

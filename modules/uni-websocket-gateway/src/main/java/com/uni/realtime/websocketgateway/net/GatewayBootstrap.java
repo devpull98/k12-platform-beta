@@ -16,12 +16,6 @@ import io.netty.channel.socket.nio.NioServerSocketChannel;
 
 import java.net.InetSocketAddress;
 
-/**
- * The WebSocket edge (ADR-005): Spring Boot only boots the process and serves
- * {@code /actuator/*}, never this. §13.2: one fixed event loop group sized {@code cores * 2}
- * handles every connection -- no per-request thread, no blocking call is ever allowed to run
- * on it.
- */
 public final class GatewayBootstrap {
 
     private final int port;
@@ -35,20 +29,6 @@ public final class GatewayBootstrap {
     private EventLoopGroup eventLoopGroup;
     private Channel serverChannel;
 
-    /**
-     * {@code roomRegistry} is shared across every connection this bootstrap accepts (Task 8)
-     * -- unlike {@code JoinTokenAuthHandler}/{@code RateLimitHandler}, which {@link GatewayPipeline}
-     * builds fresh per channel, the registry is exactly this pod's one {@code room_id ->
-     * Set<Channel>} map and must be the same instance a {@code Broadcaster} fans out through.
-     * {@code gatewayMetrics} is likewise one shared instance (Task 12) so its metrics are
-     * registered once, eagerly, rather than re-registered per connection. {@code
-     * ipAdmissionController} (Task 7, §5.6 L1) is shared for the same reason: it counts
-     * handshake attempts per IP across every connection, not just one -- {@code
-     * studentHandshakeAdmission} (§5.6 L2) is the same shape, keyed by {@code student_id}
-     * instead. {@code engineSender}
-     * (Task 13) is the pod's one {@code FrameChannelClient} -- every connection's {@code
-     * RoomRouteHandler} forwards through the same set of Engine-pod connections, never one each.
-     */
     public GatewayBootstrap(int port, JoinTokenVerifier joinTokenVerifier, RoomRegistry roomRegistry,
             GatewayMetrics gatewayMetrics, IpAdmissionController ipAdmissionController,
             StudentHandshakeAdmissionController studentHandshakeAdmission, EngineSender engineSender) {
@@ -80,7 +60,6 @@ public final class GatewayBootstrap {
         serverChannel = bootstrap.bind(port).sync().channel();
     }
 
-    /** Actual bound port -- useful when constructed with port 0 (ephemeral, tests only). */
     public int boundPort() {
         return ((InetSocketAddress) serverChannel.localAddress()).getPort();
     }

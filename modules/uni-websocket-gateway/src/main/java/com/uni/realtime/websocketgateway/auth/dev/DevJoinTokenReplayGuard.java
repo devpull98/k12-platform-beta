@@ -5,21 +5,6 @@ import com.uni.realtime.websocketgateway.auth.JoinTokenRejectedException;
 import java.time.Clock;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * In-memory, single-pod, local-Docker-only approximation of the real one-time join-token-replay
- * guard (system-architecture.md: {@code SET join-token:{jti} 1 EX 30 NX} against the room-store
- * cluster -- Valkey in production today, see CLAUDE.md).
- *
- * <p><b>This is NOT that guard.</b> It gives zero protection across multiple gateway pods or a
- * process restart, and it deliberately stays synchronous/in-memory rather than calling that
- * store: {@link com.uni.realtime.websocketgateway.auth.JoinTokenVerifier#verify} runs on a Netty EventLoop
- * thread ({@code JoinTokenAuthHandler.channelRead0}), and CLAUDE.md's hard rule ("No DB/store/HTTP
- * call inside a Netty EventLoop") forbids a real round trip to it there without first turning
- * {@code JoinTokenVerifier} into an asynchronous interface everywhere it's called -- a real
- * interface change out of scope for local test infrastructure. This class exists only so a
- * "replay a used joinToken, expect rejection" scenario is exercisable locally; never read it as
- * validating the real distributed design.
- */
 public final class DevJoinTokenReplayGuard {
 
     private final ConcurrentHashMap<String, Long> usedJtis = new ConcurrentHashMap<>();

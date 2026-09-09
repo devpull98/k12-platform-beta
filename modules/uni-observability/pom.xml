@@ -28,8 +28,6 @@
     </properties>
 
     <dependencies>
-        <!-- Actuator endpoints (/actuator/prometheus) are the whole point of running a
-             Spring context inside two otherwise Netty/Pekko services. -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
@@ -52,15 +50,11 @@
             <artifactId>opentelemetry-exporter-otlp</artifactId>
         </dependency>
 
-        <!-- JSON log lines carrying traceId, so Promtail can link Loki to Tempo. -->
         <dependency>
             <groupId>net.logstash.logback</groupId>
             <artifactId>logstash-logback-encoder</artifactId>
             <version>${logstash-logback.version}</version>
         </dependency>
-
-        <!-- Used only by KafkaLogAppender, which only starts under the prod profile.
-             Phase 1 needs no broker for anything else. -->
         <dependency>
             <groupId>org.apache.kafka</groupId>
             <artifactId>kafka-clients</artifactId>

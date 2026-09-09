@@ -15,29 +15,13 @@ import org.slf4j.LoggerFactory;
 
 import java.util.List;
 
-/**
- * Framing + protobuf codec for the internal Gateway &lt;-&gt; Engine hop (ADR-001): one
- * long-lived TCP connection per (gateway pod, engine pod) pair, multiplexed by
- * {@code room_id} inside each {@link GameMessage} rather than one connection per room.
- *
- * <p>Framing is Netty's own {@link LengthFieldBasedFrameDecoder} / {@link LengthFieldPrepender}
- * on purpose (plan.md Task 4: "không tự viết parser"). Protobuf decode/encode reuses the
- * generated {@link GameMessage} class directly instead of pulling in the generic
- * {@code netty-codec-protobuf} reflection-based codec.
- */
 public final class FrameCodec {
-
-    /** ADR-001: a frame past this size is a protocol violation, not a legitimately large one. */
     public static final int MAX_FRAME_LENGTH = 1024 * 1024;
 
     private static final int LENGTH_FIELD_LENGTH = 4;
 
     private FrameCodec() {}
 
-    /**
-     * Fresh handler instances every call — {@link LengthFieldBasedFrameDecoder} buffers
-     * partial frames and must not be shared across connections.
-     */
     public static List<ChannelHandler> newHandlers() {
         return List.of(
                 new LengthFieldBasedFrameDecoder(MAX_FRAME_LENGTH, 0, LENGTH_FIELD_LENGTH, 0, LENGTH_FIELD_LENGTH),
@@ -61,11 +45,6 @@ public final class FrameCodec {
         }
     }
 
-    /**
-     * plan.md Task 4 AC: an oversized or corrupt frame closes the connection and logs it —
-     * it must not take the whole pod down, and {@link LengthFieldBasedFrameDecoder} already
-     * refuses to buffer past {@link #MAX_FRAME_LENGTH} so this never risks an OOM.
-     */
     private static final class ChannelFaultHandler extends ChannelInboundHandlerAdapter {
         private static final Logger log = LoggerFactory.getLogger(FrameCodec.class);
 

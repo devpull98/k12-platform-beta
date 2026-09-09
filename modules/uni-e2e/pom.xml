@@ -19,8 +19,6 @@
         No main sources -- this module exists to run the test in src/test/java.
     </description>
 
-    <!-- This module's own Java version, independent of every other module in the reactor
-         (see docs/architecture/adr-platform-foundation.md); root no longer sets java.version. -->
     <properties>
         <java.version>25</java.version>
         <maven.compiler.release>${java.version}</maven.compiler.release>
@@ -39,8 +37,6 @@
             <groupId>com.uni</groupId>
             <artifactId>uni-game-engine</artifactId>
         </dependency>
-        <!-- TestProbe: drives RoomSupervisor.GetRoomActor to start a question directly (no
-             wire message exists for it yet, see this module's WalkingSkeletonTest javadoc). -->
         <dependency>
             <groupId>org.apache.pekko</groupId>
             <artifactId>pekko-actor-testkit-typed_${scala.binary.version}</artifactId>

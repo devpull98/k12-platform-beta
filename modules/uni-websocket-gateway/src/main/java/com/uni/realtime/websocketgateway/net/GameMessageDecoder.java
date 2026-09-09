@@ -6,12 +6,6 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.handler.codec.http.websocketx.BinaryWebSocketFrame;
 
-/**
- * Decodes every WS data frame after the first one -- {@link JoinTokenAuthHandler} in
- * {@code auth} already decoded and re-emitted the first {@code JOIN_ROOM} frame as a
- * {@link GameMessage}, and this handler (typed to {@link BinaryWebSocketFrame}) simply lets
- * that already-decoded object pass through untouched.
- */
 public final class GameMessageDecoder extends SimpleChannelInboundHandler<BinaryWebSocketFrame> {
 
     @Override

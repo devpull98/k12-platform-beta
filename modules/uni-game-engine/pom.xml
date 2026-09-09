@@ -77,24 +77,11 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
-                <!-- Explicit version: no starter-parent pluginManagement to supply a default
-                     anymore; pin to the same Boot version this module's dependencyManagement
-                     imports (root's ${spring-boot.version}). -->
                 <version>${spring-boot.version}</version>
                 <configuration>
-                    <!-- Run from the repo root, not this module dir. Logback writes to a
-                         relative logs/ path and Promtail mounts the root one; without this
-                         the log file lands under modules/ and nothing ships to Loki. -->
                     <workingDirectory>${session.executionRootDirectory}</workingDirectory>
-                    <!-- Task 13: see the identical note in uni-websocket-gateway/pom.xml. Without a
-                         classifier, `repackage` swaps this module's main artifact for the
-                         executable fat jar (classes under BOOT-INF/classes), which broke
-                         uni-e2e's dependency on this module during a bare `mvn clean install`
-                         from root. -->
                     <classifier>exec</classifier>
                 </configuration>
-                <!-- The starter-parent used to bind `repackage` to the `package` phase for free;
-                     without it as our parent, that binding needs declaring explicitly here. -->
                 <executions>
                     <execution>
                         <goals>

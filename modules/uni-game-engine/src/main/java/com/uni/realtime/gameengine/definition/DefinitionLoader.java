@@ -8,12 +8,6 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * Load-time guardrails (§10.5, plan.md Task 11). A {@link GameDefinition} is untrusted data
- * uploaded by an operator, so every one of these checks runs once, here, before anything else
- * ever sees the definition -- a cycle or an unimplemented {@code tick_mode} must fail the
- * upload, never surface as a hang or a silent fallback discovered mid-session.
- */
 public final class DefinitionLoader {
 
     public GameDefinition load(GameDefinition definition) throws DefinitionRejectedException {
@@ -28,12 +22,6 @@ public final class DefinitionLoader {
             throw new DefinitionRejectedException("max_transitions must be positive");
         }
         if (definition.missedStepPolicy() != MissedStepPolicy.ZERO) {
-            // Task 17 / B4 (docs/work/.../_context.md): RoomActor/RoomState have no late-join
-            // flow and never consult this field -- SKIP would silently behave as ZERO, and
-            // ALLOW_LATE additionally blows the < 5 KB Hot Snapshot budget (system-architecture.md
-            // §4.8: "cấm dùng trong thi đấu... làm phình snapshot > 5 KB"). Reject at load time
-            // rather than let either lie dormant until someone trusts a policy the engine
-            // silently ignores -- same fail-fast pattern as tick_mode FIXED above.
             throw new DefinitionRejectedException(
                     "missed_step_policy " + definition.missedStepPolicy()
                             + " has no Phase 1 implementation (only ZERO is honored -- plan.md Task 17)");
@@ -64,12 +52,6 @@ public final class DefinitionLoader {
         return definition;
     }
 
-    /**
-     * P2 Task 21 (INCLASS-GAME-001-v2.1 §3): guardrails for the cooperative-progress fields --
-     * same fail-fast-before-anything-sees-it posture as every other check in this class. Modes
-     * without a {@code RoomState} implementation yet are rejected outright rather than silently
-     * behaving like SOLO, same reasoning as {@code missed_step_policy} above.
-     */
     private void checkCooperativeMode(GameDefinition definition) throws DefinitionRejectedException {
         if (definition.gameMode() == GameMode.GAME_MODE_INDIVIDUAL) {
             throw new DefinitionRejectedException(
@@ -102,11 +84,6 @@ public final class DefinitionLoader {
         }
     }
 
-    /**
-     * P2 Task 22 (INCLASS-GAME-001-v2.1 §3.1): {@code team_rosters} must have 2-4 entries (PO's
-     * {@code team_count}), each with at least one member, and no student_id in more than one
-     * roster (a student cannot play for two teams at once).
-     */
     private void checkTeamMode(GameDefinition definition) throws DefinitionRejectedException {
         if (definition.teamRosters().size() < 2 || definition.teamRosters().size() > 4) {
             throw new DefinitionRejectedException(
@@ -151,7 +128,6 @@ public final class DefinitionLoader {
         }
     }
 
-    /** Classic white/gray/black DFS: a back-edge to a node still on the current path is a cycle. */
     private void rejectCycles(Map<String, Step> stepsById) throws DefinitionRejectedException {
         Set<String> visited = new HashSet<>();
         Set<String> onPath = new HashSet<>();

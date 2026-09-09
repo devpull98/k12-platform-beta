@@ -14,31 +14,9 @@ import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
 
-/**
- * Local-Docker-only stand-in for the real, externally-owned joinToken format (G1a/G1c -- see
- * {@link com.uni.realtime.websocketgateway.auth.JoinTokenVerifier}'s javadoc). This is NOT the production
- * signing algorithm; it exists solely so this repo's own test tooling can mint a joinToken
- * {@link com.uni.realtime.websocketgateway.auth.dev.DevJoinTokenVerifier} can verify, without waiting on the
- * platform team's decision. Never use outside local development/Docker.
- *
- * <p>Wire format: {@code base64url(payload) + "." + base64url(HMAC-SHA256(secret, base64url(payload)))}.
- * {@code payload} is {@code studentId|roomId|sessionId|role1,role2|expEpochMs|jti}, {@code |}-joined
- * UTF-8 -- a deliberately dumb format (no JSON dependency needed here), which is why it assumes
- * none of the fields contain {@code |} or {@code ,}.
- *
- * <p>{@code exp}/{@code jti} are carried only in the wire format and in {@link DecodedDevJoinToken}
- * here, never added to the shared {@link JoinTokenClaims} record -- that record is a cross-team
- * production contract this repo does not own, and the real G1a/G1c answer may carry expiry/replay
- * information in a completely different shape (e.g. a JWT {@code exp} claim).
- */
+
 public final class DevJoinTokenCodec {
 
-    /**
-     * Shared literal between the {@link DevJoinTokenVerifier} Spring bean (verify side, reads this
-     * as its YAML default) and any test tooling that signs its own joinTokens (e.g. a simulated
-     * client) -- defined ONCE here so the two sides can never drift out of sync by copy-paste.
-     * {@code application-dev-docker.yml}'s default must stay textually identical to this.
-     */
     public static final String DEFAULT_DEV_SECRET = "uni-realtime-local-docker-dev-secret-do-not-use-elsewhere";
 
     private static final String HMAC_ALGORITHM = "HmacSHA256";

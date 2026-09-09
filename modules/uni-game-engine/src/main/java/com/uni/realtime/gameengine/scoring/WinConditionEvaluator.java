@@ -4,12 +4,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-/**
- * P2 Task 23 (INCLASS-GAME-001-v2.1 §3.2): pure win-condition logic, deliberately free of
- * {@code RoomState}/actor/Pekko dependencies (same "rules stay testable without an actor system"
- * reasoning {@code RoomState} itself already follows). {@code RoomState} calls these, it does not
- * duplicate this logic inline.
- */
 public final class WinConditionEvaluator {
 
     private WinConditionEvaluator() {}

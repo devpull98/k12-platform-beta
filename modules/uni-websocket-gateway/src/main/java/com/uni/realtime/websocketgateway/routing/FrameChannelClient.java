@@ -21,22 +21,6 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
-/**
- * Gateway's side of the internal frame channel (ADR-001, PH-2, §4.5, §8.2): one long-lived
- * connection per known Engine pod, shared by every room -- never one connection per room.
- *
- * <p>Routing is entirely learned, never computed: a room with no cache entry goes out
- * round-robin, and whichever pod answers stamps {@code InternalHeader.owner_pod_id} on its
- * response, which is what {@link RouteCache} learns from. This class does not, and must not,
- * know anything about {@code room_id % N} -- that rule lives only in Engine's
- * {@code RoomOwnership} (Task 10); the day it changes to Cluster Sharding, nothing here needs
- * to change.
- *
- * <p>Also implements {@link EngineConnector} (Task 21) -- {@link #connect} and a new
- * {@link #isConnected} are the two operations {@code EnginePodDiscovery} needs to dial pods
- * found after boot, on top of the ones {@code GatewayNetworkLifecycle} already calls for the
- * static {@code uni.gateway.engine.pods} list.
- */
 public final class FrameChannelClient implements EngineSender, EngineConnector {
 
     private final RouteCache routeCache;
@@ -49,12 +33,6 @@ public final class FrameChannelClient implements EngineSender, EngineConnector {
     private final List<String> knownPods = new CopyOnWriteArrayList<>();
     private final AtomicInteger roundRobinCursor = new AtomicInteger();
 
-    /**
-     * @param onPodDisconnected receives the room ids {@link RouteCache#evictPod} just orphaned
-     *     (§9.7, Task 13) -- whoever is still connected to those rooms lost their route and needs
-     *     {@code CONNECTION_DEGRADED} without their WebSocket being closed. Empty when the pod
-     *     had no rooms cached yet (nothing to degrade).
-     */
     public FrameChannelClient(RouteCache routeCache, Consumer<GameMessage> onResponse,
             Consumer<Set<String>> onPodDisconnected, EventLoopGroup eventLoopGroup, GatewayMetrics gatewayMetrics) {
         this.routeCache = routeCache;
@@ -64,7 +42,6 @@ public final class FrameChannelClient implements EngineSender, EngineConnector {
         this.gatewayMetrics = gatewayMetrics;
     }
 
-    /** Whether a connection to this pod id is already open. */
     @Override
     public boolean isConnected(String podId) {
         return podChannels.containsKey(podId);
@@ -80,8 +57,6 @@ public final class FrameChannelClient implements EngineSender, EngineConnector {
                 .handler(new ChannelInitializer<SocketChannel>() {
                     @Override
                     protected void initChannel(SocketChannel ch) {
-                        // §10.2 / plan.md Task 9: the same backpressure primitive on this hop
-                        // too -- if Engine can't keep up reading responses off this connection,
                         // this channel backs up and stops accepting more requests to forward.
                         ch.pipeline().addLast(new BackpressureHandler(gatewayMetrics));
                         for (var handler : InternalFrameCodec.newHandlers()) {

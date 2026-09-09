@@ -20,24 +20,8 @@ import io.netty.channel.socket.nio.NioServerSocketChannel;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
-/**
- * Engine-side listener for the internal frame channel (ADR-001): Gateway pods dial in and
- * keep one long-lived TCP connection open, carrying every room they have a client for. This
- * class bootstraps Netty, applies {@link FrameCodec}, then hands every decoded
- * {@link GameMessage} to {@link RoomOwnershipHandler} (Task 10) to decide whether it belongs
- * to this pod.
- *
- * <p>Task 13: {@code onOwnedMessage} carries the {@link Channel} it arrived on (not just the
- * message) because a reply has to go back out on that exact connection -- {@link
- * RoomOwnershipHandler} itself stays {@code Consumer}-only unchanged, this class just closes
- * over {@code ch} when building the per-channel lambda it hands to that handler. {@code
- * onChannelClosed} lets {@code RoomSupervisor} stop treating a dead connection as a broadcast
- * subscriber the instant it drops, mirroring how the Gateway's {@code RoomRouteHandler} reacts
- * to {@code channelInactive} (Task 8).
- */
 public final class FrameChannelServer {
 
-    /** plan.md Task 9 AC: 32 KB low / 64 KB high, per channel -- same value as the Gateway side. */
     static final WriteBufferWaterMark WATER_MARK = new WriteBufferWaterMark(32 * 1024, 64 * 1024);
 
     private final int port;
@@ -70,10 +54,6 @@ public final class FrameChannelServer {
                 .childHandler(new ChannelInitializer<SocketChannel>() {
                     @Override
                     protected void initChannel(SocketChannel ch) {
-                        // §10.2 / plan.md Task 9: if this pod can't keep up writing responses
-                        // (or NOT_OWNER replies) fast enough, this connection backs up and
-                        // stops reading more requests off it -- the same mechanism as every
-                        // other hop, applied here instead of a bespoke mailbox-depth signal.
                         ch.pipeline().addLast(newBackpressureHandler(engineMetrics));
                         for (ChannelHandler handler : FrameCodec.newHandlers()) {
                             ch.pipeline().addLast(handler);

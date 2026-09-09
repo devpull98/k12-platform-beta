@@ -3,20 +3,6 @@ package com.uni.realtime.gameengine.room;
 import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 
-/**
- * Task 14: the narrow slice of external-store access {@link LeaseBasedRoomOwnership} needs, kept
- * as an interface so the ownership/caching/fallback logic is testable without a real store
- * connection (the production implementation, {@code DistributedRoomLeaseStore}, lives in
- * {@code engine.persistence} and is not exercised by any test in this repo -- there is no such
- * store available in this development environment to verify it against, the same caveat
- * {@code JoinTokenAuthHandler}'s placeholder verifier already carries for its own real
- * implementation).
- *
- * <p>Both methods return a {@link CompletableFuture} on purpose: whatever calls this sits one
- * hop away from the Netty EventLoop (via {@link LeaseBasedRoomOwnership#ensureAcquired}),
- * which must never block (ADR-005). A synchronous, blocking interface here would make that
- * impossible to guarantee at the call site.
- */
 public interface RoomLeaseStore {
 
     /**

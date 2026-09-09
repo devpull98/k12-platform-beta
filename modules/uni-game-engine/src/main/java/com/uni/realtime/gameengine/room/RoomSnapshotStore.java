@@ -3,12 +3,6 @@ package com.uni.realtime.gameengine.room;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
-/**
- * Task 14: where a {@link RoomActor} persists its Hot Snapshot. Async by contract for the same
- * reason as {@link RoomLeaseStore} -- callers must never block waiting on this (§13.2, ADR-005),
- * and {@code RoomActor}'s caller in particular must never let a slow/unavailable store delay
- * {@code ANSWER_ACK} or any other hot-path reply.
- */
 public interface RoomSnapshotStore {
 
     /**
