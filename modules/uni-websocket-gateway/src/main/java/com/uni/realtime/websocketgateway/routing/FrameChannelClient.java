@@ -31,8 +31,13 @@ import java.util.function.Consumer;
  * know anything about {@code room_id % N} -- that rule lives only in Engine's
  * {@code RoomOwnership} (Task 10); the day it changes to Cluster Sharding, nothing here needs
  * to change.
+ *
+ * <p>Also implements {@link EngineConnector} (Task 21) -- {@link #connect} and a new
+ * {@link #isConnected} are the two operations {@code EnginePodDiscovery} needs to dial pods
+ * found after boot, on top of the ones {@code GatewayNetworkLifecycle} already calls for the
+ * static {@code uni.gateway.engine.pods} list.
  */
-public final class FrameChannelClient implements EngineSender {
+public final class FrameChannelClient implements EngineSender, EngineConnector {
 
     private final RouteCache routeCache;
     private final Consumer<GameMessage> onResponse;
@@ -59,7 +64,14 @@ public final class FrameChannelClient implements EngineSender {
         this.gatewayMetrics = gatewayMetrics;
     }
 
+    /** Whether a connection to this pod id is already open. */
+    @Override
+    public boolean isConnected(String podId) {
+        return podChannels.containsKey(podId);
+    }
+
     /** Opens (and keeps open) the one connection this pair of pods will ever need. */
+    @Override
     public void connect(String podId, String host, int port) throws InterruptedException {
         Bootstrap bootstrap = new Bootstrap()
                 .group(eventLoopGroup)

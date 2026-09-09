@@ -87,16 +87,21 @@ system-architecture.md §7.5 — Product/Business chưa trả lời.
 | **PH-3** | Client contract SẢN XUẤT: ring buffer + `sequence` + RESYNC (§9.3) chưa có đội nhận việc. Task 20 (2026-09-07) đã thêm xử lý `RESYNC` thật ở server (`RoomActor.onResync`) + một client **giả lập chỉ để test** (`SimulatedStudentClient`, `modules/uni-e2e`) — không phải PH-3 thật, không implement discard theo `COMMITTED_SEQ` (xem `plan.md` Task 15) | SLA *"mất dữ liệu = 0"* (§15.2) **vẫn không có cơ sở** — client thật chưa tồn tại. Chaos test §16.5 bước 5 vẫn không thể pass |
 
 > [!WARNING]
-> **Rủi ro vận hành đã biết của Giai đoạn 1 (cập nhật 2026-09-08):** hành vi *mặc định*
+> **Rủi ro vận hành đã biết của Giai đoạn 1 (cập nhật 2026-09-09):** hành vi *mặc định*
 > (`ModuloRoomOwnership`, cờ `uni.engine.room-store.enabled=false`) vẫn đúng nguyên văn: mất một
 > Engine pod = các phòng trên pod đó **chết cho tới khi pod lên lại**. Có một cơ chế thay thế đã
 > viết code + verify bằng chaos test thật (`LeaseBasedRoomOwnership`, `plan.md` Task 14) giải
-> quyết đúng vế "pod crash" này KHÔNG cần Cluster Sharding — chỉ chưa bật production. Việc còn lại
-> KHÔNG có giải pháp (kể cả khi Task 14 bật) là **thêm Engine pod mới giữa ca thi** — xem phát hiện
-> B5 ở trên, Gateway có danh sách pod tĩnh riêng, độc lập với Task 14. Cluster Sharding vẫn là
-> phương án dài hạn cho đúng vế "thêm pod mới" này (xem `system-architecture.md` §7.6), không phải
-> điều kiện bắt buộc cho vế "pod crash" đã đóng. UI vẫn cần hiển thị rõ trạng thái này cho tới khi
-> cả Task 14 (bật production) và Task 21 (Gateway dynamic pod discovery) đều xong + verify.
+> quyết đúng vế "pod crash" này KHÔNG cần Cluster Sharding — chỉ chưa bật production. Vế còn lại,
+> **thêm Engine pod mới giữa ca thi** (phát hiện B5), giờ **cũng đã có code + verify bằng Docker
+> thật**: `EnginePodDiscovery` (`plan.md` Task 21, 2026-09-09) — Gateway poll một registry Valkey
+> (Engine tự announce qua `EnginePodPresence`) và tự dial pod mới, không cần restart Gateway.
+> `DockerComposeScaleUpIT` (từng `@Disabled`) giờ chạy thật và Green. Cluster Sharding vẫn là
+> phương án dài hạn/dự phòng cho một dạng "thành viên cluster động" tổng quát hơn (xem
+> `system-architecture.md` §7.6), không còn là điều kiện bắt buộc cho gap B5 nữa — gap đó đã đóng
+> bằng cơ chế nhẹ hơn. **Cả hai cơ chế (Task 14 + Task 21) vẫn TẮT mặc định trong production**
+> (`uni.engine.room-store.enabled=false`, `uni.gateway.engine.pod-discovery.enabled=false` trong
+> `application.yml`, chỉ bật trong `docker-compose.dev.yml`) — UI vẫn cần hiển thị rõ trạng thái
+> này tới khi cả hai bật production + verify bằng staging thật (không chỉ Docker 1 máy).
 >
 > **Rủi ro liên quan nhưng khác cơ chế:** *chủ động* scale Engine pod (HPA, `kubectl scale`,
 > rolling update đổi số replica) giữa ca thi đấu sẽ đổi `N` trong `room_id % N`
@@ -117,7 +122,7 @@ system-architecture.md §7.5 — Product/Business chưa trả lời.
 | B1 | **Tài liệu tự mâu thuẫn về pod failure — và thực tế còn tệ hơn cả hai vế.** Cảnh báo ngay phía trên nói "phòng chết tới khi pod lên lại"; nhưng `system-architecture.md` ADR-002 (GĐ1-note) và §6.3 lại nói phòng "được phục hồi state từ Redis Snapshot (< 5 KB) sau 10–50ms" khi pod crash. Hai câu này mâu thuẫn nhau, và **grep code xác nhận cả hai đều chưa đúng theo hướng lạc quan**: chưa có một dòng nào ghi Redis snapshot trong repo — `RoomActor.flush()` chỉ gửi `state.flush()` tới `broadcastTarget` (client), không có nhánh persist nào. | Hiện trạng thật: pod crash = **mất 100% state của phòng đó**, không phải "10–50ms". Phải sửa `system-architecture.md` (bỏ câu "phục hồi 10–50ms" cho tới khi Redis snapshot có code thật), và không được lặp lại con số đó ở bất kỳ tài liệu/slide nào trước khi task ghi Redis snapshot tồn tại. | ⚠️ **Code xong + chaos test thật xanh, mặc định vẫn tắt.** Task 14: `LeaseBasedRoomOwnership` + `DistributedRoomSnapshotStore` đã viết, test kỹ (fake), nối đủ vào `EngineNetworkLifecycle` sau cờ `uni.engine.room-store.enabled=false` (mặc định vẫn TẮT — không đổi, đây là quyết định vận hành riêng). **Cập nhật 2026-09-08:** `DockerComposeChaosIT` (giết container Engine thật đang giữ phòng, chờ hết lease TTL, xác nhận pod sống sót giành lại + phục hồi đúng roster) giờ CHỨNG MINH được cơ chế hoạt động đúng khi cờ bật — quá trình này tìm ra và sửa 2 bug thật (`SnapshotEnvelope.unwrap()` chưa từng được gọi; `LeaseBasedRoomOwnership` cache vĩnh viễn một lần thua race, không bao giờ thử lại) — xem `plan.md` Task 14. Production mặc định vẫn y hệt trước — câu tài liệu đã sửa đúng, hành vi thật chỉ đổi khi cờ bật. **Cập nhật 2026-09-08 (tiếp):** đo thời gian phục hồi thật — 6 lần chạy `DockerComposeChaosIT` qua Docker+Valkey thật, 5/6 xanh, **21.8s–27.9s (trung bình ≈24.9s)**, không phải "10-50ms" (con số đó là `T_load` — bước đọc snapshot, không phải tổng thời gian, xem `system-architecture.md` §6.5 đã sửa lại). AC cuối cùng của Task 14 đã tick — xem `plan.md` Task 14. |
 | B2 | **`ANSWER_ACK` gửi trước khi Hot Snapshot ghi Redis — cửa sổ mất dữ liệu ngầm, kể cả khi PH-3 xong.** §4.3 bước 4–5: `ANSWER_ACK` (Critical, hot path) gửi **ngay lập tức**; ghi Hot Snapshot lên Redis là async, "định kỳ mỗi 2–3s hoặc sau câu hỏi" — luôn xảy ra **sau** ACK. §4.7 bước 2: client xóa submission khỏi RingBuffer **ngay khi nhận ACK**. Nếu pod chết trong khoảng giữa hai mốc đó, câu trả lời đã được ACK nhưng chưa kịp persist bị mất vĩnh viễn — và client không còn gì trong RingBuffer để `RESYNC`. | Vi phạm ngầm cam kết "mất dữ liệu = 0" (ADR-003) **ngay cả khi PH-3 hoàn thành 100%** — đây là lỗ hổng ở phía server, không phải thiếu hụt phía client. **Fix không được vi phạm "Redis tuyệt đối không trên hot path"** (không được trì hoãn `ANSWER_ACK` tới sau khi Redis ghi xong — như vậy phá vỡ p99 < 100ms của §4.3 và luật RoomActor sync path). Hướng đúng: tách `ANSWER_ACK` (giữ tức thời, chỉ là optimistic ack) khỏi tín hiệu discard thật — thêm một message mới kiểu `COMMITTED_SEQ` gửi sau khi Redis ghi xong, client chỉ được xóa RingBuffer khi nhận `COMMITTED_SEQ`. Cần sửa protobuf schema (`uni-protocol`) **và** hợp đồng client (PH-3) — không tự đóng được chỉ bằng thay đổi server. | ⚠️ **Server xong, vô dụng tới khi PH-3 làm.** Task 15: `COMMITTED_SEQ` đã có trong `.proto`, `RoomActor` phát đúng sau khi Redis xác nhận ghi (Best-effort, tự lành). Nhưng **chưa ai tiêu thụ nó** — PH-3 chưa bắt đầu, và nếu PH-3 lỡ implement đúng nguyên văn §4.7 CŨ (xoá RingBuffer khi nhận `ANSWER_ACK`), lỗ hổng B2 vẫn y nguyên dù server đã đúng 100%. Đã sửa §4.7 để không còn hướng dẫn sai. |
 | B3 | **`RoomStateSnapshot` (broadcast) không mang số thứ tự nào — FE không có gì để phát hiện gói bị rớt, kể cả khi PH-3 xong.** `game_message.proto` field `sequence` (envelope, dòng 34-36) là "Monotonic per-student counter, **assigned by the client**" — chỉ dùng cho dedupe `SubmitAnswer` (§5.2), **không** phải số thứ tự do server gắn lên broadcast. `RoomStateSnapshot` (server → client, dòng 138-147) không có trường sequence/version nào cả — grep `RoomState.java` xác nhận không có `broadcast_seq`/`delta_seq` ở bất kỳ đâu. | Đây là lỗ hổng **schema/server**, không thuần là nợ kỹ thuật phía FE: dù PH-3 có làm Ring Buffer + RESYNC cho FE, FE vẫn không có cách nào tự phát hiện một gói delta broadcast bị rớt (khác hẳn với việc phát hiện `SubmitAnswer` bị rớt, đã có `sequence`/ACK). Cần thêm một số thứ tự do **server gắn** lên mỗi lần flush (ví dụ `broadcast_seq` tăng dần mỗi phòng) trước khi PH-3 có thể thiết kế đúng cơ chế phát hiện gap cho broadcast. | ✅ **Xong.** Task 16: `broadcast_seq` đã có trong `RoomStateSnapshot`, tăng đơn điệu qua join/full/delta, sống sót qua Hot Snapshot restore. FE (PH-3) giờ có đủ dữ liệu để tự thiết kế phát hiện gap — task này không tự quyết định giao thức RESYNC cho broadcast thay PH-3. |
-| B5 | **`LeaseBasedRoomOwnership` (Task 14) đóng đúng rủi ro "N thay đổi vỡ hash" ở phía Engine, nhưng Gateway có một giới hạn riêng chặn đúng kịch bản "SRE thêm pod giữa ca thi".** Phát hiện khi rà lại Task 14 để trả lời câu hỏi "LeaseBasedRoomOwnership đã đủ thay Cluster Sharding chưa" (2026-09-08): `GatewayNetworkLifecycle.run()` đọc `uni.gateway.engine.pods` đúng **một lần** lúc Spring Boot khởi động, gọi `FrameChannelClient.connect(...)` đồng bộ cho từng pod trong danh sách — `FrameChannelClient.knownPods`/`podChannels` chỉ co lại khi pod ngắt kết nối (`handleDisconnect`), không có đường nào thêm pod mới sau boot. | Một Engine pod hoàn toàn mới (SRE vừa thêm, không có trong `ENGINE_PODS` lúc Gateway khởi động) **không thể nhận được bất kỳ gói tin nào từ Gateway**, bất kể `RoomOwnership` phía Engine dùng thuật toán gì — kể cả khi Task 14 đã bật production và verify đầy đủ. Muốn thêm năng lực Engine thật sự phải khởi động lại Gateway, mà khởi động lại Gateway tự đóng mọi WebSocket đang mở trên đúng pod đó (khác hẳn mất 1 Engine pod, được thiết kế để không đóng socket, §9.7). | 🆕 **Task mới, chưa xử lý.** `plan.md` Task 21 (mới, mở ra từ phát hiện này) mô tả giải pháp (Gateway dynamic pod discovery/hot-reload). Test đỏ có chủ đích `DockerComposeScaleUpIT.should_routeNewRoomsToAFreshlyStartedEnginePod_withoutRestartingGateway` (`@Disabled`, `modules/uni-e2e`) đã viết sẵn để tài liệu hoá gap bằng test thật — sẽ tự xanh khi Task 21 xong, không cần sửa assertion. `docker-compose.dev.yml` đã thêm service `engine-2` (cố tình KHÔNG có trong `ENGINE_PODS` của `gateway`/`gateway-1`) chỉ để phục vụ test này. |
+| B5 | **`LeaseBasedRoomOwnership` (Task 14) đóng đúng rủi ro "N thay đổi vỡ hash" ở phía Engine, nhưng Gateway có một giới hạn riêng chặn đúng kịch bản "SRE thêm pod giữa ca thi".** Phát hiện khi rà lại Task 14 để trả lời câu hỏi "LeaseBasedRoomOwnership đã đủ thay Cluster Sharding chưa" (2026-09-08): `GatewayNetworkLifecycle.run()` đọc `uni.gateway.engine.pods` đúng **một lần** lúc Spring Boot khởi động, gọi `FrameChannelClient.connect(...)` đồng bộ cho từng pod trong danh sách — `FrameChannelClient.knownPods`/`podChannels` chỉ co lại khi pod ngắt kết nối (`handleDisconnect`), không có đường nào thêm pod mới sau boot. | Một Engine pod hoàn toàn mới (SRE vừa thêm, không có trong `ENGINE_PODS` lúc Gateway khởi động) **không thể nhận được bất kỳ gói tin nào từ Gateway**, bất kể `RoomOwnership` phía Engine dùng thuật toán gì — kể cả khi Task 14 đã bật production và verify đầy đủ. Muốn thêm năng lực Engine thật sự phải khởi động lại Gateway, mà khởi động lại Gateway tự đóng mọi WebSocket đang mở trên đúng pod đó (khác hẳn mất 1 Engine pod, được thiết kế để không đóng socket, §9.7). | ✅ **Xong (2026-09-09).** `plan.md` Task 21: `EnginePodDiscovery` (Gateway, thread riêng ngoài Netty EventLoop) poll `ValkeyEnginePodResolver` định kỳ và tự `connect()` pod chưa biết; Engine tự announce qua `EnginePodPresence` mới (tái dùng đúng connection+nhịp renew Valkey của Task 14). `uni.gateway.engine.pods` vẫn đúng như mô tả cột bên trái (đọc 1 lần, không đổi) — cơ chế mới là một đường bổ sung, không sửa đường cũ. `DockerComposeScaleUpIT.should_routeNewRoomsToAFreshlyStartedEnginePod_withoutRestartingGateway` đã bỏ `@Disabled`, chạy thật qua Docker (RUN_DOCKER_IT=true), **Green**, không sửa assertion. Quá trình chạy thật lộ ra 1 bug có sẵn không do Task 21 gây ra: `docker-compose.dev.yml`'s `engine-2` có `ENGINE_POD_COUNT: "2"` sai (phải "3") khiến `ModuloRoomOwnership` reject `selfPodId`, crash-loop từ trước — đã sửa cả 3 service. `DockerComposeChaosIT`/`DockerComposeResyncIT` chạy lại sau fix: không regress. |
 | B4 | **`missed_step_policy` chưa được `RoomActor`/`RoomState` đọc — "0 điểm" khi hết giờ không trả lời là tình cờ, không phải policy được thực thi.** Grep `RoomActor.java`/`RoomState.java` xác nhận **không có tham chiếu nào** tới `GameDefinition`/`MissedStepPolicy` — khớp đúng ghi chú Task 11: "RoomActor (Task 2) chưa được nối với nó". Hành vi "0 điểm" hiện tại chỉ là hệ quả của điểm số khởi tạo mặc định bằng 0, không phải do policy `ZERO` (mặc định trong schema) được engine thực thi có chủ đích. | Nếu sau này Product cấu hình `SKIP` (loại câu đã qua khỏi mẫu số xếp hạng) hoặc `ALLOW_LATE`, **engine vẫn luôn hành xử như `ZERO`** vì không đọc field này ở đâu cả — `missed_step_policy` trong Game Definition hiện là giấy tờ thuần, không có tác dụng thật lúc chạy. Cần nối `GameDefinition.missedStepPolicy` vào logic chuyển câu của `RoomState`/`RoomActor` trước khi policy khác `ZERO` được cho phép dùng thật. | ✅ **Xong (2026-09-08).** Task 17: `DefinitionLoader` + `RoomActor.create` chặn cứng `SKIP`/`ALLOW_LATE` ở 2 lớp (2026-09-07), và `RoomState` giờ thật sự "đọc và áp dụng" `missedStepPolicy` ở lớp thứ 3 — không cần chờ luồng late-join đầy đủ (§4.8, vẫn chưa tồn tại) vì hoá ra chỉ cần biết "bao nhiêu câu hỏi đã bắt đầu tại thời điểm join" (`RoomState.questionsStartedCount`, sống sót qua restore) là đủ để áp dụng `ZERO` có chủ đích, không còn tình cờ. `missedStepsFor(studentId)` là tín hiệu quan sát được mới, test trực tiếp qua `RoomStateMissedStepPolicyTest` (8 case, prove-it xác nhận 6/8 Red khi tắt logic). `steps`/`scoringFormula`/`maxTransitions` của `GameDefinition` và luồng late-join thật (join khi phase=PLAYING qua JOIN_ROOM thật) **vẫn chưa** được `RoomActor` tiêu thụ — ngoài phạm vi B4, xem `plan.md` Task 17. |
 
 > [!CAUTION]
@@ -452,11 +457,57 @@ progress: "T1, T2, T4, T5, T10 xong. T6 MOT PHAN xong (GatewayPipeline + WS hand
   DevJoinTokenCodec. Test moi AlwaysAcceptJoinTokenVerifierTest (4 case). Khong dong AC
   'JoinTokenVerifier that (G1a/G1c)' cua Task 6 - day van la stand-in dev-only khac, khong phai
   cau tra loi that tu doi nen tang. mvn clean install toan reactor: BUILD SUCCESS, 83 test
-  uni-websocket-gateway (79 cu + 4 moi), khong leak."
+  uni-websocket-gateway (79 cu + 4 moi), khong leak.
+  2026-09-09: dong Task 21 (Gateway dynamic engine-pod discovery, phat hien B5). Nguoi dung yeu
+  cau phan tich ky truoc khi chon: so sanh 2 phuong an (Valkey pod registry vs DNS/ordinal-probing
+  kieu Docker Compose) + 1 de xuat hybrid cua nguoi dung (EnginePodResolver interface + 2 impl:
+  Valkey cho dev, DNS-headless cho K8s). Phan hoi: interface dung, nhung K8s
+  StatefulSet/headless-Service topology CHUA TUNG duoc quyet dinh o dau trong repo nay (grep xac
+  nhan 0 ket qua) - viet DnsHeadlessEnginePodResolver bay gio la doan mu, khong verify duoc. Chon:
+  EnginePodResolver interface + DUNG 1 implementation (ValkeyEnginePodResolver) - day cung la co
+  che DUY NHAT chay giong nhau moi moi truong (dev/staging/prod deu chi la 1 Valkey Service), khong
+  can biet truoc topology K8s. Code: EnginePodPresence (Engine, persistence/) - moi pod SET key
+  engine:pod:<podId>=host:port voi TTL, tai dung DUNG connection + nhip renew (ttl/3) voi lease
+  Task 14, khong mo connection Valkey thu hai. ValkeyEnginePodResolver (Gateway, routing/) - SCAN
+  engine:pod:* (khong dung KEYS), doc gia tri, tra ve EnginePodAddress list; khong unit test rieng
+  (dung convention DistributedRoomLeaseStore cua Task 14 - fake Lettuce it gia tri, verify qua
+  Docker that). EnginePodDiscovery (Gateway, thread rieng NGOAI Netty EventLoop) - poll
+  EnginePodResolver dinh ky (5s mac dinh, 3s trong docker-compose.dev.yml), goi
+  EngineConnector.connect() cho pod chua isConnected(). EngineConnector - interface hep tach tu
+  FrameChannelClient de test duoc logic poll/diff bang fake, khong can socket that.
+  GatewayNetworkLifecycle/EngineNetworkLifecycle wire xong, config moi (application.yml ca 2 module)
+  off-by-default cung tinh than Task 14 (uni.gateway.engine.pod-discovery.enabled=false mac dinh,
+  bat true trong docker-compose.dev.yml). TDD: viet EnginePodDiscoveryTest TRUOC (xac nhan Red -
+  cannot find symbol EnginePodDiscovery), roi moi implement. Prove-it tinh co: fake connector ban
+  dau KHONG tu danh dau 'da ket noi' sau connect() thanh cong (khac FrameChannelClient that), lam
+  EnginePodDiscovery cu reconnect lien tuc - test tu bat loi nay truoc khi sua fake dung ngu nghia
+  roi moi Green.
+  Bug THAT phat hien qua Docker that (khong do code Task 21 gay ra, co san tu 2026-09-08 luc them
+  engine-2 vao docker-compose.dev.yml cho Task 21 nhung chua ai tung chay that vi test @Disabled):
+  ENGINE_POD_COUNT: "2" cho engine-2 (copy-paste tu engine-0/1) - ModuloRoomOwnership's constructor
+  doi selfPodId phai nam trong danh sach sinh tu pod-count (engine-0, engine-1 voi count=2),
+  engine-2 khong khop nen crash-loop tu truoc khi kip mo frame channel, khong lien quan gi
+  RoomOwnership that su chon ai so huu phong. Sua ca 3 service (engine-0/1/2) thanh
+  ENGINE_POD_COUNT: '3' de modulo-fallback nhat quan tren toan bo 3 pod.
+  Verification THAT qua Docker (khong phai gia dinh): build jar that (mvn clean package
+  -DskipTests), docker compose build+up room-store/kafka/engine-0/1/gateway/gateway-1, xac nhan
+  gateway log 'engine pod discovery ENABLED', xac nhan engine-0/1 tu SADD key engine:pod:* vao
+  Valkey that (valkey-cli KEYS xac nhan). Chay DockerComposeScaleUpIT lan dau FAIL (engine-2
+  khong healthy trong 30s) - dieu tra ra bug ENGINE_POD_COUNT o tren, sua, rebuild, chay lai:
+  GREEN (76s, khong sua assertion). Chay lai DockerComposeChaosIT (2/2 xanh, phuc hoi 24968ms -
+  khop dai do truoc 21.8s-27.9s) + DockerComposeResyncIT (1/1 xanh) de xac nhan khong regress sau
+  khi sua ENGINE_POD_COUNT. mvn clean install toan reactor (khong Docker): BUILD SUCCESS - 5
+  protocol + 86 gateway (them EnginePodDiscoveryTest 3/3) + 120 engine + 2 e2e. governance-check.sh:
+  van xanh ca 5 gate (validate-trace nay CHAY THAT thay vi skip, vi docs/specs/bdd/ da co file cho
+  P2 - 3 WARN thieu SC-ID tag, khong phai GAP chan). Cap nhat plan.md Task 21 + _context.md (B5 +
+  canh bao van hanh) sang XONG, van giu dung 'ca Task 14 lan Task 21 deu TAT mac dinh production'.
+  CHUA lam (co chu y, ngoai pham vi Task 21): DnsHeadlessEnginePodResolver (K8s headless Service,
+  multi-A-record that) - cho quyet dinh topology That; room-store van la 1 Valkey instance don,
+  chua phai Cluster."
 dev_selftest: pending
 qc_status: pending
 trace: pending
-updated: "2026-09-08"
+updated: "2026-09-09"
 ```
 
 **Ship-ready khi:** `dev_selftest: pass` **và** `qc_status ∈ {pass, na}` **và** `trace: pass`.

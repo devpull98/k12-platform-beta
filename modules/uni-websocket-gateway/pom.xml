@@ -19,8 +19,6 @@
         the LB/ingress terminates TLS and this pod receives plaintext WS.
     </description>
 
-    <!-- This module's own Boot/Java version, independent of every other module in the reactor
-         (see docs/architecture/adr-platform-foundation.md); root no longer sets java.version. -->
     <properties>
         <java.version>25</java.version>
         <maven.compiler.release>${java.version}</maven.compiler.release>
@@ -36,7 +34,6 @@
             <artifactId>uni-observability</artifactId>
         </dependency>
 
-        <!-- WebSocket handshake + frame codecs live in netty-codec-http. -->
         <dependency>
             <groupId>io.netty</groupId>
             <artifactId>netty-codec-http</artifactId>
@@ -45,11 +42,21 @@
             <groupId>io.netty</groupId>
             <artifactId>netty-handler</artifactId>
         </dependency>
-        <!-- epoll on Linux; the JDK NIO transport is the fallback elsewhere. -->
         <dependency>
             <groupId>io.netty</groupId>
             <artifactId>netty-transport-native-epoll</artifactId>
             <classifier>linux-x86_64</classifier>
+        </dependency>
+
+        <!-- Task 21: ValkeyEnginePodResolver reads the pod-presence registry Engine's
+             EnginePodPresence writes via this same client (uni-game-engine already depends on
+             it; see that module's pom.xml comment for why the artifact stays io.lettuce even
+             though the backing product is Valkey). Only ever called from EnginePodDiscovery's
+             background poll thread, never a Netty EventLoop. Version managed transitively by
+             spring-boot-starter-parent's BOM, unpinned here, same convention as Engine's. -->
+        <dependency>
+            <groupId>io.lettuce</groupId>
+            <artifactId>lettuce-core</artifactId>
         </dependency>
     </dependencies>
 

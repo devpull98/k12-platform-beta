@@ -16,6 +16,11 @@ uni:
     # Stamped into InternalHeader.owner_pod_id on every response; this is what the gateway
     # route cache learns from.
     pod-id: ${ENGINE_POD_ID:engine-0}
+    # Task 21: how OTHER pods/Gateway can dial this pod -- defaults to pod-id because Docker
+    # Compose's own DNS already resolves a container by its service name, and this repo's
+    # convention (GatewayNetworkLifecycle's javadoc) already assumes pod-id == hostname. Override
+    # only if a real deployment's reachable hostname ever differs from pod-id.
+    advertised-host: ${ENGINE_ADVERTISED_HOST:${uni.engine.pod-id}}
     # Phase 1 ownership is room_id % pod-count, isolated behind RoomOwnership so Phase 2
     # can swap in Cluster Sharding by replacing one class (decision B2). Used as the
     # ModuloRoomOwnership fallback even when room-store.enabled=true (see below).

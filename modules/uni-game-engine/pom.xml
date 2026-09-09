@@ -19,8 +19,6 @@
         inside one class so Phase 2 can replace it with Cluster Sharding (decision B2).
     </description>
 
-    <!-- This module's own Boot/Java version, independent of every other module in the reactor
-         (see docs/architecture/adr-platform-foundation.md); root no longer sets java.version. -->
     <properties>
         <java.version>25</java.version>
         <maven.compiler.release>${java.version}</maven.compiler.release>
@@ -58,30 +56,15 @@
             <artifactId>netty-transport-native-epoll</artifactId>
             <classifier>linux-x86_64</classifier>
         </dependency>
-
-        <!-- Task 14: DistributedRoomLeaseStore (room ownership lease) + DistributedRoomSnapshotStore
-             (Hot Snapshot, remaining half of Task 14). Lettuce is the client; it speaks RESP so
-             this same artifact works against any RESP-compatible store (Valkey today; see
-             application.yml's comment), so the artifact is still io.lettuce:lettuce-core.
-             Version managed transitively by spring-boot-starter-parent's BOM, unpinned here, same
-             convention as the Netty dependencies above. NOT exercised against a real store
-             instance by any test in this repo (none available in this environment); see
-             DistributedRoomLeaseStore's javadoc. -->
         <dependency>
             <groupId>io.lettuce</groupId>
             <artifactId>lettuce-core</artifactId>
         </dependency>
 
-        <!-- Task 18 (§9.3 Rủi ro 6): GameEventPublisher's real KafkaGameEventSink. Already
-             present transitively via uni-observability's KafkaLogAppender dependency, declared
-             explicitly here too since uni-game-engine code now uses it directly, not just inherits it. -->
         <dependency>
             <groupId>org.apache.kafka</groupId>
             <artifactId>kafka-clients</artifactId>
         </dependency>
-
-        <!-- BehaviorTestKit + ManualTime: the room FSM and tick coalescing are tested
-             without a network and without sleeping on a real clock. -->
         <dependency>
             <groupId>org.apache.pekko</groupId>
             <artifactId>pekko-actor-testkit-typed_${scala.binary.version}</artifactId>

@@ -24,6 +24,16 @@ uni:
       # gateway never hashes a room id itself.
       pods: ${ENGINE_PODS:localhost:9100}
 
+      # Task 21: closes the gap where a brand-new Engine pod (absent from `pods` above at Gateway
+      # boot) was otherwise unreachable without a Gateway restart (system-architecture.md §9.2
+      # Rủi ro 4). Off by default, same off-by-default-until-verified posture as
+      # uni.engine.room-store.enabled -- reuses the SAME Valkey instance, both flipped on together
+      # in docker-compose.dev.yml and verified together via DockerComposeScaleUpIT.
+      pod-discovery:
+        enabled: ${GATEWAY_ENGINE_POD_DISCOVERY_ENABLED:false}
+        room-store-uri: ${GATEWAY_ENGINE_POD_DISCOVERY_ROOM_STORE_URI:redis://localhost:6379}
+        poll-interval-seconds: ${GATEWAY_ENGINE_POD_DISCOVERY_POLL_INTERVAL_SECONDS:5}
+
     # Local-Docker-only stand-in for the still-blocked G1a/G1c join token verifier (see the
     # com.uni.realtime.websocketgateway.auth.dev package javadoc). NEVER valid for staging/production --
     # gated behind BOTH this flag AND the "dev-docker" Spring profile so neither alone can

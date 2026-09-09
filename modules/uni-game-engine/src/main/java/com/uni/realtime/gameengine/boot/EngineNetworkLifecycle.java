@@ -6,6 +6,7 @@ import com.uni.realtime.gameengine.net.FrameChannelServer;
 import com.uni.realtime.gameengine.persistence.KafkaGameEventSink;
 import com.uni.realtime.gameengine.persistence.DistributedRoomLeaseStore;
 import com.uni.realtime.gameengine.persistence.DistributedRoomSnapshotStore;
+import com.uni.realtime.gameengine.persistence.EnginePodPresence;
 import com.uni.realtime.gameengine.room.ModuloRoomOwnership;
 import com.uni.realtime.gameengine.room.NoopRoomSnapshotStore;
 import com.uni.realtime.gameengine.room.LeaseBasedRoomOwnership;
@@ -55,6 +56,12 @@ import java.util.stream.IntStream;
  * {@code RoomActor} {@link RoomSupervisor} spawns, which ships each accepted
  * {@code SubmitAnswer}'s {@code AnswerAck}, partitioned by {@code room_id} (a documented stand-in
  * for {@code session_id} -- see {@code RoomActor.publishGameEvent}'s javadoc).
+ *
+ * <p>Task 21 (2026-09-09): when {@code room-store.enabled}, this pod also announces itself into
+ * the room-store via {@link EnginePodPresence} on the same renewal cadence as its lease
+ * renewals -- {@code ValkeyEnginePodResolver} (uni-websocket-gateway) is the read side, letting a
+ * running Gateway discover this pod even if it started after Gateway booted
+ * (system-architecture.md §9.2 Rủi ro 4).
  */
 @Component
 public final class EngineNetworkLifecycle implements ApplicationRunner, DisposableBean {
@@ -68,6 +75,7 @@ public final class EngineNetworkLifecycle implements ApplicationRunner, Disposab
     private final boolean roomStoreEnabled;
     private final String roomStoreUri;
     private final long leaseTtlSeconds;
+    private final String advertisedHost;
     private final boolean kafkaEnabled;
     private final String kafkaBootstrapServers;
     private final String kafkaTopic;
@@ -88,6 +96,7 @@ public final class EngineNetworkLifecycle implements ApplicationRunner, Disposab
             @Value("${uni.engine.room-store.enabled}") boolean roomStoreEnabled,
             @Value("${uni.engine.room-store.uri}") String roomStoreUri,
             @Value("${uni.engine.room-store.lease-ttl-seconds}") long leaseTtlSeconds,
+            @Value("${uni.engine.advertised-host}") String advertisedHost,
             @Value("${uni.engine.kafka.enabled}") boolean kafkaEnabled,
             @Value("${uni.engine.kafka.bootstrap-servers}") String kafkaBootstrapServers,
             @Value("${uni.engine.kafka.topic}") String kafkaTopic,
@@ -99,6 +108,7 @@ public final class EngineNetworkLifecycle implements ApplicationRunner, Disposab
         this.roomStoreEnabled = roomStoreEnabled;
         this.roomStoreUri = roomStoreUri;
         this.leaseTtlSeconds = leaseTtlSeconds;
+        this.advertisedHost = advertisedHost;
         this.kafkaEnabled = kafkaEnabled;
         this.kafkaBootstrapServers = kafkaBootstrapServers;
         this.kafkaTopic = kafkaTopic;
@@ -135,6 +145,16 @@ public final class EngineNetworkLifecycle implements ApplicationRunner, Disposab
                 return thread;
             });
             leaseRenewalScheduler.scheduleAtFixedRate(leaseRoomOwnership::renewAll,
+                    renewalIntervalSeconds, renewalIntervalSeconds, TimeUnit.SECONDS);
+
+            // Task 21: same store, same connection, same renewal cadence as the lease above --
+            // announce once immediately (a freshly started pod must not wait a full cycle before
+            // Gateway can discover it), then keep re-announcing so the TTL never lapses under a
+            // healthy pod.
+            EnginePodPresence podPresence = new EnginePodPresence(leaseConnection.async(), podId,
+                    advertisedHost + ":" + framePort, Duration.ofSeconds(leaseTtlSeconds));
+            podPresence.announce();
+            leaseRenewalScheduler.scheduleAtFixedRate(podPresence::announce,
                     renewalIntervalSeconds, renewalIntervalSeconds, TimeUnit.SECONDS);
 
             log.info("pod {}: LeaseBasedRoomOwnership + Hot Snapshot ENABLED (ttl={}s, uri={}) -- "
