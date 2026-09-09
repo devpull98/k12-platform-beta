@@ -86,11 +86,45 @@ Giai đoạn 2 bổ sung các chế độ chơi tương tác nhóm và tập th�
   - **`shared_resource=LIVES`** vẫn bị `DefinitionLoader` từ chối — PO V2.1 không đặc tả số "lives ban đầu", đoán một con số là bịa quyết định nghiệp vụ (đúng tinh thần G1a/G1c).
 - **Verification:** `WinConditionEvaluatorTest` (9/9 case mới, pure logic) + `RoomStateWinConditionTest` (7/7 case mới, cả 3 win condition + không ghi đè reason) + `RoomActorTest` (10/10, +1 case: `GameOver` broadcast thật qua `EndGame`) + `DefinitionLoaderTest` (26/26, +3 case win_condition). Prove-it: tạm bỏ guard "không ghi đè nếu đã FINISHED" trong `endGame()`, xác nhận đúng 1/7 test Red trước khi trả lại Green. `mvn clean install` toàn reactor: BUILD SUCCESS — 5 protocol + 86 gateway + 168 engine (148 cũ + 20 mới) + 2 e2e, không regress.
 
-### Task 24: Tích hợp Kafka Event Publisher với `lms-worker`
-- **Mô tả:** Phát `TeamSubmitExerciseEvent`, `GroupDiscussionEvent`, `VoteGroupNameEvent` sang Kafka topic `game.events.v1`.
+### Task 24: Tích hợp Kafka Event Publisher với `lms-worker` — ⛔ DỪNG LẠI, chỉ ghi nhận phát hiện (2026-09-09)
+- **Mô tả gốc:** Phát `TeamSubmitExerciseEvent`, `GroupDiscussionEvent`, `VoteGroupNameEvent` sang Kafka topic `game.events.v1`.
 - **File:** `modules/uni-game-engine/.../events/GameEventPublisher.java`
-- **Acceptance Criteria:**
+- **Acceptance Criteria gốc:**
   - [ ] Payload JSON/Protobuf đúng contract mà `SubmitExerciseListener` và `ActiveGroupDiscussionListener` của `lms-worker` mong đợi
+
+- **Đã đọc code thật của `lms-worker`** (người dùng cung cấp đường dẫn cục bộ:
+  `D:\Educa\k12-backend-java\k12-lms-service\lms-worker\src\main\java\vn\edupiaclass\lms\worker\listener\event\group_discussion\`)
+  — 4 listener (`SubmitExerciseListener`, `ActiveGroupDiscussionListener`, `VoteGroupNameListener`,
+  `ChatDiscussionRankListener`) + DTO (`TeamScoreDto`, `GroupMessageDto`, `VoteInput`) +
+  `ResultExerciseWorker`. **3 giả định trong mô tả/BDD gốc của Task 24 đều SAI so với hệ thống
+  thật:**
+
+  | Giả định trong BDD/Task 24 | Thực tế trong code `lms-worker` |
+  |---|---|
+  | Topic `game.events.v1` | `SubmitExerciseListener` nghe **`team-submit-exercise-response`**; `VoteGroupNameListener`/`ActiveGroupDiscussionListener`/`ChatDiscussionRankListener` đều nghe **`save-message-queue`** (queue broadcast chung của hệ thống socket cũ, không phải topic riêng cho game event) |
+  | "Dạng Protobuf/JSON" | Cả hai đều nhận **String JSON thuần** (`ObjectMapper.readValue(data, TeamScoreDto.class)` / `GroupMessageDto.class`) — không có đường Protobuf nào |
+  | `GameEventPublisher` (Task 18) đã sẵn sàng tái dùng | `GameEventPublisher`/`KafkaGameEventSink` hiện tại (Task 18) chỉ gửi **protobuf bytes** (`AnswerAck.toByteArray()`) sang `game.events.v1` — khác hoàn toàn topic + format cần cho lms-worker, cần đường publish JSON riêng (không tái dùng thẳng được) |
+
+- **Gap dữ liệu — lý do chính khiến task này KHÔNG thể code ngay được:** `TeamScoreDto` thật đòi
+  `profile_id`, `exercise_id`, `classroom_id`, `session_parent_id` (số nguyên, thuộc domain
+  LMS/CMS cũ). `VoteGroupNameListener` đòi thêm `payload.vote.teamNameId` (chọn 1 trong các tên đề
+  xuất sẵn) và `groupId` dạng `"{sessionParentId}-{classroomId}"`. **`uni-realtime` hiện không có
+  bất kỳ trường nào trong số này** — `JoinTokenClaims` (`modules/uni-websocket-gateway/.../auth/JoinTokenClaims.java`)
+  chỉ có `studentId`, `roomId`, `sessionId` (đều là String), không có ID số nguyên LMS nào. Đây
+  không phải "thêm 1 Kafka event" đơn thuần — thiếu cả một đường định danh LMS chưa từng chảy vào
+  `uni-realtime`, đòi hỏi mở rộng ở tầng join-token/xác thực (ngoài phạm vi module `uni-game-engine`
+  mà Task 24 khoanh vùng).
+- **Tính năng "vote tên nhóm" chưa tồn tại trong schema uni-realtime:** `VoteGroupNameListener`
+  cần chọn giữa NHIỀU tên đội đề xuất sẵn (`teamNameId`); `TeamAssignment.team_name` hiện tại
+  (Task 20/22) chỉ là 1 tên cố định/đội, không có cơ chế đề xuất + vote nào. `GroupDiscussionEvent`
+  (nhắc trong mô tả gốc) và `ActiveGroupDiscussionListener` cũng không khớp trực tiếp với bất kỳ
+  luồng nào Engine hiện có — listener đó được kích hoạt bởi 1 flow "bắt đầu thảo luận nhóm" hoàn
+  toàn khác (không phải do `GameOver`).
+- **Quyết định (người dùng, 2026-09-09):** dừng Task 24 lại ở bước ghi nhận phát hiện, KHÔNG viết
+  code Kafka event nào lúc này — tránh code "trông như tích hợp thật" nhưng thực chất sai topic/
+  format/thiếu dữ liệu, sẽ âm thầm không hoạt động khi đấu nối với `lms-worker` thật. Cần quyết
+  định rõ nguồn cho `profile_id`/`exercise_id`/`classroom_id`/`session_parent_id` (mở rộng
+  `JoinTokenClaims`? một service khác cung cấp?) trước khi mở lại task này.
 
 ### Task 25: Unit Tests & RoomActor FSM Tests
 - **Mô tả:** Viết Unit Test phủ 100% logic tính tiến trình, phân nhóm, và phạt tài nguyên.

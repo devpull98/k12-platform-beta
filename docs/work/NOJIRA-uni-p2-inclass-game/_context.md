@@ -25,7 +25,15 @@
 - **2026-09-09: Task 20 (schema) + Task 21 (cooperative) + Task 22 (team + scoped draft sync) + Task 23 (win condition evaluator, phần lớn) đã XONG**, verify bằng `mvn clean install` toàn reactor (BUILD SUCCESS) — xem `plan.md` cho chi tiết + quyết định thiết kế. `GAME_MODE_COOPERATIVE` và `GAME_MODE_TEAM` đều chạy được end-to-end trong `RoomState` kể cả FSM tự chuyển `FINISHED` + broadcast `GameOver` thật (trước đây `GameOver` chưa từng được gửi ở BẤT KỲ đâu trong codebase, kể cả Phase 1 SOLO — phát hiện phụ khi làm Task 23, đã sửa luôn). `GAME_MODE_INDIVIDUAL` và `shared_resource=LIVES` vẫn bị `DefinitionLoader` từ chối có chủ đích (chưa implement).
 - **Gap đã biết, không phải thiếu sót của Task 21/22/23:** `RoomSupervisor.spawnRoom()` (đường join thật) vẫn CHƯA có nguồn `GameDefinition` nào để spawn phòng ở chế độ COOPERATIVE/TEAM — không có định dạng "game-definition-authoring" nào được chốt trong repo này (đã ghi nhận từ Task 11, plan.md P1). Toàn bộ logic đã test kỹ ở tầng `RoomState`/`RoomActor`/`RoomSupervisor` (đơn vị + dispatch), nhưng chưa test được qua đường join thật end-to-end (Docker/WalkingSkeletonTest) vì gap này.
 - **Gap mới của riêng Task 23 (có chủ ý, ghi trong `WinCondition.MOST_POINTS_WHEN_TIME_UP`'s javadoc):** không có cơ chế timer/deadline nào tự động kết thúc game khi "hết giờ" — logic ĐÁNH GIÁ ai thắng đã đúng (`WinConditionEvaluator` + `RoomState.endGame()`), chỉ thiếu cái TRIGGER tự động; hôm nay chỉ `TeacherCommand.END_GAME` (thủ công) kích hoạt được. `shared_resource=LIVES` vẫn treo vì PO V2.1 không đặc tả số lives ban đầu.
-- Tiếp theo: Task 24 (Kafka Event Publisher cho `lms-worker` — `TeamSubmitExerciseEvent`/`GroupDiscussionEvent`/`VoteGroupNameEvent`).
+- **⛔ 2026-09-09: Task 24 DỪNG LẠI ở bước ghi nhận phát hiện (quyết định người dùng), không code.** Đọc code thật `lms-worker` (đường dẫn cục bộ người dùng cung cấp:
+  `D:\Educa\k12-backend-java\k12-lms-service\lms-worker\.../listener/event/group_discussion\`) lộ ra
+  3 giả định sai trong BDD/mô tả Task 24 gốc (topic thật `team-submit-exercise-response`/
+  `save-message-queue`, không phải `game.events.v1`; JSON thuần, không Protobuf) **và** một gap dữ
+  liệu chặn hẳn việc code: `TeamScoreDto`/`VoteInput` cần `profile_id`/`exercise_id`/`classroom_id`/
+  `session_parent_id` (LMS domain, số nguyên) mà `uni-realtime` không có nguồn nào — `JoinTokenClaims`
+  chỉ có `studentId`/`roomId`/`sessionId` (String). Chi tiết đầy đủ ở `plan.md` Task 24. Cần quyết
+  định nguồn cho các ID này (mở rộng `JoinTokenClaims`? service khác cấp?) trước khi mở lại task.
+- Tiếp theo: Task 25 (Unit test mở rộng) — Task 26 (E2E: lưu ý repo này **không có Cucumber**, cần xử lý khác biệt khi tới đó).
 
 ## State (machine-readable)
 ```yaml
@@ -84,8 +92,27 @@ progress: "2026-09-09: Task 20+21 xong (xem entry truoc). Task 22 (Team mode + S
   (giong het gap TeacherCommand.NEXT_STEP da ghi tu Task 11). Logic DANH GIA ai thang da dung, chi
   thieu cai TRIGGER; hom nay chi TeacherCommand.END_GAME (thu cong) kich hoat duoc nhanh nay.
   shared_resource=LIVES van bi DefinitionLoader tu choi - PO V2.1 khong dac ta so luong lives ban
-  dau, doan mot con so la tu bia quyet dinh nghiep vu (dung tinh than G1a/G1c). Tiep theo: Task 24
-  (Kafka Event Publisher cho lms-worker)."
+  dau, doan mot con so la tu bia quyet dinh nghiep vu (dung tinh than G1a/G1c).
+  2026-09-09 (tiep, cung phien): bat dau Task 24, dung lai o buoc doc code that (khong code) theo
+  quyet dinh nguoi dung. Nguoi dung dua duong dan cuc bo toi source that cua lms-worker
+  (D:\Educa\k12-backend-java\k12-lms-service\lms-worker\...\listener\event\group_discussion\) -
+  doc 4 listener (SubmitExerciseListener, ActiveGroupDiscussionListener, VoteGroupNameListener,
+  ChatDiscussionRankListener) + 3 DTO (TeamScoreDto, GroupMessageDto, VoteInput) +
+  ResultExerciseWorker. Phat hien 3 gia dinh SAI trong BDD/mo ta Task 24 goc: (1) topic that la
+  team-submit-exercise-response (SubmitExerciseListener) va save-message-queue (3 listener con
+  lai), khong phai game.events.v1; (2) format la JSON thuan (ObjectMapper.readValue(data,
+  TeamScoreDto.class)/GroupMessageDto.class), khong co duong Protobuf nao; (3) GameEventPublisher/
+  KafkaGameEventSink hien tai (Task 18) chi gui protobuf bytes sang game.events.v1 - khac hoan
+  toan topic+format can, khong tai dung thang duoc.
+  Gap chinh chan code: TeamScoreDto that doi profile_id/exercise_id/classroom_id/session_parent_id
+  (so nguyen, domain LMS/CMS cu) - JoinTokenClaims (uni-websocket-gateway/.../auth/) chi co
+  studentId/roomId/sessionId (String), khong co ID so nguyen LMS nao. VoteGroupNameListener con
+  doi them teamNameId (chon giua nhieu ten de xuat san) - tinh nang nay khong ton tai trong
+  TeamAssignment.team_name hien tai (1 ten co dinh/doi, khong co co che de xuat+vote).
+  Hoi nguoi dung 3 lua chon (chi build phan publish de trong ID LMS / dung lai chi ghi nhan /
+  nguoi dung cung cap them thong tin nguon ID) - nguoi dung chon 'dung lai chi ghi nhan phat
+  hien'. KHONG viet code nao cho Task 24 luc nay - chi cap nhat plan.md + _context.md voi day du
+  phat hien that de nguoi lam viec sau co co so chinh xac. Chuyen sang Task 25/26."
 dev_selftest: pending
 qc_status: pending
 trace: pending
