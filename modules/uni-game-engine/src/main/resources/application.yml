@@ -10,9 +10,7 @@ uni:
     frame-port: ${ENGINE_FRAME_PORT:9100}
     pod-id: ${ENGINE_POD_ID:engine-0}
     advertised-host: ${ENGINE_ADVERTISED_HOST:${uni.engine.pod-id}}
-    pod-count: ${ENGINE_POD_COUNT:1}
     room-store:
-      enabled: ${ENGINE_ROOM_STORE_ENABLED:false}
       uri: ${ENGINE_ROOM_STORE_URI:redis://localhost:6379}
       lease-ttl-seconds: ${ENGINE_ROOM_STORE_LEASE_TTL_SECONDS:20}
 

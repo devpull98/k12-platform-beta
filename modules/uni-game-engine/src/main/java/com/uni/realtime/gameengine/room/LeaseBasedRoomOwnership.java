@@ -15,16 +15,14 @@ public final class LeaseBasedRoomOwnership implements RoomOwnership {
     private final String selfPodId;
     private final RoomLeaseStore roomStore;
     private final Duration ttl;
-    private final RoomOwnership fallback;
 
     private final Map<String, RoomLease> cache = new ConcurrentHashMap<>();
     private final Map<String, CompletableFuture<RoomLease>> pending = new ConcurrentHashMap<>();
 
-    public LeaseBasedRoomOwnership(String selfPodId, RoomLeaseStore roomStore, Duration ttl, RoomOwnership fallback) {
+    public LeaseBasedRoomOwnership(String selfPodId, RoomLeaseStore roomStore, Duration ttl) {
         this.selfPodId = selfPodId;
         this.roomStore = roomStore;
         this.ttl = ttl;
-        this.fallback = fallback;
     }
 
     @Override
@@ -32,20 +30,39 @@ public final class LeaseBasedRoomOwnership implements RoomOwnership {
         if (cache.containsKey(roomId)) {
             return;
         }
-        pending.computeIfAbsent(roomId, this::acquireAsync);
+        // The mapping function below must NOT touch `pending` itself -- ConcurrentHashMap
+        // forbids a computeIfAbsent mapping function from mutating the same map for the same
+        // key it's computing (throws "Recursive update"), which a synchronously-completing
+        // store (any fake in tests; conceivably a real one under some conditions) would trigger
+        // immediately, since attaching whenComplete to an already-completed future runs the
+        // callback inline. So the mapping function only starts the acquisition; the cache/pending
+        // bookkeeping below runs after computeIfAbsent has already returned.
+        boolean[] startedNewAcquire = {false};
+        CompletableFuture<RoomLease> future = pending.computeIfAbsent(roomId, id -> {
+            startedNewAcquire[0] = true;
+            return roomStore.tryAcquire(id, selfPodId, ttl);
+        });
+        if (startedNewAcquire[0]) {
+            attachCompletion(roomId, future);
+        }
     }
 
-    private CompletableFuture<RoomLease> acquireAsync(String roomId) {
-        return roomStore.tryAcquire(roomId, selfPodId, ttl)
-                .exceptionally(ex -> {
-                    log.warn("room {}: lease store unreachable while acquiring, falling back to {}",
-                            roomId, fallback.getClass().getSimpleName(), ex);
-                    return new RoomLease(fallback.ownerPodId(roomId), 0);
-                })
-                .whenComplete((lease, ignoredEx) -> {
-                    cache.put(roomId, lease);
-                    pending.remove(roomId);
-                });
+    /**
+     * On a store outage, this pod stays deliberately unresolved for {@code roomId} rather than
+     * guessing an owner -- nothing is written to {@link #cache}, so {@link #ownerPodId} keeps
+     * answering {@code ""} (per its documented "drop this frame" contract) and the next
+     * {@link #ensureAcquired} call retries against the store instead of trusting a stale guess.
+     */
+    private void attachCompletion(String roomId, CompletableFuture<RoomLease> future) {
+        future.whenComplete((lease, ex) -> {
+            pending.remove(roomId, future);
+            if (ex != null) {
+                log.warn("room {}: lease store unreachable while acquiring -- ownership stays "
+                        + "unresolved, will retry on the next frame for this room", roomId, ex);
+                return;
+            }
+            cache.put(roomId, lease);
+        });
     }
 
     @Override

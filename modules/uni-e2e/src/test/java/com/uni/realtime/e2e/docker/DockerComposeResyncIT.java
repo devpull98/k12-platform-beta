@@ -34,9 +34,11 @@ import java.util.List;
  * prove "no double-scoring on RESYNC" the way {@code RoomActorResyncTest} does in-process. What
  * this test proves INSTEAD, for the first time over real infrastructure rather than one JVM's
  * loopback sockets: (1) the dev join token verifier (G1a/G1c stand-in) actually verifies a real
- * HMAC-signed join token end to end through a real Netty pipeline; (2) two rooms hashing to
- * DIFFERENT engine pods (§7.3 modulo ownership) both route correctly, proving the gateway's
- * learned {@code owner_pod_id} routing works across real containers, not just within one process;
+ * HMAC-signed join token end to end through a real Netty pipeline; (2) two independently-joined
+ * rooms both route correctly against real {@code LeaseBasedRoomOwnership} lease acquisition
+ * (room_id % N removed 2026-09-09 -- which of the 2 engine pods ends up owning each room is no
+ * longer deterministic, see the test method's own comment), proving the gateway's learned
+ * {@code owner_pod_id} routing works across real containers, not just within one process;
  * (3) the RESYNC wire plumbing (dispatch → {@code RoomActor.onResync} → personal full snapshot
  * reply) survives a real disconnect/reconnect over real sockets without crashing.
  */
@@ -58,9 +60,14 @@ class DockerComposeResyncIT {
 
     @Test
     void should_routeAcrossPodsAndSurviveResync_againstTheRealDockerStack() throws Exception {
-        // floorMod(hashCode, 2): "room-docker-a" -> engine-0, "room-docker-b" -> engine-1
-        // (verified via jshell before writing this test -- ModuloRoomOwnership.ownerPodId's
-        // exact rule, §7.3/ADR-007).
+        // room_id % N removal (2026-09-09): which pod ends up owning "room-docker-a" vs
+        // "room-docker-b" is no longer a deterministic hash -- LeaseBasedRoomOwnership is
+        // first-acquire-wins against room-store, so it depends on which pod the Gateway's
+        // round-robin guess (§4.5 step 2) happens to try first for each room. The two rooms
+        // LIKELY still land on different pods most runs (two independent JOIN_ROOMs, round-robin
+        // cursor advances between them), but that's no longer a guarantee this test can assert on
+        // -- the assertions below only depend on both rooms routing/resyncing correctly, not on
+        // which specific pod owns which.
         String joinTokenA = CODEC.sign(
                 new JoinTokenClaims("student-docker-a", "room-docker-a", "session-docker-a", List.of("student")),
                 Duration.ofMinutes(5));

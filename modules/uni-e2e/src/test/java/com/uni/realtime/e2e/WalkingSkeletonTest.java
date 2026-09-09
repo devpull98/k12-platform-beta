@@ -2,7 +2,7 @@ package com.uni.realtime.e2e;
 
 import com.uni.realtime.gameengine.metrics.EngineMetrics;
 import com.uni.realtime.gameengine.net.FrameChannelServer;
-import com.uni.realtime.gameengine.room.ModuloRoomOwnership;
+import com.uni.realtime.e2e.support.AlwaysOwnRoomOwnership;
 import com.uni.realtime.gameengine.room.RoomActor;
 import com.uni.realtime.gameengine.room.RoomOwnership;
 import com.uni.realtime.gameengine.room.RoomSupervisor;
@@ -79,7 +79,7 @@ class WalkingSkeletonTest {
 
     @Test
     void should_deliverAnswerAckAndBroadcastDelta_forAJoinSubmitRoundTrip_overRealSockets() throws Exception {
-        RoomOwnership ownsEverything = new ModuloRoomOwnership("engine-0", List.of("engine-0"));
+        RoomOwnership ownsEverything = new AlwaysOwnRoomOwnership("engine-0");
         engineSystem = ActorSystem.create(RoomSupervisor.create(ownsEverything,
                 FormulaScoreCalculator.binaryChoice(), new EngineMetrics(new SimpleMeterRegistry()), Clock.systemUTC()), "e2e-engine");
         engineServer = new FrameChannelServer(0, ownsEverything,

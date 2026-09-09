@@ -938,6 +938,16 @@ ngay, Channel chết còn trong set của phòng khác là rò dữ liệu chéo
 
 ### ADR-007
 
+> [!IMPORTANT]
+> **Cập nhật 2026-09-09:** `ModuloRoomOwnership` (`room_id % N`) đã bị **xoá hoàn toàn khỏi code**
+> theo yêu cầu người dùng — không còn tồn tại như implementation mặc định, không còn tồn tại như
+> fallback. `LeaseBasedRoomOwnership` giờ là implementation DUY NHẤT của `RoomOwnership`, luôn
+> chạy (`uni.engine.room-store.enabled` — cờ đã bị xoá — không còn tồn tại; Valkey/room-store giờ
+> là dependency bắt buộc để Engine khởi động). Đoạn narrative bên dưới **giữ nguyên giá trị lịch
+> sử** (mô tả đúng quyết định 2026-09-07 tại thời điểm đó), nhưng KHÔNG còn mô tả đúng code hiện
+> tại — xem `CLAUDE.md` (mục Rules + Known Phase 1 trade-offs) và
+> `docs/work/NOJIRA-uni-p1-realtime-core/plan.md` Task 23 để biết trạng thái thật.
+
 **Quyền sở hữu phòng nằm sau một interface duy nhất `RoomOwnership`.** **Không class nào ngoài
 `RoomOwnership` được biết tới thuật toán phân bổ cụ thể** — dù đó là `% N` hay lease Valkey.
 
@@ -1074,7 +1084,18 @@ khỏi phần **đề xuất cho GĐ2** (cần ADR riêng, chưa được phép 
      pause **vẫn tồn tại** ở GĐ1 — chỉ được giảm nhẹ bằng tuning GC, chưa được loại bỏ triệt để.
 
 #### ⚠️ Rủi ro 4: "Cái bẫy" Modulo Hash (`room_id % N`) khi thay đổi số Pod
-- **Hiện trạng (cập nhật 2026-09-09):** Cả hai nửa của rủi ro này **đã đóng và verify bằng Docker
+- **Hiện trạng (cập nhật 2026-09-09, tiếp — trong cùng ngày):** rủi ro GỐC (đổi `N` làm vỡ hash)
+  giờ **không thể xảy ra nữa về mặt code** — `ModuloRoomOwnership` đã bị xoá hoàn toàn, không còn
+  `room_id % N` ở bất kỳ đâu trong repo, `LeaseBasedRoomOwnership` là `RoomOwnership` DUY NHẤT,
+  LUÔN chạy (cờ `uni.engine.room-store.enabled` đã bị xoá, không còn "mặc định false" nữa — Valkey
+  giờ là dependency bắt buộc mọi môi trường). Đoạn dưới đây (viết sớm hơn cùng ngày) mô tả đúng
+  hiện trạng **trước** thay đổi này — vẫn giữ nguyên giá trị lịch sử để hiểu tiến trình quyết định,
+  nhưng câu "cờ này vẫn false mặc định" KHÔNG còn đúng. Rủi ro CÒN LẠI không liên quan gì tới
+  modulo: `LeaseBasedRoomOwnership` + Valkey vẫn CHƯA verify ở staging thật (chỉ Docker 1 máy), và
+  Valkey trở thành single point of failure mới cho việc TẠO phòng mới (xem
+  `docs/runbook/engine-scaling-freeze.md` cập nhật cùng ngày). `uni.gateway.engine.pod-discovery.enabled`
+  (Gateway, Task 21) không đổi — vẫn `false` mặc định, không liên quan tới thay đổi này.
+- **Hiện trạng (cập nhật 2026-09-09, bản gốc — giữ nguyên giá trị lịch sử):** Cả hai nửa của rủi ro này **đã đóng và verify bằng Docker
   thật** — `LeaseBasedRoomOwnership` (`plan.md` Task 14, Engine) đã chạy `DockerComposeChaosIT` kill
   container Engine thật đang giữ phòng, xác nhận pod sống sót giành lại lease + phục hồi đúng
   roster từ Hot Snapshot Valkey; `EnginePodDiscovery` (`plan.md` Task 21, Gateway) đã chạy

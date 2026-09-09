@@ -105,6 +105,8 @@ parallel_safe: true
 ### Task 14: `LeaseBasedRoomOwnership` & Hot Snapshot — ✅ XONG
 - Valkey Lease `SETNX room:owner:{id}` + `INCR room:epoch:{id}`. Hot Snapshot nén < 5KB với Fencing Epoch.
 - **Verification:** `LeaseBasedRoomOwnershipTest` (11/11 pass), `DockerComposeChaosIT` (phục hồi trung bình 24.9s qua Docker).
+- **Cập nhật 2026-09-09 (Task 23):** không còn opt-in — `uni.engine.room-store.enabled` đã bị xoá,
+  `LeaseBasedRoomOwnership` giờ là `RoomOwnership` DUY NHẤT, luôn chạy. Xem Task 23.
 
 ### Task 15: Broadcast `COMMITTED_SEQ` — ⚠️ SERVER XONG
 - Tín hiệu Best-effort báo client xoá RingBuffer sau khi Valkey ghi Hot Snapshot thành công.
@@ -214,6 +216,75 @@ parallel_safe: true
   file vừa sửa xong. Khôi phục bằng `git show HEAD:<path>` (read-only) + Write lại thủ công đúng
   nội dung + edit của mình, không dùng `git checkout` (bị auto-mode classifier chặn vì là lệnh
   discard hàng loạt). Xem `_context.md` state block để biết chi tiết.
+
+### Task 23: Xoá hẳn `room_id % N` khỏi RoomOwnership — ✅ XONG (2026-09-09)
+- **Mục tiêu:** Theo yêu cầu người dùng, gỡ bỏ hoàn toàn `ModuloRoomOwnership` (`room_id % N`) khỏi
+  code — không còn là fallback lúc Valkey mất kết nối, không còn là ownership mặc định khi
+  `room-store.enabled=false`. Đã hỏi rõ trước khi làm: Valkey trở thành dependency bắt buộc để
+  Engine khởi động, không còn đường lui — người dùng xác nhận chấp nhận đánh đổi này.
+- **Xoá:** `ModuloRoomOwnership.java` + `RoomOwnershipTest.java` (test riêng cho nó).
+- **`LeaseBasedRoomOwnership.java`:** bỏ tham số constructor `fallback` — khi Valkey mất kết nối
+  lúc giành lease, ở lại trạng thái unresolved (`ownerPodId` trả `""`) thay vì đoán sang modulo,
+  đúng hợp đồng "drop this frame" đã có sẵn trong `RoomOwnership` javadoc.
+- **`EngineNetworkLifecycle.java`:** bỏ nhánh `if (roomStoreEnabled)` — Lease-based ownership + Hot
+  Snapshot giờ LUÔN chạy; bỏ tham số `uni.engine.pod-count` (chỉ tồn tại để dựng danh sách pod cho
+  modulo, không còn ai dùng).
+- **Config:** bỏ `ENGINE_ROOM_STORE_ENABLED`/`ENGINE_POD_COUNT` khỏi `application.yml` và
+  `docker-compose.dev.yml` (cả 3 service `engine-0/1/2`).
+- **Bug thật phát hiện qua chính quá trình sửa (có sẵn từ Task 14, không phải do refactor này gây
+  ra — chỉ bị lộ ra vì xoá fallback):** `pending.remove(roomId)` gọi TỪ BÊN TRONG callback
+  `whenComplete` gắn vào future trả về từ `pending.computeIfAbsent(roomId, ...)` cho ĐÚNG key đó —
+  khi store hoàn thành ĐỒNG BỘ (mọi fake trong `LeaseBasedRoomOwnershipTest`, có thể cả Lettuce
+  thật trong vài trường hợp), `whenComplete` chạy ngay lập tức BÊN TRONG lời gọi `computeIfAbsent`,
+  và `ConcurrentHashMap` ném `IllegalStateException("Recursive update")` khi mapping function tự
+  sửa chính map đang tính cho cùng 1 key — lỗi này bị `whenComplete` nuốt âm thầm, làm `cache.put()`
+  (đặt SAU `pending.remove()` trong code cũ lẫn code mới ban đầu) không bao giờ chạy. Lỗi này ĐÃ
+  TỒN TẠI TỪ TRƯỚC (code cũ cũng gọi `pending.remove` bên trong cùng 1 `computeIfAbsent`) nhưng bị
+  che giấu vì code cũ luôn `cache.put()` TRƯỚC `pending.remove()` — mọi lời gọi `ensureAcquired` sau
+  đó đều tắt qua nhánh `if (cache.containsKey) return` trước khi chạm lại `pending`. **Sửa đúng:**
+  tách mapping function của `computeIfAbsent` ra CHỈ gọi `roomStore.tryAcquire()` (không đụng gì
+  tới `pending`/`cache`), rồi gắn `whenComplete` (thật sự làm `cache.put`/`pending.remove`) ở BÊN
+  NGOÀI, SAU KHI `computeIfAbsent` đã trả về — không còn lồng nhau nữa. Phát hiện qua chạy test
+  thật (4/12 test đỏ đúng lý do, không phải giả định) — đúng tinh thần "prove-it" đã dùng xuyên
+  suốt repo này.
+- **Test cập nhật:** 6 file dùng `ModuloRoomOwnership` làm stub "owns everything"
+  (`RoomSupervisorTest` x3, `FrameChannelServerTest`, `RoomOwnershipHandlerTest` x2, 3 file
+  `uni-e2e`) — thay bằng class stub mới `AlwaysOwnRoomOwnership` (định nghĩa riêng cho từng module
+  test tree, không chia sẻ qua module vì test-jar chưa được setup). `DockerComposeResyncIT.java`:
+  sửa comment/javadoc (không sửa assertion) — test này trước đây dựa vào `floorMod` xác định
+  "room-docker-a" luôn rơi vào `engine-0`, "room-docker-b" luôn rơi vào `engine-1` (verify bằng
+  jshell) để giải thích vì sao test chắc chắn đi qua 2 pod khác nhau; giờ `LeaseBasedRoomOwnership`
+  là first-acquire-wins, không còn đảm bảo xác định nào — đã sửa lại đúng thực tế, assertion không
+  đổi vì không phụ thuộc pod cụ thể nào.
+- **Verification:** `mvn -pl :uni-game-engine test`: 170/170 pass (giảm 5 vì xoá
+  `RoomOwnershipTest`). `mvn clean install` toàn reactor: BUILD SUCCESS (2:24) — 7 protocol + 92
+  gateway + 170 engine + 4 e2e, không Docker (Docker ITs chưa chạy lại — cần xác nhận riêng khi có
+  Docker daemon, đặc biệt `DockerComposeChaosIT`/`DockerComposeResyncIT`).
+- **Tài liệu đã cập nhật:** `CLAUDE.md` (rule B2 + Known Phase 1 trade-offs), `docs/runbook/engine-scaling-freeze.md`
+  (rủi ro GỐC — đổi N làm vỡ hash — đã hết vì không còn N để đổi; runbook CHƯA được gỡ bỏ vì điều
+  kiện "verify Valkey Cluster thật ở staging" vẫn chưa đạt, mới chỉ Docker 1 máy), `_context.md`.
+- **Verify thêm qua Docker thật (2026-09-09, cùng phiên, sau khi phát hiện Docker daemon thật ra CÓ
+  chạy được trong môi trường này):** chạy `DockerComposeResyncIT`/`DockerComposeChaosIT`/`DockerComposeScaleUpIT`
+  với `RUN_DOCKER_IT=true` qua `docker-compose.dev.yml` thật (đã cập nhật, không còn
+  `ENGINE_ROOM_STORE_ENABLED`/`ENGINE_POD_COUNT`).
+  - **Lần chạy đầu: 2 loại lỗi môi trường thật, không phải regression code.**
+    (1) Cổng 9000 host bị 2 tiến trình cùng lắng nghe — `com.docker.backend.exe` (đúng, forward
+    thật của container) VÀ 1 `wslrelay.exe` mồ côi trên `[::1]:9000`, sót lại từ 1 phiên
+    docker-compose CŨ không được dọn sạch trước phiên này (bằng chứng: `room-store`/`kafka` đã
+    "Up 8 giờ" trước khi phiên này chạm tới) — `curl`/WS client trên Windows ưu tiên `::1` (IPv6)
+    nên nối nhầm sang relay mồ côi, gây `WS handshake never completed`/`JOIN_ROOM got no
+    full-snapshot reply`. Sửa: `docker compose down` sạch + `taskkill` tiến trình mồ côi (xác nhận
+    lại bằng `curl` WS handshake thật trả `101 Switching Protocols` trước khi chạy lại test).
+    (2) `DockerComposeScaleUpIT` fail lần đầu vì `engine-2` dùng image CŨ (build từ phiên trước, có
+    `ModuloRoomOwnership` — log thật: `IllegalArgumentException: selfPodId 'engine-2' must be in
+    allPodIds [engine-0]`) vì lệnh `docker compose up -d --build` ban đầu không liệt kê `engine-2`
+    (dịch vụ này cố ý không nằm trong `depends_on` của ai, không tự build theo default). Sửa:
+    `docker compose build engine-2` tường minh trước khi chạy lại test.
+  - **Lần chạy sau khi sửa cả 2 vấn đề môi trường: XANH cả 3.** `DockerComposeResyncIT` (1/1),
+    `DockerComposeChaosIT` (2/2, thời gian phục hồi thật 21897ms — khớp dải 21.8s-27.9s đã đo ở
+    Task 14, không regress), `DockerComposeScaleUpIT` (1/1, `engine-2` sau khi build lại image mới
+    tự khởi động đúng `LeaseBasedRoomOwnership`, không còn dòng log
+    `ModuloRoomOwnership`/`ENGINE_POD_COUNT` nào). Đã `docker compose down` dọn sạch sau khi xong.
 
 ---
 

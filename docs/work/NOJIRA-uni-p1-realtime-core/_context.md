@@ -576,7 +576,45 @@ progress: "T1, T2, T4, T5, T10 xong. T6 MOT PHAN xong (GatewayPipeline + WS hand
   sua: comment ADR-1 trong proto moi (Nit, khong chan merge). RIENG BIET, CHUA xu ly: CLAUDE.md
   dang co 1 doan sua CHUA COMMIT (xoa chi tiet duong dan Maven cua IntelliJ o muc Stack, de lai
   khoang trang thua, khong ro nguoi dung tu sua hay lien quan gi toi su co xoa-noi-dung o tren) -
-  da hoi nguoi dung xac nhan, dang cho tra loi, KHONG tu commit/sua thay."
+  da hoi nguoi dung xac nhan, dang cho tra loi, KHONG tu commit/sua thay.
+  2026-09-09 (phien khac, sau khi da xac nhan CLAUDE.md khong lien quan su co xoa noi dung - do
+  la nguoi dung tu tay sua that): nguoi dung yeu cau 'bo han logic room_id % N'. Hoi ro truoc vi
+  Valkey se thanh dependency bat buoc (mat fallback khi Valkey chet luc gianh lease) - nguoi dung
+  chon 'chap nhan Valkey bat buoc'. Xoa hoan toan ModuloRoomOwnership.java + RoomOwnershipTest.java
+  (test rieng cho no). LeaseBasedRoomOwnership.java: bo tham so constructor `fallback` (RoomOwnership) -
+  luc Valkey mat ket noi gianh lease, KHONG con doan sang modulo nua ma o lai trang thai unresolved
+  (chuoi rong), dung dung hop dong da co san cua RoomOwnership.ownerPodId ('drop frame'). EngineNetworkLifecycle:
+  bo nhanh if(roomStoreEnabled) - LeaseBasedRoomOwnership + Hot Snapshot gio LUON chay, bo ca
+  tham so uni.engine.pod-count (chi ton tai de dung cho modulo, khong con ai dung). application.yml
+  + docker-compose.dev.yml: bo ENGINE_ROOM_STORE_ENABLED va ENGINE_POD_COUNT.
+  Bug THAT phat hien qua chinh qua trinh sua (khong phai do code cu, do refactor moi lo ra): xoa
+  fallback lam lo 1 loi tiem an co san tu Task 14 - `pending.remove(roomId)` goi TU BEN TRONG
+  callback whenComplete dinh vao future tra ve tu `pending.computeIfAbsent(roomId, ...)` cho DUNG
+  key do - khi store hoan thanh DONG BO (moi fake test trong LeaseBasedRoomOwnershipTest, co le
+  ca Lettuce that trong vai truong hop), whenComplete chay ngay lap tuc BEN TRONG loi goi
+  computeIfAbsent, va ConcurrentHashMap nem IllegalStateException('Recursive update') khi mapping
+  function tu sua chinh map dang tinh cho cung 1 key - loi nay bi whenComplete nuot am tham (khong
+  nem ra ngoai), lam cache.put() (dat SAU pending.remove() trong code moi) khong bao gio chay.
+  Loi nay dung ra da TON TAI TU TRUOC (code cu cung goi pending.remove ben trong cung 1 computeIfAbsent)
+  nhung bi che giau vi code cu luon cache.put() TRUOC pending.remove() - moi loi goi ensureAcquired
+  sau do deu tat qua nhanh 'if (cache.containsKey) return' truoc khi cham lai pending. Sua dung:
+  tach mapping function cua computeIfAbsent ra CHI goi roomStore.tryAcquire() (khong dung gi toi
+  pending/cache), roi gan whenComplete (that su lam cache.put/pending.remove) o BEN NGOAI, SAU KHI
+  computeIfAbsent da tra ve - khong con long nhau nua. Phat hien qua chay test that (4/12 test do
+  Red dung ly do, khong phai gia dinh) - dung tinh than 'prove-it' da dung xuyen suot repo nay.
+  Cap nhat 6 file test dung ModuloRoomOwnership lam stub 'owns everything' (RoomSupervisorTest x3,
+  FrameChannelServerTest, RoomOwnershipHandlerTest x2, 3 file uni-e2e) - thay bang class stub moi
+  AlwaysOwnRoomOwnership (rieng cho tung module test tree, khong chia se qua module vi test-jar
+  khong duoc setup). DockerComposeResyncIT.java: sua comment (khong sua assertion) - test nay
+  truoc day dua vao floorMod xac dinh 'room-docker-a' luon roi vao engine-0, 'room-docker-b' luon
+  roi vao engine-1 (verify bang jshell) de giai thich vi sao test chac chan di qua 2 pod khac nhau;
+  gio LeaseBasedRoomOwnership la first-acquire-wins, khong con dam bao xac dinh nao - da sua
+  javadoc/comment de khong con tuyen bo sai, assertion khong doi vi khong phu thuoc pod cu the nao.
+  mvn -pl :uni-game-engine test: 170/170 pass (giam 5 vi xoa RoomOwnershipTest). mvn clean install
+  toan reactor: BUILD SUCCESS (2:24) - 7 protocol + 92 gateway + 170 engine + 4 e2e, khong Docker.
+  Tai lieu da cap nhat: CLAUDE.md (rule B2 + Known Phase 1 trade-offs), docs/runbook/engine-scaling-freeze.md
+  (rui ro GOC da het vi khong con N de doi, nhung runbook CHUA go bo vi dieu kien 'verify Valkey
+  Cluster that o staging' van chua dat - chi Docker 1 may)."
 dev_selftest: pending
 qc_status: pending
 trace: pending

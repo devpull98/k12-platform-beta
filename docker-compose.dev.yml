@@ -87,12 +87,6 @@ services:
       SERVER_PORT: "8090"
       ENGINE_FRAME_PORT: "9100"
       ENGINE_POD_ID: "engine-0"
-      # Task 21: 3, not 2 -- must include engine-2 (see its own service block below) so
-      # ModuloRoomOwnership's constructor check (selfPodId must be in the generated pod-id list)
-      # passes for every pod in this compose file, and so the modulo FALLBACK used when the lease
-      # store is unreachable stays consistent across all three pods, not just two of them.
-      ENGINE_POD_COUNT: "3"
-      ENGINE_ROOM_STORE_ENABLED: "true"
       ENGINE_ROOM_STORE_URI: "redis://room-store:6379"
       ENGINE_KAFKA_ENABLED: "true"
       ENGINE_KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
@@ -129,9 +123,6 @@ services:
       SERVER_PORT: "8090"
       ENGINE_FRAME_PORT: "9100"
       ENGINE_POD_ID: "engine-1"
-      # Task 21: see the identical comment on engine-0 above.
-      ENGINE_POD_COUNT: "3"
-      ENGINE_ROOM_STORE_ENABLED: "true"
       ENGINE_ROOM_STORE_URI: "redis://room-store:6379"
       ENGINE_KAFKA_ENABLED: "true"
       ENGINE_KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
@@ -172,13 +163,6 @@ services:
       SERVER_PORT: "8090"
       ENGINE_FRAME_PORT: "9100"
       ENGINE_POD_ID: "engine-2"
-      # Task 21 (2026-09-09 fix): this was "2" -- ModuloRoomOwnership's constructor generates
-      # allPodIds as engine-0..engine-{podCount-1}, so podCount=2 produced [engine-0, engine-1],
-      # which does NOT contain "engine-2" -- selfPodId check failed and this pod crash-looped on
-      # every boot. Found by actually running DockerComposeScaleUpIT for the first time (it had
-      # been @Disabled since 2026-09-08 and this service had never really been started before).
-      ENGINE_POD_COUNT: "3"
-      ENGINE_ROOM_STORE_ENABLED: "true"
       ENGINE_ROOM_STORE_URI: "redis://room-store:6379"
       ENGINE_KAFKA_ENABLED: "true"
       ENGINE_KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"

@@ -129,9 +129,10 @@ code that passes a naive test and breaks in production.
 - **A silent room broadcasts zero packets** (ADR-4, §6.2). 200ms is a ceiling on
   frequency, not a tick. Critical messages (`ANSWER_ACK`, `GAME_OVER`, `QUESTION_STARTED`,
   `TEACHER_COMMAND`, `CONNECTION_DEGRADED`) bypass coalescing entirely.
-- **Room ownership lives behind `RoomOwnership` and nowhere else** (decision B2). Phase 2
-  replaces that one class with Cluster Sharding. If `% N` appears anywhere else, that
-  swap becomes a rewrite.
+- **Room ownership lives behind `RoomOwnership` and nowhere else** (decision B2). `room_id % N`
+  was removed entirely 2026-09-09 (user decision) — `LeaseBasedRoomOwnership` is now the only
+  implementation, always on, no fallback. Phase 2 (Cluster Sharding, if ever needed) replaces
+  that one class again. If `% N` reappears anywhere, that's a regression, not a design choice.
 - **The gateway never computes where a room lives.** It learns from
   `InternalHeader.owner_pod_id` on responses (§8.2). This is why Phase 2 will not need to
   touch the gateway.
@@ -147,8 +148,14 @@ code that passes a naive test and breaks in production.
   2026-09-08). Split into what's actually true today:
   - **Engine pod crash:** solved and chaos-tested (`LeaseBasedRoomOwnership` + Hot Snapshot,
     plan.md Task 14) — a killed pod's rooms are re-acquired and restored by a surviving pod, no
-    Cluster Sharding needed. Still off by default (`uni.engine.room-store.enabled=false` in
-    `application.yml`); only turned on in `docker-compose.dev.yml`.
+    Cluster Sharding needed. **Updated 2026-09-09: no longer off by default** — `room_id % N`
+    (`ModuloRoomOwnership`) was removed entirely (user decision), so `LeaseBasedRoomOwnership` is
+    now the only `RoomOwnership` implementation, always on; the `uni.engine.room-store.enabled`
+    flag is gone and Valkey (room-store) is now a hard startup dependency for the Engine in every
+    environment, not just `docker-compose.dev.yml`. Still **not verified against a real staging
+    Valkey Cluster** (only Docker-on-one-machine chaos tests) — see
+    `docs/runbook/engine-scaling-freeze.md`'s 2026-09-09 update for what this does and doesn't
+    change about that runbook's caution.
   - **Adding a brand-new engine pod mid-session:** solved and Docker-verified (2026-09-09,
     `plan.md` Task 21) — `uni.gateway.engine.pods` is still read once at boot
     (`GatewayNetworkLifecycle`) and never grows on its own, but `EnginePodDiscovery` now polls a

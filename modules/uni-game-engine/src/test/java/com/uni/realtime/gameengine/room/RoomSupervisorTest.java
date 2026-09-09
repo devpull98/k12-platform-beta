@@ -35,8 +35,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * spawning a {@code RoomActor} on first join, routing a reply back to the connection a message
  * arrived on, and fanning a broadcast out to every connection subscribed to a room.
  *
- * <p>Uses a real {@link ActorTestKit} (RoomActor's timers are real, per Task 3) with plain
- * {@link ModuloRoomOwnership} for a single pod. Each "connection" is an {@link EmbeddedChannel}
+ * <p>Uses a real {@link ActorTestKit} (RoomActor's timers are real, per Task 3) with a trivial
+ * {@link AlwaysOwnRoomOwnership} stub for a single pod. Each "connection" is an {@link EmbeddedChannel}
  * whose outbound writes are captured into a {@link BlockingQueue} via a small interceptor --
  * needed because {@code RoomSupervisor} writes to it from an actor dispatcher thread, not the
  * test thread, so a direct {@code channel.readOutbound()} would race.
@@ -155,7 +155,7 @@ class RoomSupervisorTest {
 
     @Test
     void should_deliverAllQueuedJoins_afterOneSnapshotLoad_when_theyArriveBeforeItResolves() throws Exception {
-        RoomOwnership ownsEverything = new ModuloRoomOwnership("engine-1", List.of("engine-1"));
+        RoomOwnership ownsEverything = new AlwaysOwnRoomOwnership("engine-1");
         ControllableSnapshotStore store = new ControllableSnapshotStore();
         ActorRef<RoomSupervisor.Command> supervisor = testKit.spawn(RoomSupervisor.create(
                 ownsEverything, FormulaScoreCalculator.binaryChoice(),
@@ -225,7 +225,7 @@ class RoomSupervisorTest {
         priorRoomState.joinRoom("student-veteran", "Veteran");
         byte[] wrappedSnapshot = SnapshotEnvelope.wrap(1L, priorRoomState.serializeSnapshot()).orElseThrow();
 
-        RoomOwnership ownsEverything = new ModuloRoomOwnership("engine-1", List.of("engine-1"));
+        RoomOwnership ownsEverything = new AlwaysOwnRoomOwnership("engine-1");
         ControllableSnapshotStore store = new ControllableSnapshotStore();
         ActorRef<RoomSupervisor.Command> supervisor = testKit.spawn(RoomSupervisor.create(
                 ownsEverything, FormulaScoreCalculator.binaryChoice(),
@@ -252,7 +252,7 @@ class RoomSupervisorTest {
     }
 
     private ActorRef<RoomSupervisor.Command> spawnSupervisor() {
-        RoomOwnership ownsEverything = new ModuloRoomOwnership("engine-1", List.of("engine-1"));
+        RoomOwnership ownsEverything = new AlwaysOwnRoomOwnership("engine-1");
         return testKit.spawn(RoomSupervisor.create(ownsEverything, FormulaScoreCalculator.binaryChoice(),
                 new EngineMetrics(new SimpleMeterRegistry()), Clock.systemUTC()));
     }

@@ -3,19 +3,18 @@ package com.uni.realtime.gameengine.room;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
-import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Task 14 verification: pure logic against a fake {@link RoomLeaseStore}, no real external store
- * (there is none available in this environment -- {@code DistributedRoomLeaseStore}, the real
- * Lettuce implementation, is exercised by nothing in this repo and must be verified against the
- * real cluster before staging/production, exactly like {@code JoinTokenAuthHandler}'s
- * placeholder verifier). Everything here is about the caching/async/fencing/fallback logic
- * this class owns, independent of which store backs it.
+ * Task 14 verification (updated for the room_id % N removal): pure logic against a fake
+ * {@link RoomLeaseStore}, no real external store (there is none available in this environment --
+ * {@code DistributedRoomLeaseStore}, the real Lettuce implementation, is exercised by nothing in
+ * this repo and must be verified against the real cluster before staging/production, exactly like
+ * {@code JoinTokenAuthHandler}'s placeholder verifier). Everything here is about the
+ * caching/async/fencing logic this class owns, independent of which store backs it.
  */
 class LeaseBasedRoomOwnershipTest {
 
@@ -24,7 +23,7 @@ class LeaseBasedRoomOwnershipTest {
     @Test
     void should_answerUnknown_before_ensureAcquiredResolves() {
         LeaseBasedRoomOwnership ownership = new LeaseBasedRoomOwnership(
-                "engine-0", new NeverCompletingStore(), TTL, new ModuloRoomOwnership("engine-0", List.of("engine-0")));
+                "engine-0", new NeverCompletingStore(), TTL);
 
         assertThat(ownership.isOwner("room-1")).isFalse();
         assertThat(ownership.ownerPodId("room-1")).isEmpty();
@@ -33,8 +32,7 @@ class LeaseBasedRoomOwnershipTest {
     @Test
     void should_becomeOwner_when_ensureAcquiredWinsTheLease() {
         FakeRoomLeaseStore store = FakeRoomLeaseStore.acquiredBy("engine-0", 1L);
-        LeaseBasedRoomOwnership ownership = new LeaseBasedRoomOwnership(
-                "engine-0", store, TTL, new ModuloRoomOwnership("engine-0", List.of("engine-0")));
+        LeaseBasedRoomOwnership ownership = new LeaseBasedRoomOwnership("engine-0", store, TTL);
 
         ownership.ensureAcquired("room-1");
 
@@ -46,8 +44,7 @@ class LeaseBasedRoomOwnershipTest {
     @Test
     void should_notOwn_when_anotherPodAlreadyHoldsTheLease() {
         FakeRoomLeaseStore store = FakeRoomLeaseStore.acquiredBy("engine-1", 3L);
-        LeaseBasedRoomOwnership ownership = new LeaseBasedRoomOwnership(
-                "engine-0", store, TTL, new ModuloRoomOwnership("engine-0", List.of("engine-0", "engine-1")));
+        LeaseBasedRoomOwnership ownership = new LeaseBasedRoomOwnership("engine-0", store, TTL);
 
         ownership.ensureAcquired("room-1");
 
@@ -58,8 +55,7 @@ class LeaseBasedRoomOwnershipTest {
     @Test
     void should_callTheStoreExactlyOnce_when_ensureAcquiredIsCalledRepeatedlyAfterResolving() {
         FakeRoomLeaseStore store = FakeRoomLeaseStore.acquiredBy("engine-0", 1L);
-        LeaseBasedRoomOwnership ownership = new LeaseBasedRoomOwnership(
-                "engine-0", store, TTL, new ModuloRoomOwnership("engine-0", List.of("engine-0")));
+        LeaseBasedRoomOwnership ownership = new LeaseBasedRoomOwnership("engine-0", store, TTL);
 
         ownership.ensureAcquired("room-1");
         ownership.ensureAcquired("room-1");
@@ -73,8 +69,7 @@ class LeaseBasedRoomOwnershipTest {
         // Simulates several frames for a brand-new room arriving before the first async
         // acquire resolves -- computeIfAbsent's atomicity is what this test actually proves.
         ControllableStore store = new ControllableStore();
-        LeaseBasedRoomOwnership ownership = new LeaseBasedRoomOwnership(
-                "engine-0", store, TTL, new ModuloRoomOwnership("engine-0", List.of("engine-0")));
+        LeaseBasedRoomOwnership ownership = new LeaseBasedRoomOwnership("engine-0", store, TTL);
 
         ownership.ensureAcquired("room-1");
         ownership.ensureAcquired("room-1");
@@ -88,41 +83,39 @@ class LeaseBasedRoomOwnershipTest {
     }
 
     @Test
-    void should_fallBackToProvidedOwnership_when_theStoreFailsWithAnException() {
-        RoomOwnership fallback = new ModuloRoomOwnership("engine-0", List.of("engine-0"));
-        LeaseBasedRoomOwnership ownership = new LeaseBasedRoomOwnership(
-                "engine-0", new FailingStore(), TTL, fallback);
+    void should_stayUnresolved_when_theStoreFailsWithAnException() {
+        // room_id % N removal (2026-09-09): a store outage no longer falls back to a modulo
+        // guess -- ownership just stays "" (the documented "drop this frame" sentinel) so a
+        // wrongly-guessed owner can never receive traffic it shouldn't.
+        LeaseBasedRoomOwnership ownership = new LeaseBasedRoomOwnership("engine-0", new FailingStore(), TTL);
 
         ownership.ensureAcquired("room-1");
 
-        assertThat(ownership.isOwner("room-1")).isEqualTo(fallback.isOwner("room-1"));
-        assertThat(ownership.ownerPodId("room-1")).isEqualTo(fallback.ownerPodId("room-1"));
-        assertThat(ownership.epochOf("room-1")).as("no fencing can be trusted on the fallback path").isZero();
+        assertThat(ownership.isOwner("room-1")).isFalse();
+        assertThat(ownership.ownerPodId("room-1")).isEmpty();
+        assertThat(ownership.epochOf("room-1")).isZero();
     }
 
     @Test
-    void should_allowRetrying_after_aFailedAcquireCompletes() {
+    void should_retryOnTheNextFrame_after_aFailedAcquireCompletes() {
         // The pending-marker must be cleared even on the exceptional path, or a room that hit
-        // a transient store error would be stuck unresolvable forever.
+        // a transient store error would be stuck unresolvable forever. With no fallback to cache,
+        // "cleared" now means the NEXT ensureAcquired call genuinely retries against the store
+        // (rather than serving a cached fallback answer, as it did before the modulo removal).
         FailingStore failingOnce = new FailingStore();
-        LeaseBasedRoomOwnership ownership = new LeaseBasedRoomOwnership(
-                "engine-0", failingOnce, TTL, new ModuloRoomOwnership("engine-0", List.of("engine-0")));
+        LeaseBasedRoomOwnership ownership = new LeaseBasedRoomOwnership("engine-0", failingOnce, TTL);
         ownership.ensureAcquired("room-1");
         assertThat(failingOnce.calls.get()).isEqualTo(1);
 
-        // cache now holds the fallback's answer, so a second ensureAcquired is a cache hit --
-        // proves the pending marker was removed rather than leaking forever, without needing a
-        // second failure path.
         ownership.ensureAcquired("room-1");
 
-        assertThat(failingOnce.calls.get()).as("cache hit, not a second attempt").isEqualTo(1);
+        assertThat(failingOnce.calls.get()).as("pending marker cleared, so this is a genuine retry").isEqualTo(2);
     }
 
     @Test
     void should_keepOwnership_when_renewSucceeds() {
         FakeRoomLeaseStore store = FakeRoomLeaseStore.acquiredBy("engine-0", 1L);
-        LeaseBasedRoomOwnership ownership = new LeaseBasedRoomOwnership(
-                "engine-0", store, TTL, new ModuloRoomOwnership("engine-0", List.of("engine-0")));
+        LeaseBasedRoomOwnership ownership = new LeaseBasedRoomOwnership("engine-0", store, TTL);
         ownership.ensureAcquired("room-1");
         store.renewResult = true;
 
@@ -135,8 +128,7 @@ class LeaseBasedRoomOwnershipTest {
     @Test
     void should_loseTheLease_when_renewReportsItWasNotRenewed() {
         FakeRoomLeaseStore store = FakeRoomLeaseStore.acquiredBy("engine-0", 1L);
-        LeaseBasedRoomOwnership ownership = new LeaseBasedRoomOwnership(
-                "engine-0", store, TTL, new ModuloRoomOwnership("engine-0", List.of("engine-0")));
+        LeaseBasedRoomOwnership ownership = new LeaseBasedRoomOwnership("engine-0", store, TTL);
         ownership.ensureAcquired("room-1");
         store.renewResult = false;
 
@@ -150,8 +142,7 @@ class LeaseBasedRoomOwnershipTest {
     void should_treatARenewException_asLostLease() {
         FakeRoomLeaseStore store = FakeRoomLeaseStore.acquiredBy("engine-0", 1L);
         store.renewThrows = true;
-        LeaseBasedRoomOwnership ownership = new LeaseBasedRoomOwnership(
-                "engine-0", store, TTL, new ModuloRoomOwnership("engine-0", List.of("engine-0")));
+        LeaseBasedRoomOwnership ownership = new LeaseBasedRoomOwnership("engine-0", store, TTL);
         ownership.ensureAcquired("room-1");
 
         ownership.renewAll();
@@ -170,8 +161,7 @@ class LeaseBasedRoomOwnershipTest {
         // completed future here would race pending.remove(roomId) against computeIfAbsent's own
         // insertion (a test-double-only artifact, never possible with a real network round trip).
         ControllableStore store = new ControllableStore();
-        LeaseBasedRoomOwnership ownership = new LeaseBasedRoomOwnership(
-                "engine-0", store, TTL, new ModuloRoomOwnership("engine-0", List.of("engine-0", "engine-1")));
+        LeaseBasedRoomOwnership ownership = new LeaseBasedRoomOwnership("engine-0", store, TTL);
         ownership.ensureAcquired("room-1");
         store.complete(new RoomLease("engine-1", 5L));
         assertThat(ownership.ownerPodId("room-1")).isEqualTo("engine-1");
@@ -189,8 +179,7 @@ class LeaseBasedRoomOwnershipTest {
     @Test
     void should_neverRenewARoomOwnedByAnotherPod() {
         FakeRoomLeaseStore store = FakeRoomLeaseStore.acquiredBy("engine-1", 5L);
-        LeaseBasedRoomOwnership ownership = new LeaseBasedRoomOwnership(
-                "engine-0", store, TTL, new ModuloRoomOwnership("engine-0", List.of("engine-0", "engine-1")));
+        LeaseBasedRoomOwnership ownership = new LeaseBasedRoomOwnership("engine-0", store, TTL);
         ownership.ensureAcquired("room-1");
 
         ownership.renewAll();

@@ -1,6 +1,7 @@
 package com.uni.realtime.gameengine.net;
 
-import com.uni.realtime.gameengine.room.ModuloRoomOwnership;
+import com.uni.realtime.gameengine.room.AlwaysOwnRoomOwnership;
+import com.uni.realtime.gameengine.room.RoomOwnership;
 import com.uni.realtime.protocol.GameMessage;
 import com.uni.realtime.gameengine.metrics.EngineMetrics;
 import com.uni.realtime.protocol.MessageType;
@@ -16,7 +17,6 @@ import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioSocketChannel;
 import org.junit.jupiter.api.Test;
 
-import java.util.List;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
@@ -34,7 +34,7 @@ class FrameChannelServerTest {
     @Test
     void should_deliverDecodedMessage_when_clientSendsFramedGameMessageOverRealSocket() throws Exception {
         BlockingQueue<GameMessage> received = new LinkedBlockingQueue<>();
-        ModuloRoomOwnership ownsEverything = new ModuloRoomOwnership("engine-1", List.of("engine-1"));
+        RoomOwnership ownsEverything = new AlwaysOwnRoomOwnership("engine-1");
         FrameChannelServer server = new FrameChannelServer(
                 0, ownsEverything, (channel, message) -> received.add(message), channel -> { },
                 new EngineMetrics(new SimpleMeterRegistry()));

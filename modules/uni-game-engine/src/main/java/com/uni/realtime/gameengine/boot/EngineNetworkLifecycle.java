@@ -7,8 +7,6 @@ import com.uni.realtime.gameengine.persistence.KafkaGameEventSink;
 import com.uni.realtime.gameengine.persistence.DistributedRoomLeaseStore;
 import com.uni.realtime.gameengine.persistence.DistributedRoomSnapshotStore;
 import com.uni.realtime.gameengine.persistence.EnginePodPresence;
-import com.uni.realtime.gameengine.room.ModuloRoomOwnership;
-import com.uni.realtime.gameengine.room.NoopRoomSnapshotStore;
 import com.uni.realtime.gameengine.room.LeaseBasedRoomOwnership;
 import com.uni.realtime.gameengine.room.RoomOwnership;
 import com.uni.realtime.gameengine.room.RoomSnapshotStore;
@@ -27,11 +25,9 @@ import org.springframework.stereotype.Component;
 
 import java.time.Clock;
 import java.time.Duration;
-import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.IntStream;
 
 @Component
 public final class EngineNetworkLifecycle implements ApplicationRunner, DisposableBean {
@@ -40,9 +36,7 @@ public final class EngineNetworkLifecycle implements ApplicationRunner, Disposab
 
     private final EngineMetrics engineMetrics;
     private final String podId;
-    private final int podCount;
     private final int framePort;
-    private final boolean roomStoreEnabled;
     private final String roomStoreUri;
     private final long leaseTtlSeconds;
     private final String advertisedHost;
@@ -61,9 +55,7 @@ public final class EngineNetworkLifecycle implements ApplicationRunner, Disposab
 
     public EngineNetworkLifecycle(EngineMetrics engineMetrics,
             @Value("${uni.engine.pod-id}") String podId,
-            @Value("${uni.engine.pod-count}") int podCount,
             @Value("${uni.engine.frame-port}") int framePort,
-            @Value("${uni.engine.room-store.enabled}") boolean roomStoreEnabled,
             @Value("${uni.engine.room-store.uri}") String roomStoreUri,
             @Value("${uni.engine.room-store.lease-ttl-seconds}") long leaseTtlSeconds,
             @Value("${uni.engine.advertised-host}") String advertisedHost,
@@ -73,9 +65,7 @@ public final class EngineNetworkLifecycle implements ApplicationRunner, Disposab
             @Value("${uni.engine.kafka.queue-capacity}") int kafkaQueueCapacity) {
         this.engineMetrics = engineMetrics;
         this.podId = podId;
-        this.podCount = podCount;
         this.framePort = framePort;
-        this.roomStoreEnabled = roomStoreEnabled;
         this.roomStoreUri = roomStoreUri;
         this.leaseTtlSeconds = leaseTtlSeconds;
         this.advertisedHost = advertisedHost;
@@ -87,45 +77,36 @@ public final class EngineNetworkLifecycle implements ApplicationRunner, Disposab
 
     @Override
     public void run(ApplicationArguments args) throws Exception {
-        List<String> podIds = IntStream.range(0, podCount).mapToObj(i -> "engine-" + i).toList();
-        ModuloRoomOwnership modulo = new ModuloRoomOwnership(podId, podIds);
+        roomStoreClient = RedisClient.create(roomStoreUri);
+        leaseConnection = roomStoreClient.connect();
+        snapshotConnection = roomStoreClient.connect(DistributedRoomSnapshotStore.CODEC);
 
-        RoomOwnership roomOwnership = modulo;
-        RoomSnapshotStore snapshotStore = NoopRoomSnapshotStore.INSTANCE;
+        DistributedRoomLeaseStore leaseStore = new DistributedRoomLeaseStore(leaseConnection.async());
+        LeaseBasedRoomOwnership leaseRoomOwnership = new LeaseBasedRoomOwnership(
+                podId, leaseStore, Duration.ofSeconds(leaseTtlSeconds));
+        RoomOwnership roomOwnership = leaseRoomOwnership;
+        RoomSnapshotStore snapshotStore = new DistributedRoomSnapshotStore(snapshotConnection.async());
 
-        if (roomStoreEnabled) {
-            roomStoreClient = RedisClient.create(roomStoreUri);
-            leaseConnection = roomStoreClient.connect();
-            snapshotConnection = roomStoreClient.connect(DistributedRoomSnapshotStore.CODEC);
+        long renewalIntervalSeconds = Math.max(1, leaseTtlSeconds / 3);
+        leaseRenewalScheduler = Executors.newSingleThreadScheduledExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "engine-lease-renewal");
+            thread.setDaemon(true);
+            return thread;
+        });
+        leaseRenewalScheduler.scheduleAtFixedRate(leaseRoomOwnership::renewAll,
+                renewalIntervalSeconds, renewalIntervalSeconds, TimeUnit.SECONDS);
 
-            DistributedRoomLeaseStore leaseStore = new DistributedRoomLeaseStore(leaseConnection.async());
-            LeaseBasedRoomOwnership leaseRoomOwnership = new LeaseBasedRoomOwnership(
-                    podId, leaseStore, Duration.ofSeconds(leaseTtlSeconds), modulo);
-            roomOwnership = leaseRoomOwnership;
-            snapshotStore = new DistributedRoomSnapshotStore(snapshotConnection.async());
+        EnginePodPresence podPresence = new EnginePodPresence(leaseConnection.async(), podId,
+                advertisedHost + ":" + framePort, Duration.ofSeconds(leaseTtlSeconds));
+        podPresence.announce();
+        leaseRenewalScheduler.scheduleAtFixedRate(podPresence::announce,
+                renewalIntervalSeconds, renewalIntervalSeconds, TimeUnit.SECONDS);
 
-            long renewalIntervalSeconds = Math.max(1, leaseTtlSeconds / 3);
-            leaseRenewalScheduler = Executors.newSingleThreadScheduledExecutor(runnable -> {
-                Thread thread = new Thread(runnable, "engine-lease-renewal");
-                thread.setDaemon(true);
-                return thread;
-            });
-            leaseRenewalScheduler.scheduleAtFixedRate(leaseRoomOwnership::renewAll,
-                    renewalIntervalSeconds, renewalIntervalSeconds, TimeUnit.SECONDS);
-
-            EnginePodPresence podPresence = new EnginePodPresence(leaseConnection.async(), podId,
-                    advertisedHost + ":" + framePort, Duration.ofSeconds(leaseTtlSeconds));
-            podPresence.announce();
-            leaseRenewalScheduler.scheduleAtFixedRate(podPresence::announce,
-                    renewalIntervalSeconds, renewalIntervalSeconds, TimeUnit.SECONDS);
-
-            log.info("pod {}: LeaseBasedRoomOwnership + Hot Snapshot ENABLED (ttl={}s, uri={}) -- "
-                            + "NOT verified against a real store instance in development, see "
-                            + "DistributedRoomLeaseStore/DistributedRoomSnapshotStore javadoc before trusting this in staging",
-                    podId, leaseTtlSeconds, roomStoreUri);
-        } else {
-            log.info("pod {}: uni.engine.room-store.enabled=false -- ModuloRoomOwnership, no Hot Snapshot (Phase 1 default)", podId);
-        }
+        log.info("pod {}: LeaseBasedRoomOwnership + Hot Snapshot (ttl={}s, uri={}) -- room_id % N is "
+                        + "gone, room-store is now a hard dependency; NOT verified against a real store "
+                        + "instance in staging, see DistributedRoomLeaseStore/DistributedRoomSnapshotStore "
+                        + "javadoc before trusting this in production",
+                podId, leaseTtlSeconds, roomStoreUri);
 
         if (kafkaEnabled) {
             gameEventPublisher = new GameEventPublisher(
