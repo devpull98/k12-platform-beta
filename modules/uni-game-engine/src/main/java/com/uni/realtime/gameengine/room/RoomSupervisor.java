@@ -1,13 +1,19 @@
 package com.uni.realtime.gameengine.room;
 
 import com.uni.realtime.gameengine.definition.MissedStepPolicy;
+import com.uni.realtime.gameengine.definition.ProgressStage;
+import com.uni.realtime.gameengine.definition.ScoreAggregation;
+import com.uni.realtime.gameengine.definition.SharedResourceType;
 import com.uni.realtime.gameengine.definition.TickMode;
+import com.uni.realtime.gameengine.definition.WinCondition;
 import com.uni.realtime.gameengine.events.GameEventPublisher;
 import com.uni.realtime.gameengine.metrics.EngineMetrics;
 import com.uni.realtime.gameengine.net.ChannelReplyActor;
 import com.uni.realtime.gameengine.scoring.ScoreCalculator;
 import com.uni.realtime.protocol.GameMessage;
+import com.uni.realtime.protocol.GameMode;
 import com.uni.realtime.protocol.TeacherCommand;
+import com.uni.realtime.protocol.TeamAssignment;
 import io.netty.channel.Channel;
 import org.apache.pekko.actor.typed.ActorRef;
 import org.apache.pekko.actor.typed.Behavior;
@@ -62,6 +68,21 @@ public final class RoomSupervisor extends AbstractBehavior<RoomSupervisor.Comman
      * that without inventing a protocol decision that isn't this task's to make.
      */
     public record GetRoomActor(String roomId, ActorRef<ActorRef<RoomActor.Command>> replyTo) implements Command {}
+
+    /**
+     * P2 Task 26: same test/ops-only spirit as {@link GetRoomActor} above -- spawns a room
+     * pre-configured with cooperative/team config BEFORE any real {@code JOIN_ROOM} arrives for
+     * it, so a real WebSocket-driven E2E test can exercise {@code GAME_MODE_COOPERATIVE}/{@code
+     * TEAM} through the actual join path. There is still no decided game-definition-authoring
+     * wire format (Task 11) for a real client/CMS to configure a room this way in production --
+     * this hook exists purely because there is no other way to get such a room to exist for a
+     * real client to join yet, exactly the reason {@link GetRoomActor} bypasses question content
+     * the same way. No-op (returns the existing actor) if {@code roomId} was already spawned.
+     */
+    public record SpawnConfiguredRoom(String roomId, GameMode gameMode, int progressTarget,
+            List<ProgressStage> progressStages, SharedResourceType sharedResourceType, int sharedResourcePenalty,
+            List<TeamAssignment> teamRosters, ScoreAggregation scoreAggregation, WinCondition winCondition,
+            ActorRef<ActorRef<RoomActor.Command>> replyTo) implements Command {}
 
     private record RoomBroadcast(GameMessage message) implements Command {}
 
@@ -148,6 +169,7 @@ public final class RoomSupervisor extends AbstractBehavior<RoomSupervisor.Comman
                 .onMessage(Dispatch.class, this::onDispatch)
                 .onMessage(ChannelClosed.class, this::onChannelClosed)
                 .onMessage(GetRoomActor.class, this::onGetRoomActor)
+                .onMessage(SpawnConfiguredRoom.class, this::onSpawnConfiguredRoom)
                 .onMessage(RoomBroadcast.class, this::onRoomBroadcast)
                 .onMessage(RoomTerminated.class, this::onRoomTerminated)
                 .onMessage(ReplyActorTerminated.class, this::onReplyActorTerminated)
@@ -312,12 +334,23 @@ public final class RoomSupervisor extends AbstractBehavior<RoomSupervisor.Comman
      *     load (test/ops hook, not part of the real join path).
      */
     private ActorRef<RoomActor.Command> spawnRoom(String roomId, byte[] snapshotBytes) {
+        return spawnRoom(roomId, snapshotBytes, GameMode.GAME_MODE_SOLO, 0, List.of(),
+                SharedResourceType.NONE, 0, List.of(), ScoreAggregation.SUM_ALL, WinCondition.PROGRESS_COMPLETED);
+    }
+
+    /** P2 Task 26: additive over the two-arg {@link #spawnRoom} above -- see {@link SpawnConfiguredRoom}'s javadoc. */
+    private ActorRef<RoomActor.Command> spawnRoom(String roomId, byte[] snapshotBytes, GameMode gameMode,
+            int progressTarget, List<ProgressStage> progressStages, SharedResourceType sharedResourceType,
+            int sharedResourcePenalty, List<TeamAssignment> teamRosters, ScoreAggregation scoreAggregation,
+            WinCondition winCondition) {
         ActorRef<GameMessage> broadcastTarget =
                 getContext().messageAdapter(GameMessage.class, RoomBroadcast::new);
         long epoch = roomOwnership.epochOf(roomId);
         ActorRef<RoomActor.Command> room = getContext().spawn(
                 RoomActor.create(roomId, clock, scoreCalculator, engineMetrics, TickMode.COALESCE, broadcastTarget,
-                        snapshotStore, epoch, snapshotBytes, MissedStepPolicy.ZERO, gameEventPublisher),
+                        snapshotStore, epoch, snapshotBytes, MissedStepPolicy.ZERO, gameEventPublisher,
+                        gameMode, progressTarget, progressStages, sharedResourceType, sharedResourcePenalty,
+                        teamRosters, scoreAggregation, winCondition),
                 "room-" + roomId);
         // Without this, a RoomActor that stops (EndGame) leaves a dead ActorRef behind in
         // roomsByRoomId forever -- a later JOIN_ROOM for the same room_id would find it via
@@ -325,6 +358,16 @@ public final class RoomSupervisor extends AbstractBehavior<RoomSupervisor.Comman
         getContext().watchWith(room, new RoomTerminated(roomId));
         roomsByRoomId.put(roomId, room);
         return room;
+    }
+
+    private Behavior<Command> onSpawnConfiguredRoom(SpawnConfiguredRoom command) {
+        ActorRef<RoomActor.Command> existing = roomsByRoomId.get(command.roomId());
+        ActorRef<RoomActor.Command> room = existing != null ? existing
+                : spawnRoom(command.roomId(), null, command.gameMode(), command.progressTarget(),
+                        command.progressStages(), command.sharedResourceType(), command.sharedResourcePenalty(),
+                        command.teamRosters(), command.scoreAggregation(), command.winCondition());
+        command.replyTo().tell(room);
+        return this;
     }
 
     private ActorRef<GameMessage> replyActorFor(Channel channel, String roomId) {

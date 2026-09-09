@@ -33,119 +33,54 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
-/**
- * One actor per room (2.4): single-threaded, owns every mutable field of the room via
- * {@link RoomState}. This class itself only wires Pekko dispatch and the watchdog (2.5.4) —
- * game rules live in RoomState so they stay testable without an actor system.
- */
 public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
-
-    /** Guardrail (2.5.4): warn, never interrupt — a slow handler is a signal, not a fault. */
     private static final long WATCHDOG_THRESHOLD_MS = 10;
-
-    /** ADR-4/§6.2: 200ms is a ceiling on broadcast frequency, never a fixed tick. */
     private static final long MIN_FLUSH_INTERVAL_MS = 200;
-
-    /**
-     * Task 14, §4.3 step 5: "định kỳ mỗi 2-3s hoặc sau câu hỏi" -- approximated here as "at most
-     * once per this many ms, checked every time a client-facing flush happens" rather than a
-     * second, independent timer. During active submission this naturally coalesces multiple
-     * flushes into roughly one Hot Snapshot write every ~2s; during a lull, no snapshot is
-     * written at all, which is safe (the last one written is still valid, nothing changed).
-     */
     private static final long SNAPSHOT_MIN_INTERVAL_MS = 2_000;
 
-    /**
-     * Deliberately NOT {@code getContext().getLog()}: {@link RoomSnapshotStore#save} completes
-     * on whatever thread the store's async I/O runs on, never this actor's own thread, and
-     * Pekko's actor-bound logger is only safe to use from the actor thread itself.
-     */
     private static final Logger snapshotLog = LoggerFactory.getLogger(RoomActor.class);
 
-    public sealed interface Command {}
+    public sealed interface Command {
+    }
 
-    public record StartGame() implements Command {}
+    public record StartGame() implements Command {
+    }
 
-    public record StartQuestion(String questionId, long durationMs, List<String> correctAnswerIds) implements Command {}
+    public record StartQuestion(String questionId, long durationMs, List<String> correctAnswerIds) implements Command {
+    }
 
-    /** Join reply carries the full snapshot directly (§6.2) — it never waits for coalescing. */
-    public record JoinRoom(String studentId, String displayName, ActorRef<GameMessage> replyTo) implements Command {}
+    public record JoinRoom(String studentId, String displayName, ActorRef<GameMessage> replyTo) implements Command {
+    }
 
-    /**
-     * clientTimestampMs rides along because the real wire envelope carries it (telemetry
-     * only, 9.4) — RoomState.submitAnswer never receives it, so it structurally cannot reach
-     * the scoring path.
-     */
     public record SubmitAnswer(
             String studentId,
             long sequence,
             String questionId,
             List<String> answerIds,
             long clientTimestampMs,
-            ActorRef<GameMessage> replyTo) implements Command {}
+            ActorRef<GameMessage> replyTo) implements Command {
+    }
 
-    /**
-     * PH-3 / §9.3: sent after a client reconnects, carrying what it believes it has (proto
-     * {@code Resync.last_acked_seq}/{@code pending}). {@code pending} entries are replayed
-     * through the SAME {@link RoomState#submitAnswer} dedupe/scoring path {@link SubmitAnswer}
-     * already uses -- {@code sequence <= last_seen} replays the stored ack (§5.2), so an
-     * already-scored replay is structurally harmless with no new dedupe logic here.
-     * {@code lastAckedSeq} is logged for diagnostics only, never used for correctness: the
-     * server's own {@code lastSeenSequence} table is authoritative regardless of what the
-     * client believes it has. No new actor FSM state -- {@code RESYNCING} is out of scope for
-     * Phase 1 (system-architecture.md: "GĐ1: FSM chỉ có LOBBY → PLAYING → FINISHED, RESYNCING
-     * chưa cần") -- this is handled as an ordinary message.
-     */
     public record Resync(String studentId, long lastAckedSeq, List<GameMessage> pending,
-            ActorRef<GameMessage> replyTo) implements Command {}
+                         ActorRef<GameMessage> replyTo) implements Command {
+    }
 
-    /**
-     * P2 Task 22 (INCLASS-GAME-001-v2.1 §5.6 luật biên 3): a scoped draft share. No
-     * {@code replyTo} -- unlike {@link SubmitAnswer}, this never replies to the sender, it fans
-     * out (0-N messages) to teammates via {@link #broadcastTarget} (personal delivery per
-     * recipient, see {@link RoomState#updateDraft}'s javadoc). A no-op for a {@code SOLO} room or
-     * a sender not on any team roster -- {@code RoomState.updateDraft} returns an empty list.
-     */
-    public record UpdateDraft(String studentId, String draftContent) implements Command {}
+    public record UpdateDraft(String studentId, String draftContent) implements Command {
+    }
 
-    public record EndGame() implements Command {}
+    public record EndGame() implements Command {
+    }
 
-    /**
-     * Leave-room flow: a Gateway channel that had completed JOIN_ROOM disconnected. Flips the
-     * roster's {@code connected} flag and lets the next coalescing flush carry it -- no reply,
-     * no urgency, unlike {@link KickStudent}.
-     */
-    public record StudentDisconnected(String studentId) implements Command {}
+    public record StudentDisconnected(String studentId) implements Command {
+    }
 
-    /**
-     * {@code TeacherCommand.KICK_STUDENT}: unlike {@link StudentDisconnected}, this must notify
-     * the target immediately (bypass coalescing, like {@code ANSWER_ACK}) so the Gateway can close
-     * that student's socket right after delivering it -- see {@code EngineResponseRouter}.
-     */
-    public record KickStudent(String studentId) implements Command {}
+    public record KickStudent(String studentId) implements Command {
+    }
 
-    /** Internal timer message (ADR-4 pseudocode's {@code Flush.INSTANCE}) — never sent from outside. */
-    private enum Flush implements Command { INSTANCE }
+    private enum Flush implements Command {INSTANCE}
 
-    /**
-     * Task 14 follow-up (zombie-actor fix): sent to {@link #self} when a Hot Snapshot write
-     * comes back fenced ({@code snapshotStore.save} resolves {@code false}) -- a monotonically
-     * increasing epoch counter rejected this actor's epoch, which can only mean another pod
-     * already won a newer lease for this room. Not a transient condition (the counter never
-     * moves backward), so one occurrence is a definitive, permanent signal to stop -- no
-     * debounce/retry needed. Never sent from outside.
-     */
-    private enum LeaseLost implements Command { INSTANCE }
+    private enum LeaseLost implements Command {INSTANCE}
 
-    /**
-     * @param tickMode must be {@link TickMode#COALESCE} — Phase 1 has no other implementation
-     *     (decision #4 in _context.md); {@link com.uni.realtime.gameengine.definition.DefinitionLoader}
-     *     already rejects {@code FIXED} at load time, so reaching here with anything else means a
-     *     caller bypassed the loader, and failing fast here catches that.
-     * @param broadcastTarget where outbound room broadcasts (delta/full snapshots) go. RoomActor
-     *     stays transport-agnostic on purpose (matches {@code replyTo} on {@link SubmitAnswer}) —
-     *     wiring this to the real internal frame channel fan-out is Task 13.
-     */
     public static Behavior<Command> create(
             String roomId, Clock clock, ScoreCalculator scoreCalculator, EngineMetrics engineMetrics,
             TickMode tickMode, ActorRef<GameMessage> broadcastTarget) {
@@ -153,24 +88,6 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
                 NoopRoomSnapshotStore.INSTANCE, 0L, null);
     }
 
-    /**
-     * Task 14 (Hot Snapshot): the full-featured constructor. Kept separate from the six-arg
-     * {@link #create} above rather than replacing it, so every existing caller (tests,
-     * {@code RoomSupervisor}, the scheduler spike) that has no snapshot store to offer keeps
-     * compiling unchanged -- {@code RoomSupervisor} switching to this overload for real is a
-     * follow-up task, not done here (see plan.md Task 14 progress note).
-     *
-     * @param snapshotStore where this room's Hot Snapshot is persisted. {@link NoopRoomSnapshotStore}
-     *     if the caller has none (Phase 1 today, before wiring).
-     * @param epoch this room's fencing generation (from {@link LeaseBasedRoomOwnership#epochOf}
-     *     at the moment {@code RoomSupervisor} decided to spawn this actor). Fixed for this
-     *     actor's whole lifetime -- reacting to losing the lease mid-life (stopping the actor)
-     *     is not wired yet, so a stale epoch here would keep being rejected by the store
-     *     (§5.8) rather than silently corrupting anything, but the actor itself would not know
-     *     to stop.
-     * @param restoreFromSnapshot bytes from a prior {@link RoomState#serializeSnapshot()} (via
-     *     {@link RoomSnapshotStore#load}) to resume from, or {@code null} for a brand-new room.
-     */
     public static Behavior<Command> create(
             String roomId, Clock clock, ScoreCalculator scoreCalculator, EngineMetrics engineMetrics,
             TickMode tickMode, ActorRef<GameMessage> broadcastTarget,
@@ -179,20 +96,6 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
                 snapshotStore, epoch, restoreFromSnapshot, MissedStepPolicy.ZERO);
     }
 
-    /**
-     * Task 17 (B4): the true master constructor, adding {@code missedStepPolicy} on top of
-     * Task 14's nine-arg overload above (which now just delegates here with
-     * {@link MissedStepPolicy#ZERO}) -- same additive-overload shape as Task 14 used for
-     * {@code snapshotStore}/{@code epoch}/{@code restoreFromSnapshot}, so every existing caller
-     * with no policy to offer keeps compiling unchanged.
-     *
-     * @param missedStepPolicy must be {@link MissedStepPolicy#ZERO} — same fail-fast shape as
-     *     {@code tickMode} above. {@link com.uni.realtime.gameengine.definition.DefinitionLoader}
-     *     already rejects {@code SKIP}/{@code ALLOW_LATE} at load time; failing fast here too
-     *     catches a caller that bypassed the loader. Unlike {@code tickMode}, this one IS carried
-     *     through to {@link RoomState} (Task 17, closing B4 for real): a late joiner's missed
-     *     steps are now scored on purpose, not by accident of an unset score defaulting to 0.
-     */
     public static Behavior<Command> create(
             String roomId, Clock clock, ScoreCalculator scoreCalculator, EngineMetrics engineMetrics,
             TickMode tickMode, ActorRef<GameMessage> broadcastTarget,
@@ -202,17 +105,6 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
                 snapshotStore, epoch, restoreFromSnapshot, missedStepPolicy, null);
     }
 
-    /**
-     * Task 18 (§9.3 Rủi ro 6): the true master constructor, adding {@code gameEventPublisher} on
-     * top of Task 17's ten-arg overload above -- same additive shape, so every existing caller
-     * with no publisher to offer keeps compiling unchanged.
-     *
-     * @param gameEventPublisher where {@code SubmitAnswer} outcomes are shipped for analytics/
-     *     audit (§4.3 step 5), or {@code null} to skip publishing entirely (Phase 1 default,
-     *     before wiring). Nullable rather than a {@code NoopGameEventPublisher} because
-     *     {@link GameEventPublisher} owns a real background thread -- a no-op instance would
-     *     still have to start and stop one for nothing.
-     */
     public static Behavior<Command> create(
             String roomId, Clock clock, ScoreCalculator scoreCalculator, EngineMetrics engineMetrics,
             TickMode tickMode, ActorRef<GameMessage> broadcastTarget,
@@ -224,17 +116,6 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
                 ScoreAggregation.SUM_ALL, WinCondition.PROGRESS_COMPLETED);
     }
 
-    /**
-     * P2 Task 25: the true master constructor, adding the whole cooperative/team config block on
-     * top of Task 18's eleven-arg overload above (which now delegates here with SOLO/no-op
-     * defaults) -- same additive-overload shape every prior task used. Exists so
-     * {@code CooperativeRoomActorTest}/{@code TeamRoomActorTest} can drive real actor-level FSM
-     * behavior (auto-{@code FINISHED}, {@code GameOver} broadcast, actor stop) instead of only
-     * {@code RoomState} in isolation. {@code RoomSupervisor.spawnRoom()} still does not call this
-     * overload -- it has no {@code GameDefinition} source to supply these from yet (plan.md P1
-     * Task 11's still-open "no game-definition-authoring format decided" gap), so this remains
-     * test/future-wiring-only, same posture {@code missedStepPolicy} had between Task 14 and 17.
-     */
     public static Behavior<Command> create(
             String roomId, Clock clock, ScoreCalculator scoreCalculator, EngineMetrics engineMetrics,
             TickMode tickMode, ActorRef<GameMessage> broadcastTarget,
@@ -247,8 +128,6 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
             throw new IllegalArgumentException(
                     "RoomActor only implements TickMode.COALESCE in Phase 1, got " + tickMode);
         }
-        // Prove-it (2026-09-07): temporarily disabling this guard turned exactly
-        // should_rejectNonZeroMissedStepPolicy_when_creatingRoomActor_because_onlyZeroIsImplemented red.
         if (missedStepPolicy != MissedStepPolicy.ZERO) {
             throw new IllegalArgumentException(
                     "RoomActor only implements MissedStepPolicy.ZERO in Phase 1, got " + missedStepPolicy);
@@ -270,12 +149,6 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
     private final RoomSnapshotStore snapshotStore;
     private final long epoch;
     private final GameEventPublisher gameEventPublisher;
-    /**
-     * Captured once here, on the actor's own thread (construction always runs there) --
-     * {@code ActorRef.tell()} is safe from any thread, unlike most of {@code ActorContext}, so
-     * this is what {@link #maybeSnapshot} uses to signal {@link LeaseLost} from its async
-     * callback instead of touching {@code getContext()} off-thread.
-     */
     private final ActorRef<Command> self;
 
     private boolean flushScheduled = false;
@@ -283,23 +156,23 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
     private long lastSnapshotAtMs = 0;
 
     private RoomActor(ActorContext<Command> context, TimerScheduler<Command> timers, String roomId, Clock clock,
-            ScoreCalculator scoreCalculator, EngineMetrics engineMetrics, ActorRef<GameMessage> broadcastTarget,
-            RoomSnapshotStore snapshotStore, long epoch, byte[] restoreFromSnapshot,
-            MissedStepPolicy missedStepPolicy, GameEventPublisher gameEventPublisher,
-            GameMode gameMode, int progressTarget, List<ProgressStage> progressStages,
-            SharedResourceType sharedResourceType, int sharedResourcePenalty,
-            List<TeamAssignment> teamRosters, ScoreAggregation scoreAggregation, WinCondition winCondition) {
+                      ScoreCalculator scoreCalculator, EngineMetrics engineMetrics, ActorRef<GameMessage> broadcastTarget,
+                      RoomSnapshotStore snapshotStore, long epoch, byte[] restoreFromSnapshot,
+                      MissedStepPolicy missedStepPolicy, GameEventPublisher gameEventPublisher,
+                      GameMode gameMode, int progressTarget, List<ProgressStage> progressStages,
+                      SharedResourceType sharedResourceType, int sharedResourcePenalty,
+                      List<TeamAssignment> teamRosters, ScoreAggregation scoreAggregation, WinCondition winCondition) {
         super(context);
         this.timers = timers;
         this.roomId = roomId;
         this.clock = clock;
         this.state = restoreFromSnapshot == null
                 ? new RoomState(roomId, clock, scoreCalculator, missedStepPolicy, gameMode, progressTarget,
-                        progressStages, sharedResourceType, sharedResourcePenalty, teamRosters, scoreAggregation,
-                        winCondition)
+                progressStages, sharedResourceType, sharedResourcePenalty, teamRosters, scoreAggregation,
+                winCondition)
                 : RoomState.restore(roomId, clock, scoreCalculator, missedStepPolicy, gameMode, progressTarget,
-                        progressStages, sharedResourceType, sharedResourcePenalty, teamRosters, scoreAggregation,
-                        winCondition, restoreFromSnapshot);
+                progressStages, sharedResourceType, sharedResourcePenalty, teamRosters, scoreAggregation,
+                winCondition, restoreFromSnapshot);
         this.processingTimer = engineMetrics.processingLatencyTimer();
         this.engineMetrics = engineMetrics;
         this.broadcastTarget = broadcastTarget;
@@ -328,9 +201,6 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
 
     private <C extends Command> Function<C, Behavior<Command>> watched(Function<C, Behavior<Command>> handler) {
         return command -> {
-            // Only commands RoomSupervisor (Task 13) counted as enqueued get decremented here --
-            // StartGame/EndGame/Flush were never counted in, so decrementing for them too would
-            // run the gauge negative (exactly what EngineMetrics' javadoc warns against).
             if (command instanceof JoinRoom || command instanceof SubmitAnswer || command instanceof Resync) {
                 engineMetrics.recordMessageDequeued();
             }
