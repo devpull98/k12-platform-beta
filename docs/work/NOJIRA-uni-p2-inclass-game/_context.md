@@ -34,7 +34,8 @@
 - **⚠️ Phát hiện môi trường (2026-09-09, ngoài phạm vi task, người dùng đã xác nhận bỏ qua):** trong lúc làm Task 26, phát hiện một tiến trình KHÔNG rõ nguồn gốc đang xoá javadoc/comment khỏi rất nhiều file `.java` trên đĩa (73 file bị đổi, gồm cả file từ Task 1-18 không hề bị đụng tới trong phiên này) — không phải do git (không có filter/hook nào khớp), có vẻ là 1 IDE plugin/file watcher trên máy người dùng. Bản đã commit trước đó vẫn nguyên vẹn, nhưng commit Task 26 (xem git log) vô tình chốt lại 1 bản `RoomActor.java` đã mất một phần javadoc cũ (class-level + vài chỗ khác) vì lúc kiểm tra trước khi commit chỉ soát phần MỚI thêm, không soát toàn file. Người dùng xác nhận không cần khôi phục, tiếp tục bình thường — ghi lại đây để biết nguyên nhân nếu sau này thấy mất tài liệu ở các file khác.
 - **2026-09-09: Nén LZ4 (P1 Task 22) kéo lên GĐ1 theo yêu cầu người dùng** — không thuộc Phase 2, xem `docs/work/NOJIRA-uni-p1-realtime-core/plan.md` Task 22.
 - **2026-09-09: Task 24 (`lms-worker`) bị PO chốt HỦY hẳn** — không còn treo trong `plan.md`, tài liệu/BDD liên quan đã xoá.
-- **Toàn bộ Phase 2 (Task 20-23, 25, 26) đã XONG; Task 24 đã hủy.** Không còn task nào mở trong `plan.md` — Phase 2 coi như hoàn tất ở mức hiện tại.
+- **Toàn bộ Phase 2 (Task 20-23, 25, 26) đã XONG; Task 24 đã hủy.**
+- **2026-09-09 (phiên khác, sau refactor DDD lớn trên P1's `RoomActor`/`RoomState`): Task 27 (đối chiếu Product Brief V2.1) mở, một phần xong.** Review phát hiện `RoomStateProtobufMapper.buildFullSnapshot()` là dead code lệch `Math.floor` (bug tưởng là thật lúc đầu, xác nhận lại là code thừa 0 người gọi, không phải hành vi production) — đã xoá. Luật biên §5.6 rule 5 ("GV không hủy giữa ván") **không sửa được bằng code** — mâu thuẫn trực tiếp với thiết kế đã chốt ở Task 23 (`END_GAME` lúc `PLAYING` là trigger duy nhất cho `MOST_POINTS_WHEN_TIME_UP`, chưa có auto-trigger) — cần PO quyết định ranh giới "hủy" vs "báo hết giờ", giống style G1a/G1c. Khoảng trống schema Group A/B (`max_players`, `team_count`, `team_assignment`, `late_join_policy`, `scoring_rule=speed_based`, `progress_display_mode`, `score_aggregation` đủ giá trị) vẫn treo, cần task CMS riêng. Chi tiết: `plan.md` Task 27.
 
 ## State (machine-readable)
 ```yaml
@@ -180,7 +181,21 @@ progress: "2026-09-09: Task 20+21 xong (xem entry truoc). Task 22 (Team mode + S
   push, KHONG dung git checkout hang loat (bi auto-mode classifier chan). Nguoi dung xac nhan dung
   cach khac: git show HEAD:<path> (read-only) lay noi dung sach + tu tay ap lai dung cac edit that
   su cua minh roi Write de. Chi tiet day du o docs/work/NOJIRA-uni-p1-realtime-core/_context.md
-  (Task 22's state block), vi day la van de xuyen suot ca 2 work package, khong rieng P2."
+  (Task 22's state block), vi day la van de xuyen suot ca 2 work package, khong rieng P2.
+  2026-09-09 (phien khac, sau khi P1's RoomActor/RoomState bi refactor DDD lon boi nguoi dung):
+  code-review yeu cau danh gia tuong thich voi INCLASS-GAME-001-v2.1.md. Phat hien
+  RoomStateProtobufMapper.buildFullSnapshot()/computeStageIndex() dung Math.round thay vi
+  Math.floor (khac luat SS5.6 rule 6) - ban dau tuong la bug production that, nhung grep xac nhan
+  0 noi goi 2 method nay (RoomState.flush() dung dung ban rieng cua RoomState, da floor dung tu
+  Task 21) - la dead code sot lai tu dot tach file DDD, khong phai bug hanh vi. Da xoa 2 method +
+  import thua khoi RoomStateProtobufMapper.java. Rieng luat SS5.6 rule 5 (GV khong duoc huy giua
+  van) KHONG sua bang code - doc lai Task 23 xac nhan END_GAME luc PLAYING la co che trigger DUY
+  NHAT cho MOST_POINTS_WHEN_TIME_UP (chua co auto-trigger), va test
+  RoomStateWinConditionTest.should_computeHighestScoringTeam_whenEndGameFiresUnderMostPointsWhenTimeUp
+  goi endGame() giua van truoc progress_target ma khong doi deadlineMs troi qua - 1 guard chan
+  EndGame luc PLAYING se pha chinh test nay. Ghi lai thanh cau hoi nghiep vu can PO quyet dinh
+  (giong G1a/G1c/LIVES), khong tu doan ranh gioi 'huy' vs 'bao het gio'. mvn -pl :uni-game-engine
+  test: 175/175 pass, khong regress. Chi tiet: plan.md Task 27."
 dev_selftest: pending
 qc_status: pending
 trace: pending
