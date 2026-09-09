@@ -34,7 +34,9 @@
   chỉ có `studentId`/`roomId`/`sessionId` (String). Chi tiết đầy đủ ở `plan.md` Task 24. Cần quyết
   định nguồn cho các ID này (mở rộng `JoinTokenClaims`? service khác cấp?) trước khi mở lại task.
 - **2026-09-09: Task 25 (Unit Test & RoomActor FSM Tests) đã XONG.** Thêm `RoomActor.create()` overload mới (master constructor mang toàn bộ config cooperative/team) + `CooperativeRoomActorTest`/`TeamRoomActorTest` (actor-level, dùng `BehaviorTestKit`, xác nhận qua `RoomActor` thật chứ không chỉ `RoomState` đơn lẻ) — xem `plan.md` chi tiết. `RoomSupervisor.spawnRoom()` vẫn KHÔNG gọi overload mới này (vẫn thiếu nguồn `GameDefinition` thật, gap Task 11 chưa đổi).
-- Tiếp theo: Task 26 (E2E — lưu ý repo này **không có Cucumber**, cần quyết định cách tiếp cận khi tới đó).
+- **2026-09-09: Task 26 (E2E) đã XONG — viết JUnit5 thật (không phải Cucumber, theo quyết định người dùng).** `InclassGroupGameE2ETest` (2 test, 12 client WebSocket thật/mỗi test) cover 2/3 kịch bản BDD (cooperative-boss + team-speed-race qua Gateway/Engine thật). Gap chặn E2E COOPERATIVE/TEAM đã đóng bằng hook mới `RoomSupervisor.SpawnConfiguredRoom` (cùng tinh thần `GetRoomActor`). `INCLASS-GAME-003-lms-worker-sync.feature` không cover được (Task 24 vẫn dừng).
+- **⚠️ Phát hiện môi trường (2026-09-09, ngoài phạm vi task, người dùng đã xác nhận bỏ qua):** trong lúc làm Task 26, phát hiện một tiến trình KHÔNG rõ nguồn gốc đang xoá javadoc/comment khỏi rất nhiều file `.java` trên đĩa (73 file bị đổi, gồm cả file từ Task 1-18 không hề bị đụng tới trong phiên này) — không phải do git (không có filter/hook nào khớp), có vẻ là 1 IDE plugin/file watcher trên máy người dùng. Bản đã commit trước đó vẫn nguyên vẹn, nhưng commit Task 26 (xem git log) vô tình chốt lại 1 bản `RoomActor.java` đã mất một phần javadoc cũ (class-level + vài chỗ khác) vì lúc kiểm tra trước khi commit chỉ soát phần MỚI thêm, không soát toàn file. Người dùng xác nhận không cần khôi phục, tiếp tục bình thường — ghi lại đây để biết nguyên nhân nếu sau này thấy mất tài liệu ở các file khác.
+- **Toàn bộ Phase 2 (Task 20-23, 25, 26) đã XONG.** Task 24 dừng ở ghi nhận phát hiện (chờ quyết định nguồn ID LMS). Kế tiếp không còn task nào trong `plan.md` — cần quyết định: mở lại Task 24 (nếu có nguồn ID), hay coi Phase 2 hoàn tất ở mức hiện tại.
 
 ## State (machine-readable)
 ```yaml
@@ -133,8 +135,30 @@ progress: "2026-09-09: Task 20+21 xong (xem entry truoc). Task 22 (Team mode + S
   RoomStateTeamModeTest.should_notAdvanceAnyTeamProgress_when_correctAnswerComesFromAStudent
   NotOnAnyRoster (nhanh phong thu applyTeamOutcome's teamId.isEmpty(), khac nhanh tuong tu da test
   o updateDraft). mvn clean install toan reactor: BUILD SUCCESS - 5 protocol + 86 gateway + 175
-  engine (168 cu + 7 moi) + 2 e2e, khong regress. Tiep theo: Task 26 (E2E - repo nay KHONG co
-  Cucumber, can quyet dinh cach tiep can khi toi do)."
+  engine (168 cu + 7 moi) + 2 e2e, khong regress.
+  2026-09-09 (tiep, cung phien): Task 26 (E2E) xong. Nguoi dung chon 'viet theo dung convention
+  JUnit5 hien co cua repo' thay vi them Cucumber (repo nay khong co Cucumber o dau ca - da kiem
+  tra truoc: WalkingSkeletonTest/DockerComposeChaosIT deu la JUnit5 thuan). Them
+  RoomSupervisor.SpawnConfiguredRoom (Command moi, cung tinh than test/ops-only voi GetRoomActor
+  da co) - spawn phong voi config cooperative/team TRUOC khi client nao join, dong gap
+  'RoomSupervisor.spawnRoom() duong join that chi spawn duoc SOLO' (gap Task 11) chi rieng cho
+  E2E test, khong dong gap that o production. InclassGroupGameE2ETest (uni-e2e, moi) - 2 test,
+  12 client WebSocket that/moi test, dung dung convention WalkingSkeletonTest (FakeJoinTokenVerifier,
+  GetRoomActor cho noi dung cau hoi). Cover 2/3 kich ban BDD that: cooperative-boss (progress
+  30%/70%/100%, GameOver toi ca nguoi chua tung tra loi) + team-speed-race (UPDATE_DRAFT scoped
+  dung doi, first_to_finish + GameOver.winner_id toi CA 4 doi). Khong cover duoc
+  lms-worker-sync.feature (Task 24 van dung). Debug 1 lan Red khong xac dinh (khong phai loi
+  logic - ca 2 ANSWER_ACK deu accepted=true khi kiem tra) - la race dieu kien thoi gian trong
+  CHINH test (gui cau tra loi thu 2 khong doi ACK cau 1 truoc), sua bang cach doi ANSWER_ACK moi
+  lan nop bai truoc khi tiep tuc - chay lai 3/3 lan lien tiep deu xanh. mvn clean install toan
+  reactor: BUILD SUCCESS - 5 protocol + 86 gateway + 175 engine + 4 e2e (2 cu + 2 moi).
+  Phat hien ngoai pham vi (da bao nguoi dung, nguoi dung xac nhan bo qua): mot tien trinh khong
+  ro nguon goc dang xoa javadoc khoi RAT NHIEU file .java tren dia (73 file bi doi, gom ca file
+  Task 1-18 khong he dung toi trong phien nay) - khong phai do git (da loai tru filter/hook).
+  Ban da commit truoc do van nguyen ven, nhung commit Task 26 vo tinh chot lai 1 ban RoomActor.java
+  da mat mot phan javadoc cu (chi kiem tra phan MOI truoc khi commit, khong soat toan file).
+  Nguoi dung xac nhan khong can khoi phuc. Toan bo Phase 2 (Task 20-23, 25, 26) da XONG. Task 24
+  van dung o buoc ghi nhan phat hien, cho quyet dinh nguon ID LMS."
 dev_selftest: pending
 qc_status: pending
 trace: pending

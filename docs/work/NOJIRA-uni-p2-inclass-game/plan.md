@@ -135,13 +135,22 @@ Giai đoạn 2 bổ sung các chế độ chơi tương tác nhóm và tập th�
 - Thêm 1 test biên: `RoomStateTeamModeTest.should_notAdvanceAnyTeamProgress_when_correctAnswerComesFromAStudentNotOnAnyRoster` (nhánh phòng thủ `applyTeamOutcome`'s `teamId.isEmpty()`, khác với nhánh tương tự đã test ở `updateDraft`).
 - **Verification:** `CooperativeRoomActorTest` (3/3, mới) + `TeamRoomActorTest` (3/3, mới) + `RoomStateTeamModeTest` (9/9, +1). Prove-it thật (không phải test giả): 1 test ban đầu Red vì lý do đúng (behavior tự nhiên của `RoomActor` — flush ngay lập tức khi `now - lastFlushAtMs >= 200ms`, không phải bug), sửa assertion để lọc đúng loại message thay vì đếm tổng. `mvn clean install` toàn reactor: BUILD SUCCESS — 5 protocol + 86 gateway + 175 engine (168 cũ + 7 mới) + 2 e2e, không regress.
 
-### Task 26: Xây dựng E2E Cucumber Tests (`uni-e2e`)
-- **Mô tả:** Khởi chạy 12 client WebSocket giả lập kiểm thử 3 kịch bản BDD thực chiến.
-- **File:** `modules/uni-e2e/src/test/resources/features/inclass_game.feature`
+### Task 26: Xây dựng E2E Tests (`uni-e2e`) — ✅ XONG (2026-09-09, JUnit5 thay vì Cucumber)
+- **Mô tả gốc:** Khởi chạy 12 client WebSocket giả lập kiểm thử 3 kịch bản BDD thực chiến.
+- **File gốc đề xuất:** `modules/uni-e2e/src/test/resources/features/inclass_game.feature` — **không tạo**, xem quyết định bên dưới.
+- **Quyết định (người dùng, 2026-09-09):** repo này **không có Cucumber ở bất kỳ đâu** (đã kiểm tra trước khi bắt đầu — toàn bộ `uni-e2e` từ trước tới giờ là JUnit5 thuần: `WalkingSkeletonTest`, `DockerComposeChaosIT`...). Viết theo đúng convention JUnit5 hiện có thay vì thêm Cucumber mới.
+- **File thật:** `modules/uni-e2e/src/test/java/com/uni/realtime/e2e/InclassGroupGameE2ETest.java` — 2 test, 12 client WebSocket **thật** (không `EmbeddedChannel`), đi qua Gateway/Engine thật, giống hệt convention `WalkingSkeletonTest` (socket thật, `FakeJoinTokenVerifier` đứng thay G1a/G1c, nội dung câu hỏi qua `RoomSupervisor.GetRoomActor`).
+- **Gap chặn E2E thật cho COOPERATIVE/TEAM đã đóng bằng 1 hook mới:** `RoomSupervisor.SpawnConfiguredRoom` — cùng tinh thần test/ops-only với `GetRoomActor` đã có — spawn phòng với config cooperative/team TRƯỚC khi client nào join, vì `RoomSupervisor.spawnRoom()` (đường join thật) vẫn chỉ spawn được `SOLO` (chưa có nguồn `GameDefinition` thật, gap Task 11). `RoomActor.create()` thêm 1 overload master constructor mới mang toàn bộ config (đã thêm từ Task 25, tái dùng lại ở đây).
+- **2 kịch bản BDD được cover thật (không phải giả định):**
+  1. `INCLASS-GAME-001-cooperative-boss.feature`: 12 học sinh join thật, 3 vòng câu hỏi (3+4+3 học sinh trả lời đúng), xác nhận `progress_percentage`/`stage_index` đúng qua từng mốc (30%/70%/100%), `GameOver` (`reason=progress_completed`, `winner_id` rỗng) tới CẢ học sinh chưa từng trả lời câu nào (chứng minh broadcast toàn phòng, không chỉ người nộp bài).
+  2. `INCLASS-GAME-002-team-speed-race.feature`: `UPDATE_DRAFT` chỉ tới đồng đội (Team B không bao giờ nhận được draft của Team A — assert bằng `assertNoMoreMessagesFor`), `first_to_finish` khi Team A đạt `progress_target` trước, `GameOver.winner_id="A"` tới TOÀN BỘ 4 đội (không chỉ đội thắng).
+- **`INCLASS-GAME-003-lms-worker-sync.feature` KHÔNG được cover** — Task 24 đã dừng ở bước ghi nhận phát hiện, không có producer nào để test.
+- **Bài học từ debug (đáng ghi lại):** lần chạy đầu tiên của kịch bản team bị Red không xác định (không phải mỗi lần) — điều tra bằng debug print xác nhận cả 2 `ANSWER_ACK` đều `accepted=true`, nghĩa là logic Engine đúng 100%; nguyên nhân là **race điều kiện thời gian trong chính test** (gửi câu trả lời thứ 2 ngay sau câu 1 mà không đợi ACK, đôi khi khiến việc chờ `GameOver` timeout trước khi message kịp tới). Sửa bằng cách đợi `ANSWER_ACK` của MỖI lần nộp bài trước khi tiếp tục — chạy lại 3/3 lần liên tiếp đều xanh sau khi sửa.
+- **Verification:** `mvn clean install` toàn reactor: BUILD SUCCESS — 5 protocol + 86 gateway + 175 engine + **4 e2e** (2 cũ + 2 mới). Chạy riêng `InclassGroupGameE2ETest` 3 lần liên tiếp: 3/3 xanh, không flaky.
 
 ---
 
 ## 3. Verification Plan
 
 - `mvn clean test` xanh toàn bộ reactor.
-- Chạy Cucumber E2E tests: `mvn -pl :uni-e2e test`.
+- E2E: `mvn -pl :uni-e2e test` (JUnit5 thật, không phải Cucumber — xem Task 26).
