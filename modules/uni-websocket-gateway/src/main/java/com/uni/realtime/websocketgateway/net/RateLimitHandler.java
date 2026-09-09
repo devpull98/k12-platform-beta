@@ -4,8 +4,10 @@ import com.uni.realtime.protocol.AnswerAck;
 import com.uni.realtime.protocol.GameMessage;
 import com.uni.realtime.protocol.MessageType;
 import com.uni.realtime.protocol.RejectReason;
+import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
+import io.netty.handler.codec.http.websocketx.BinaryWebSocketFrame;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -35,7 +37,9 @@ public final class RateLimitHandler extends SimpleChannelInboundHandler<GameMess
                 if (submitAnswerBucket.tryConsume()) {
                     ctx.fireChannelRead(message);
                 } else {
-                    ctx.writeAndFlush(rateLimitedAck(ctx, message));
+                    GameMessage ack = rateLimitedAck(ctx, message);
+                    ByteBuf framePayload = WireCompression.encode(ack.toByteArray());
+                    ctx.writeAndFlush(new BinaryWebSocketFrame(framePayload));
                 }
             }
             case UPDATE_DRAFT -> {

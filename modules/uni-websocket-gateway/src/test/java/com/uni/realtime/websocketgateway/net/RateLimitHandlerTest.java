@@ -6,6 +6,7 @@ import com.uni.realtime.protocol.MessageType;
 import com.uni.realtime.protocol.RejectReason;
 import com.uni.realtime.protocol.SubmitAnswer;
 import io.netty.channel.embedded.EmbeddedChannel;
+import io.netty.handler.codec.http.websocketx.BinaryWebSocketFrame;
 import org.junit.jupiter.api.Test;
 
 import java.time.Clock;
@@ -25,7 +26,7 @@ class RateLimitHandlerTest {
     private static final Instant FIXED_NOW = Instant.parse("2026-09-06T09:00:00Z");
 
     @Test
-    void should_allowSubmitAnswerUpToThreePerSecond_thenReplyRateLimitExceeded() {
+    void should_allowSubmitAnswerUpToThreePerSecond_thenReplyRateLimitExceeded() throws Exception {
         EmbeddedChannel channel = new EmbeddedChannel(new RateLimitHandler(fixedClock()));
 
         channel.writeInbound(submitAnswer(1));
@@ -38,7 +39,14 @@ class RateLimitHandlerTest {
         channel.writeInbound(submitAnswer(4));
 
         assertThat((GameMessage) channel.readInbound()).as("4th submit must not be forwarded").isNull();
-        GameMessage reply = channel.readOutbound();
+        Object outbound = channel.readOutbound();
+        assertThat(outbound).isInstanceOf(BinaryWebSocketFrame.class);
+        BinaryWebSocketFrame frame = (BinaryWebSocketFrame) outbound;
+        byte[] wireBytes = new byte[frame.content().readableBytes()];
+        frame.content().readBytes(wireBytes);
+        frame.release();
+
+        GameMessage reply = GameMessage.parseFrom(WireCompression.decode(wireBytes));
         assertThat(reply.getAnswerAck().getAccepted()).isFalse();
         assertThat(reply.getAnswerAck().getRejectReason()).isEqualTo(RejectReason.RATE_LIMIT_EXCEEDED);
         assertThat(reply.getAnswerAck().getAckedSequence()).isEqualTo(4);

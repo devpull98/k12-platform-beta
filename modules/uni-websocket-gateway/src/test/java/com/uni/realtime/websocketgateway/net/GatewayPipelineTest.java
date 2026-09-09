@@ -297,10 +297,15 @@ class GatewayPipelineTest {
         channel.writeInbound(frameOf(submit));
         assertThat(engineSender.sent.size()).as("4th SUBMIT_ANSWER request must be blocked by rate limiter").isEqualTo(3);
 
-        // Verify outbound rate limit ACK message
+        // Verify outbound rate limit ACK frame
         Object outbound = channel.readOutbound();
-        assertThat(outbound).isInstanceOf(GameMessage.class);
-        GameMessage ackMsg = (GameMessage) outbound;
+        assertThat(outbound).isInstanceOf(BinaryWebSocketFrame.class);
+        BinaryWebSocketFrame frame = (BinaryWebSocketFrame) outbound;
+        byte[] wireBytes = new byte[frame.content().readableBytes()];
+        frame.content().readBytes(wireBytes);
+        frame.release();
+
+        GameMessage ackMsg = GameMessage.parseFrom(WireCompression.decode(wireBytes));
         assertThat(ackMsg.getType()).isEqualTo(MessageType.ANSWER_ACK);
         assertThat(ackMsg.getRoomId()).isEqualTo("room-1");
         assertThat(ackMsg.getStudentId()).isEqualTo("student-1");
