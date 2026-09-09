@@ -38,7 +38,7 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
 
     private static final Logger snapshotLog = LoggerFactory.getLogger("com.uni.realtime.gameengine.room.snapshot");
 
-    public interface Command {}
+    public sealed interface Command {}
 
     public record StartGame() implements Command {}
     public record StartQuestion(String questionId, long durationMs, List<String> correctAnswerIds) implements Command {}
@@ -50,7 +50,7 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
     public record KickStudent(String studentId) implements Command {}
     public record UpdateDraft(String studentId, String draftContent) implements Command {}
 
-    public enum LeaseLost implements Command {
+    enum LeaseLost implements Command {
         INSTANCE
     }
 

@@ -543,7 +543,40 @@ progress: "T1, T2, T4, T5, T10 xong. T6 MOT PHAN xong (GatewayPipeline + WS hand
   git checkout (bi auto-mode classifier chan vi la lenh discard hang loat), thay vao do dung git
   show HEAD:<path> (read-only) de lay noi dung sach roi Write lai file that + tu tay ap lai dung
   cac edit cua minh - khong dua vao working tree hien tai vi co the bi corrupt bat cu luc nao.
-  Nguoi dung xac nhan lam theo cach nay (khong dung git checkout hang loat)."
+  Nguoi dung xac nhan lam theo cach nay (khong dung git checkout hang loat).
+  2026-09-09 (tiep, refactor + code-review): nguoi dung tu tay refactor cau truc uni-game-engine,
+  commit qua 3 lan (08e0f92 'architectural cleanup, DDD domain separation & security
+  rate-limiting fixes', 1c0f1aa, 336fbf6) - KHONG di qua writing-plans/tdd skill truoc, chi
+  review lai sau khi code da co. Thay doi chinh: (1) modules/uni-protocol/src/main/proto/
+  game_message.proto (274 dong, 1 file) tach thanh 5 file duoi uni/realtime/v1/
+  (common.proto/internal.proto/client_events.proto/server_events.proto/game_message.proto) -
+  da grep xac nhan giu nguyen moi field number, khong phai mat du lieu; (2) RoomState.java
+  (648 dong) tach logic serialize/protobuf-map ra RoomStateProtobufMapper.java +
+  RoomStateSerializer.java, roster ra PlayerRecord.java, dependency-wiring ra
+  RoomDependencies.java; (3) package moi domain/game/ (GameModeRules, GameModeRulesFactory,
+  GameRuleContext, SoloModeRules, IndividualModeRules, TeamModeRules, CooperativeModeRules) -
+  RoomState giờ `implements GameRuleContext` (interface hep: incrementRoomProgress/
+  incrementTeamProgress/reduceDeadlineMs/setGameOver/...) thay vi truyen thang RoomState cho
+  GameModeRules - tranh phu thuoc 2 chieu. Package domain/game/ la mo rong that de chuan bi cho
+  INCLASS-GAME-001 (cooperative/group games, doc moi o docs/specs/modules/engine/) nhung KHONG
+  co task/plan.md nao mo rieng cho no - ghi lai o day de tranh lap lai kieu 'code truoc, tai
+  lieu sau' da xay ra o lan nay.
+  code-review pass 1 (skill code-review, --level mac dinh): tim 1 Critical (RoomActor
+  MIN_FLUSH_INTERVAL_MS bi doi tu 200 xuong 50ms khong co ADR/spike moi - TickCoalescingTest van
+  Green vi khong pin gia tri) + 2 Required (refactor nay khong dong bo vao _context.md/plan.md -
+  chinh muc nay dang sua; RoomActor.Command mat `sealed`, LeaseLost doi private->public khong ro
+  ly do) + 2 Nit (da fix: GameModeRules het phu thuoc 2 chieu; con treo: proto moi mat comment
+  giai thich ADR-1 'mot schema dung chung 2 hop'). code-review pass 2 (sau khi nguoi dung tu sua):
+  xac nhan MIN_FLUSH_INTERVAL_MS da tra ve 200 (dung), GameModeRules da dung GameRuleContext
+  (dung). Phien nay (tiep sau pass 2) tu tay sua not 2 Required con lai: RoomActor.Command tra
+  lai `sealed interface` (tat ca implementor deu nam trong cung file RoomActor.java nen permits
+  ngam dinh hop le, khong can permits tuong minh), LeaseLost tra lai package-private (khop
+  Flush, ca 2 noi dung goi no - RoomActorSnapshotTest, RoomSnapshotStore - deu cung package
+  room) - mvn -pl :uni-game-engine test-compile + test: 175/175 pass, khong leak. Con treo, CHUA
+  sua: comment ADR-1 trong proto moi (Nit, khong chan merge). RIENG BIET, CHUA xu ly: CLAUDE.md
+  dang co 1 doan sua CHUA COMMIT (xoa chi tiet duong dan Maven cua IntelliJ o muc Stack, de lai
+  khoang trang thua, khong ro nguoi dung tu sua hay lien quan gi toi su co xoa-noi-dung o tren) -
+  da hoi nguoi dung xac nhan, dang cho tra loi, KHONG tu commit/sua thay."
 dev_selftest: pending
 qc_status: pending
 trace: pending
