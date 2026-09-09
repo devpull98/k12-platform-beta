@@ -7,9 +7,11 @@ import com.uni.realtime.websocketgateway.auth.JoinTokenVerifier;
 import com.uni.realtime.websocketgateway.fanout.RoomRegistry;
 import com.uni.realtime.websocketgateway.metrics.GatewayMetrics;
 import com.uni.realtime.websocketgateway.routing.EngineSender;
+import com.uni.realtime.protocol.AnswerAck;
 import com.uni.realtime.protocol.GameMessage;
 import com.uni.realtime.protocol.JoinRoom;
 import com.uni.realtime.protocol.MessageType;
+import com.uni.realtime.protocol.RejectReason;
 import com.uni.realtime.protocol.SubmitAnswer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.netty.buffer.Unpooled;
@@ -269,6 +271,45 @@ class GatewayPipelineTest {
         assertThat(meterRegistry.get("handshake_rate").counter().count()).isEqualTo(2.0);
     }
 
+    @Test
+    void should_rateLimitSubmitAnswer_when_binaryWebSocketFramesExceedBucket() throws Exception {
+        CapturingEngineSender engineSender = new CapturingEngineSender();
+        EmbeddedChannel channel = applicationChannel(fixedVerifier(ROOM_1_CLAIMS), engineSender);
+
+        // 1. Handshake & join room
+        channel.writeInbound(frameOf(joinRoom("valid-joinToken")));
+        engineSender.clear();
+
+        // 2. SubmitAnswer bucket allows 3 requests/sec
+        GameMessage submit = GameMessage.newBuilder()
+                .setType(MessageType.SUBMIT_ANSWER)
+                .setSequence(100L)
+                .setSubmitAnswer(SubmitAnswer.newBuilder().setQuestionId("q-1"))
+                .build();
+
+        // Send 3 allowed requests
+        for (int i = 0; i < 3; i++) {
+            channel.writeInbound(frameOf(submit));
+        }
+        assertThat(engineSender.sent.size()).as("first 3 SUBMIT_ANSWER requests must pass rate limiter").isEqualTo(3);
+
+        // Send 4th request -> should be rate limited
+        channel.writeInbound(frameOf(submit));
+        assertThat(engineSender.sent.size()).as("4th SUBMIT_ANSWER request must be blocked by rate limiter").isEqualTo(3);
+
+        // Verify outbound rate limit ACK message
+        Object outbound = channel.readOutbound();
+        assertThat(outbound).isInstanceOf(GameMessage.class);
+        GameMessage ackMsg = (GameMessage) outbound;
+        assertThat(ackMsg.getType()).isEqualTo(MessageType.ANSWER_ACK);
+        assertThat(ackMsg.getRoomId()).isEqualTo("room-1");
+        assertThat(ackMsg.getStudentId()).isEqualTo("student-1");
+
+        AnswerAck answerAck = ackMsg.getAnswerAck();
+        assertThat(answerAck.getAccepted()).isFalse();
+        assertThat(answerAck.getRejectReason()).isEqualTo(RejectReason.RATE_LIMIT_EXCEEDED);
+    }
+
     private static EmbeddedChannel applicationChannel(JoinTokenVerifier verifier, EngineSender engineSender) {
         return applicationChannel(verifier, new RoomRegistry(), new GatewayMetrics(new SimpleMeterRegistry()), engineSender);
     }
@@ -288,8 +329,8 @@ class GatewayPipelineTest {
             EngineSender engineSender) {
         return new EmbeddedChannel(
                 new JoinTokenAuthHandler(verifier, roomRegistry, gatewayMetrics, studentHandshakeAdmission),
-                new RateLimitHandler(),
                 new GameMessageDecoder(),
+                new RateLimitHandler(),
                 new RoomRouteHandler(roomRegistry, engineSender));
     }
 

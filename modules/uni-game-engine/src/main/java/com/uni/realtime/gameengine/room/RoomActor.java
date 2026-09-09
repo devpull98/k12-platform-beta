@@ -240,9 +240,10 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
                 roomId, command.studentId(), command.lastAckedSeq(), command.pending().size());
         List<GameMessage> pendingList = command.pending();
         if (pendingList.size() > MAX_PENDING_RESYNC_ITEMS) {
-            getContext().getLog().warn("room {}: RESYNC pending items count {} exceeds maximum allowed {}, capping execution",
+            getContext().getLog().warn("room {}: RESYNC pending items count {} exceeds maximum allowed {}; rejecting batch",
                     roomId, pendingList.size(), MAX_PENDING_RESYNC_ITEMS);
-            pendingList = pendingList.subList(0, MAX_PENDING_RESYNC_ITEMS);
+            command.replyTo().tell(state.resyncSnapshot(command.studentId()));
+            return this;
         }
         for (GameMessage pending : pendingList) {
             if (pending.getPayloadCase() != GameMessage.PayloadCase.SUBMIT_ANSWER) {
