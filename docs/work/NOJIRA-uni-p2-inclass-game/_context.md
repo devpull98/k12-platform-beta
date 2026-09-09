@@ -33,7 +33,8 @@
   `session_parent_id` (LMS domain, số nguyên) mà `uni-realtime` không có nguồn nào — `JoinTokenClaims`
   chỉ có `studentId`/`roomId`/`sessionId` (String). Chi tiết đầy đủ ở `plan.md` Task 24. Cần quyết
   định nguồn cho các ID này (mở rộng `JoinTokenClaims`? service khác cấp?) trước khi mở lại task.
-- Tiếp theo: Task 25 (Unit test mở rộng) — Task 26 (E2E: lưu ý repo này **không có Cucumber**, cần xử lý khác biệt khi tới đó).
+- **2026-09-09: Task 25 (Unit Test & RoomActor FSM Tests) đã XONG.** Thêm `RoomActor.create()` overload mới (master constructor mang toàn bộ config cooperative/team) + `CooperativeRoomActorTest`/`TeamRoomActorTest` (actor-level, dùng `BehaviorTestKit`, xác nhận qua `RoomActor` thật chứ không chỉ `RoomState` đơn lẻ) — xem `plan.md` chi tiết. `RoomSupervisor.spawnRoom()` vẫn KHÔNG gọi overload mới này (vẫn thiếu nguồn `GameDefinition` thật, gap Task 11 chưa đổi).
+- Tiếp theo: Task 26 (E2E — lưu ý repo này **không có Cucumber**, cần quyết định cách tiếp cận khi tới đó).
 
 ## State (machine-readable)
 ```yaml
@@ -112,7 +113,28 @@ progress: "2026-09-09: Task 20+21 xong (xem entry truoc). Task 22 (Team mode + S
   Hoi nguoi dung 3 lua chon (chi build phan publish de trong ID LMS / dung lai chi ghi nhan /
   nguoi dung cung cap them thong tin nguon ID) - nguoi dung chon 'dung lai chi ghi nhan phat
   hien'. KHONG viet code nao cho Task 24 luc nay - chi cap nhat plan.md + _context.md voi day du
-  phat hien that de nguoi lam viec sau co co so chinh xac. Chuyen sang Task 25/26."
+  phat hien that de nguoi lam viec sau co co so chinh xac.
+  2026-09-09 (tiep, cung phien): Task 25 (Unit Tests & RoomActor FSM Tests) xong. Phan lon
+  coverage da co san tu Task 21-23 (TDD ngay luc code, khong phai lam rieng sau). Task 25 lap 2
+  khoang trong con lai: (1) RoomActor.create() them 1 overload master constructor moi (P2 Task 25)
+  mang toan bo config cooperative/team (gameMode/progressTarget/progressStages/sharedResourceType/
+  sharedResourcePenalty/teamRosters/scoreAggregation/winCondition) vao actor - additive-overload
+  dung chuoi da co (Task 14/17/18); RoomSupervisor.spawnRoom() VAN KHONG goi overload nay (van
+  thieu nguon GameDefinition that, gap Task 11 chua doi) - overload nay hien chi phuc vu test,
+  giong het vi tri missedStepPolicy tung o giua Task 14 va 17. (2) CooperativeRoomActorTest (3
+  case: auto-FINISHED + GameOver broadcast + actor tu dung; khong finish khi progress chua du;
+  stage_index dung qua full snapshot luc join) + TeamRoomActorTest (3 case: JoinRoom reply mang
+  dung team_id/roster; GameOver.winner_id dung khi first_to_finish; UpdateDraft fan-out scoped qua
+  actor that) - dung BehaviorTestKit, xac nhan qua RoomActor that thay vi chi RoomState don le.
+  Prove-it that (khong phai test gia): TeamRoomActorTest's fan-out test ban dau Red vi ly do DUNG -
+  hanh vi tu nhien cua RoomActor (flush ngay lap tuc khi now - lastFlushAtMs >= 200ms, do
+  Clock.fixed nam o nam 2026 con lastFlushAtMs khoi tao 0), khong phai bug - sua assertion loc
+  dung loai message thay vi dem tong so trong broadcastInbox. Them 1 test bien:
+  RoomStateTeamModeTest.should_notAdvanceAnyTeamProgress_when_correctAnswerComesFromAStudent
+  NotOnAnyRoster (nhanh phong thu applyTeamOutcome's teamId.isEmpty(), khac nhanh tuong tu da test
+  o updateDraft). mvn clean install toan reactor: BUILD SUCCESS - 5 protocol + 86 gateway + 175
+  engine (168 cu + 7 moi) + 2 e2e, khong regress. Tiep theo: Task 26 (E2E - repo nay KHONG co
+  Cucumber, can quyet dinh cach tiep can khi toi do)."
 dev_selftest: pending
 qc_status: pending
 trace: pending

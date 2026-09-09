@@ -7,6 +7,7 @@ import com.uni.realtime.gameengine.definition.SharedResourceType;
 import com.uni.realtime.gameengine.scoring.FormulaScoreCalculator;
 import com.uni.realtime.protocol.GameMessage;
 import com.uni.realtime.protocol.GameMode;
+import com.uni.realtime.protocol.GamePhase;
 import com.uni.realtime.protocol.PlayerState;
 import com.uni.realtime.protocol.RoomStateSnapshot;
 import com.uni.realtime.protocol.TeamAssignment;
@@ -135,6 +136,22 @@ class RoomStateTeamModeTest {
         room.joinRoom("student-99", "Ghost"); // not in any configured roster
 
         assertThat(room.updateDraft("student-99", "draft")).isEmpty();
+    }
+
+    @Test
+    void should_notAdvanceAnyTeamProgress_when_correctAnswerComesFromAStudentNotOnAnyRoster() {
+        // Defensive branch (RoomState.applyTeamOutcome's teamId.isEmpty() early return) --
+        // structurally shouldn't happen for a well-formed GameDefinition (DefinitionLoader
+        // validates rosters), but must not throw or silently credit some other team either.
+        RoomState room = teamRoom(FOUR_TEAMS_OF_THREE, 1, ScoreAggregation.SUM_ALL);
+        room.joinRoom("student-99", "Ghost");
+        room.startGame();
+        room.startQuestion("q-1", 25_000, List.of("a"));
+
+        GameMessage ack = room.submitAnswer("student-99", 1L, "q-1", List.of("a"));
+
+        assertThat(ack.getAnswerAck().getAccepted()).isTrue();
+        assertThat(room.phase()).as("no team ever reached progress_target=1").isEqualTo(GamePhase.PLAYING);
     }
 
     private static PlayerState playerOf(RoomStateSnapshot snapshot, String studentId) {

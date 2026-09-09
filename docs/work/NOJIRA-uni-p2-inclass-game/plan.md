@@ -126,9 +126,14 @@ Giai đoạn 2 bổ sung các chế độ chơi tương tác nhóm và tập th�
   định rõ nguồn cho `profile_id`/`exercise_id`/`classroom_id`/`session_parent_id` (mở rộng
   `JoinTokenClaims`? một service khác cung cấp?) trước khi mở lại task này.
 
-### Task 25: Unit Tests & RoomActor FSM Tests
+### Task 25: Unit Tests & RoomActor FSM Tests — ✅ XONG (2026-09-09)
 - **Mô tả:** Viết Unit Test phủ 100% logic tính tiến trình, phân nhóm, và phạt tài nguyên.
-- **File:** `modules/uni-game-engine/src/test/java/.../room/CooperativeRoomActorTest.java`, `TeamRoomActorTest.java`
+- **File:** `modules/uni-game-engine/src/test/java/.../room/CooperativeRoomActorTest.java`, `TeamRoomActorTest.java` (cả 2 tạo mới đúng tên plan.md gợi ý).
+- **Phần lớn coverage đã có sẵn từ Task 21-23** (TDD trong lúc code, không phải task riêng biệt sau này) — Task 25 lấp 2 khoảng trống còn lại:
+  1. **Actor-level FSM test** (khác `RoomState`-level đơn lẻ đã có): `CooperativeRoomActorTest`/`TeamRoomActorTest` dùng `BehaviorTestKit`, xác nhận qua `RoomActor` thật — auto-`FINISHED` → broadcast `GameOver` → actor tự dừng; `JoinRoom` reply mang đúng `team_id`/roster; `UpdateDraft` fan-out scoped qua actor thật (không chỉ `RoomState.updateDraft()` trả về list đúng).
+  2. **Overload mới cho `RoomActor.create()`** (P2 Task 25's own master constructor) — mang toàn bộ config cooperative/team (`gameMode`, `progressTarget`, `progressStages`, `sharedResourceType`, `sharedResourcePenalty`, `teamRosters`, `scoreAggregation`, `winCondition`) vào actor, additive-overload đúng chuỗi đã có (Task 14/17/18). **`RoomSupervisor.spawnRoom()` vẫn KHÔNG gọi overload này** — vẫn thiếu nguồn `GameDefinition` thật (gap Task 11), nên overload này hiện chỉ phục vụ test, giống hệt vị trí `missedStepPolicy` từng ở giữa Task 14 và Task 17.
+- Thêm 1 test biên: `RoomStateTeamModeTest.should_notAdvanceAnyTeamProgress_when_correctAnswerComesFromAStudentNotOnAnyRoster` (nhánh phòng thủ `applyTeamOutcome`'s `teamId.isEmpty()`, khác với nhánh tương tự đã test ở `updateDraft`).
+- **Verification:** `CooperativeRoomActorTest` (3/3, mới) + `TeamRoomActorTest` (3/3, mới) + `RoomStateTeamModeTest` (9/9, +1). Prove-it thật (không phải test giả): 1 test ban đầu Red vì lý do đúng (behavior tự nhiên của `RoomActor` — flush ngay lập tức khi `now - lastFlushAtMs >= 200ms`, không phải bug), sửa assertion để lọc đúng loại message thay vì đếm tổng. `mvn clean install` toàn reactor: BUILD SUCCESS — 5 protocol + 86 gateway + 175 engine (168 cũ + 7 mới) + 2 e2e, không regress.
 
 ### Task 26: Xây dựng E2E Cucumber Tests (`uni-e2e`)
 - **Mô tả:** Khởi chạy 12 client WebSocket giả lập kiểm thử 3 kịch bản BDD thực chiến.

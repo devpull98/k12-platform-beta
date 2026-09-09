@@ -1,12 +1,18 @@
 package com.uni.realtime.gameengine.room;
 
 import com.uni.realtime.gameengine.definition.MissedStepPolicy;
+import com.uni.realtime.gameengine.definition.ProgressStage;
+import com.uni.realtime.gameengine.definition.ScoreAggregation;
+import com.uni.realtime.gameengine.definition.SharedResourceType;
 import com.uni.realtime.gameengine.definition.TickMode;
+import com.uni.realtime.gameengine.definition.WinCondition;
 import com.uni.realtime.gameengine.events.GameEventPublisher;
 import com.uni.realtime.gameengine.metrics.EngineMetrics;
 import com.uni.realtime.gameengine.scoring.ScoreCalculator;
 import com.uni.realtime.protocol.GameMessage;
+import com.uni.realtime.protocol.GameMode;
 import com.uni.realtime.protocol.GamePhase;
+import com.uni.realtime.protocol.TeamAssignment;
 import io.micrometer.core.instrument.Timer;
 import org.apache.pekko.actor.typed.ActorRef;
 import org.apache.pekko.actor.typed.Behavior;
@@ -212,6 +218,31 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
             TickMode tickMode, ActorRef<GameMessage> broadcastTarget,
             RoomSnapshotStore snapshotStore, long epoch, byte[] restoreFromSnapshot,
             MissedStepPolicy missedStepPolicy, GameEventPublisher gameEventPublisher) {
+        return create(roomId, clock, scoreCalculator, engineMetrics, tickMode, broadcastTarget,
+                snapshotStore, epoch, restoreFromSnapshot, missedStepPolicy, gameEventPublisher,
+                GameMode.GAME_MODE_SOLO, 0, List.of(), SharedResourceType.NONE, 0, List.of(),
+                ScoreAggregation.SUM_ALL, WinCondition.PROGRESS_COMPLETED);
+    }
+
+    /**
+     * P2 Task 25: the true master constructor, adding the whole cooperative/team config block on
+     * top of Task 18's eleven-arg overload above (which now delegates here with SOLO/no-op
+     * defaults) -- same additive-overload shape every prior task used. Exists so
+     * {@code CooperativeRoomActorTest}/{@code TeamRoomActorTest} can drive real actor-level FSM
+     * behavior (auto-{@code FINISHED}, {@code GameOver} broadcast, actor stop) instead of only
+     * {@code RoomState} in isolation. {@code RoomSupervisor.spawnRoom()} still does not call this
+     * overload -- it has no {@code GameDefinition} source to supply these from yet (plan.md P1
+     * Task 11's still-open "no game-definition-authoring format decided" gap), so this remains
+     * test/future-wiring-only, same posture {@code missedStepPolicy} had between Task 14 and 17.
+     */
+    public static Behavior<Command> create(
+            String roomId, Clock clock, ScoreCalculator scoreCalculator, EngineMetrics engineMetrics,
+            TickMode tickMode, ActorRef<GameMessage> broadcastTarget,
+            RoomSnapshotStore snapshotStore, long epoch, byte[] restoreFromSnapshot,
+            MissedStepPolicy missedStepPolicy, GameEventPublisher gameEventPublisher,
+            GameMode gameMode, int progressTarget, List<ProgressStage> progressStages,
+            SharedResourceType sharedResourceType, int sharedResourcePenalty,
+            List<TeamAssignment> teamRosters, ScoreAggregation scoreAggregation, WinCondition winCondition) {
         if (tickMode != TickMode.COALESCE) {
             throw new IllegalArgumentException(
                     "RoomActor only implements TickMode.COALESCE in Phase 1, got " + tickMode);
@@ -224,7 +255,9 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
         }
         return Behaviors.withTimers(timers -> Behaviors.setup(
                 context -> new RoomActor(context, timers, roomId, clock, scoreCalculator, engineMetrics,
-                        broadcastTarget, snapshotStore, epoch, restoreFromSnapshot, missedStepPolicy, gameEventPublisher)));
+                        broadcastTarget, snapshotStore, epoch, restoreFromSnapshot, missedStepPolicy, gameEventPublisher,
+                        gameMode, progressTarget, progressStages, sharedResourceType, sharedResourcePenalty,
+                        teamRosters, scoreAggregation, winCondition)));
     }
 
     private final String roomId;
@@ -252,14 +285,21 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
     private RoomActor(ActorContext<Command> context, TimerScheduler<Command> timers, String roomId, Clock clock,
             ScoreCalculator scoreCalculator, EngineMetrics engineMetrics, ActorRef<GameMessage> broadcastTarget,
             RoomSnapshotStore snapshotStore, long epoch, byte[] restoreFromSnapshot,
-            MissedStepPolicy missedStepPolicy, GameEventPublisher gameEventPublisher) {
+            MissedStepPolicy missedStepPolicy, GameEventPublisher gameEventPublisher,
+            GameMode gameMode, int progressTarget, List<ProgressStage> progressStages,
+            SharedResourceType sharedResourceType, int sharedResourcePenalty,
+            List<TeamAssignment> teamRosters, ScoreAggregation scoreAggregation, WinCondition winCondition) {
         super(context);
         this.timers = timers;
         this.roomId = roomId;
         this.clock = clock;
         this.state = restoreFromSnapshot == null
-                ? new RoomState(roomId, clock, scoreCalculator, missedStepPolicy)
-                : RoomState.restore(roomId, clock, scoreCalculator, missedStepPolicy, restoreFromSnapshot);
+                ? new RoomState(roomId, clock, scoreCalculator, missedStepPolicy, gameMode, progressTarget,
+                        progressStages, sharedResourceType, sharedResourcePenalty, teamRosters, scoreAggregation,
+                        winCondition)
+                : RoomState.restore(roomId, clock, scoreCalculator, missedStepPolicy, gameMode, progressTarget,
+                        progressStages, sharedResourceType, sharedResourcePenalty, teamRosters, scoreAggregation,
+                        winCondition, restoreFromSnapshot);
         this.processingTimer = engineMetrics.processingLatencyTimer();
         this.engineMetrics = engineMetrics;
         this.broadcastTarget = broadcastTarget;
