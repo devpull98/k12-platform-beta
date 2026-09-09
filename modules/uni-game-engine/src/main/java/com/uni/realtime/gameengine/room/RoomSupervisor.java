@@ -175,6 +175,15 @@ public final class RoomSupervisor extends AbstractBehavior<RoomSupervisor.Comman
             }
             case RESYNC -> handleResync(roomId, message, command.sourceChannel());
             case TEACHER_COMMAND -> dispatchTeacherCommand(roomId, message.getTeacherCommand());
+            case DRAFT_UPDATE -> {
+                ActorRef<RoomActor.Command> room = roomsByRoomId.get(roomId);
+                if (room == null) {
+                    log.warn("dropping UPDATE_DRAFT for room {}: no one has joined it on this pod yet", roomId);
+                } else {
+                    room.tell(new RoomActor.UpdateDraft(
+                            message.getStudentId(), message.getDraftUpdate().getDraftContent()));
+                }
+            }
             case PAYLOAD_NOT_SET -> dispatchNoPayloadMessage(roomId, message);
             default -> log.warn("dropping {} for room {}: no dispatch wired for this payload yet",
                     message.getPayloadCase(), roomId);

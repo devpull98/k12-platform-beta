@@ -192,6 +192,8 @@ message PlayerState {
   uint32 score = 4;
   bool answered_current = 5;
   bool connected = 6;
+  // P2 Task 22, `GAME_MODE_TEAM` only. Empty for every other mode (Phase 1 wire shape unchanged).
+  string team_id = 7;
 }
 
 // CRITICAL (5.4): bypasses coalescing, never dropped under backpressure.
@@ -274,11 +276,17 @@ message CommittedSeq {
 // Phase 2: In-class group & cooperative games (Task 20, INCLASS-GAME-001)
 // ---------------------------------------------------------------------------
 
-// One team's roster, embedded in RoomStateSnapshot.teams (`GAME_MODE_TEAM` only).
+// One team's roster + live aggregated score, embedded in RoomStateSnapshot.teams
+// (`GAME_MODE_TEAM` only). Roster is fixed at team-assignment time (WAITING_FOR_PLAYERS,
+// INCLASS-GAME-001-v2.1 §4); team_score is recomputed and re-sent on every snapshot, same as
+// RoomStateSnapshot.progress is for `cooperative` mode.
 message TeamAssignment {
   string team_id = 1;
   string team_name = 2;
   repeated string student_ids = 3;
+  // Aggregated per `score_aggregation` (Task 22 AC: sum_all | average -- plan.md's own two
+  // values; the PO's broader list also has first_correct_only/majority_vote, not implemented).
+  int32 team_score = 4;
 }
 
 // Client -> server: a student shares a draft answer with their team (INCLASS-GAME-001-v2.1

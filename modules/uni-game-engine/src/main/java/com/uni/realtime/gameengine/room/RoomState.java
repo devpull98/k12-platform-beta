@@ -2,10 +2,12 @@ package com.uni.realtime.gameengine.room;
 
 import com.uni.realtime.gameengine.definition.MissedStepPolicy;
 import com.uni.realtime.gameengine.definition.ProgressStage;
+import com.uni.realtime.gameengine.definition.ScoreAggregation;
 import com.uni.realtime.gameengine.definition.SharedResourceType;
 import com.uni.realtime.gameengine.scoring.ScoreCalculator;
 import com.uni.realtime.protocol.AnswerAck;
 import com.uni.realtime.protocol.CommittedSeq;
+import com.uni.realtime.protocol.DraftUpdate;
 import com.uni.realtime.protocol.GameMessage;
 import com.uni.realtime.protocol.GameMode;
 import com.uni.realtime.protocol.GamePhase;
@@ -15,6 +17,7 @@ import com.uni.realtime.protocol.ProgressMeterSnapshot;
 import com.uni.realtime.protocol.RejectReason;
 import com.uni.realtime.protocol.RoomStateSnapshot;
 import com.uni.realtime.protocol.SharedResourceState;
+import com.uni.realtime.protocol.TeamAssignment;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -77,6 +80,12 @@ final class RoomState {
     private final List<ProgressStage> progressStages;
     private final SharedResourceType sharedResourceType;
     private final int sharedResourcePenalty;
+    /**
+     * P2 Task 22, {@code GAME_MODE_TEAM} only: fixed rosters decided upstream, never computed by
+     * this class -- see {@code GameDefinition.teamRosters}' javadoc.
+     */
+    private final List<TeamAssignment> teamRosters;
+    private final ScoreAggregation scoreAggregation;
     /** Room-wide count of correct answers so far, {@code GAME_MODE_COOPERATIVE} only. */
     private int roomProgress = 0;
 
@@ -121,13 +130,26 @@ final class RoomState {
     }
 
     /**
-     * P2 Task 21: the true master constructor, adding cooperative-mode config on top of the
-     * four-arg constructor above (now just delegating here with SOLO/no-op defaults) -- same
-     * additive-overload shape Task 14/17 already used.
+     * P2 Task 21's own shape (cooperative-mode config, no team config) -- kept so every call site
+     * written before Task 22 keeps compiling unchanged, same additive-overload reasoning as
+     * {@code GameDefinition}'s own telescoping constructors.
      */
     RoomState(String roomId, Clock clock, ScoreCalculator scoreCalculator, MissedStepPolicy missedStepPolicy,
             GameMode gameMode, int progressTarget, List<ProgressStage> progressStages,
             SharedResourceType sharedResourceType, int sharedResourcePenalty) {
+        this(roomId, clock, scoreCalculator, missedStepPolicy, gameMode, progressTarget, progressStages,
+                sharedResourceType, sharedResourcePenalty, List.of(), ScoreAggregation.SUM_ALL);
+    }
+
+    /**
+     * P2 Task 22: the true master constructor, adding team-mode config on top of the nine-arg
+     * constructor above (now just delegating here with no-team defaults) -- same
+     * additive-overload shape Task 14/17/21 already used.
+     */
+    RoomState(String roomId, Clock clock, ScoreCalculator scoreCalculator, MissedStepPolicy missedStepPolicy,
+            GameMode gameMode, int progressTarget, List<ProgressStage> progressStages,
+            SharedResourceType sharedResourceType, int sharedResourcePenalty,
+            List<TeamAssignment> teamRosters, ScoreAggregation scoreAggregation) {
         this.roomId = roomId;
         this.clock = clock;
         this.scoreCalculator = scoreCalculator;
@@ -137,6 +159,8 @@ final class RoomState {
         this.progressStages = progressStages;
         this.sharedResourceType = sharedResourceType;
         this.sharedResourcePenalty = sharedResourcePenalty;
+        this.teamRosters = teamRosters;
+        this.scoreAggregation = scoreAggregation;
     }
 
     /**
@@ -229,8 +253,17 @@ final class RoomState {
             MissedStepPolicy missedStepPolicy, GameMode gameMode, int progressTarget,
             List<ProgressStage> progressStages, SharedResourceType sharedResourceType, int sharedResourcePenalty,
             byte[] payload) {
+        return restore(roomId, clock, scoreCalculator, missedStepPolicy, gameMode, progressTarget, progressStages,
+                sharedResourceType, sharedResourcePenalty, List.of(), ScoreAggregation.SUM_ALL, payload);
+    }
+
+    /** P2 Task 22: additive over the nine-arg {@link #restore} above, same reason as the constructor overload. */
+    static RoomState restore(String roomId, Clock clock, ScoreCalculator scoreCalculator,
+            MissedStepPolicy missedStepPolicy, GameMode gameMode, int progressTarget,
+            List<ProgressStage> progressStages, SharedResourceType sharedResourceType, int sharedResourcePenalty,
+            List<TeamAssignment> teamRosters, ScoreAggregation scoreAggregation, byte[] payload) {
         RoomState state = new RoomState(roomId, clock, scoreCalculator, missedStepPolicy, gameMode, progressTarget,
-                progressStages, sharedResourceType, sharedResourcePenalty);
+                progressStages, sharedResourceType, sharedResourcePenalty, teamRosters, scoreAggregation);
         try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(payload))) {
             state.phase = GamePhase.valueOf(in.readUTF());
             String questionId = in.readUTF();
@@ -604,8 +637,72 @@ final class RoomState {
                 builder.setSharedResource(SharedResourceState.newBuilder()
                         .setResourceType(sharedResourceType.name()));
             }
+        } else if (gameMode == GameMode.GAME_MODE_TEAM) {
+            teamRosters.forEach(roster -> builder.addTeams(
+                    roster.toBuilder().setTeamScore(computeTeamScore(roster)).build()));
         }
         return builder;
+    }
+
+    /**
+     * P2 Task 22 AC: {@code sum_all} or {@code average} of every roster member's
+     * {@link #totalScoreByStudent} (a member who never joined, or never answered, scores 0 like
+     * anyone else -- {@link #totalScoreOf}'s existing default already covers that). Average
+     * floors, same rounding rule progress percentage uses (§5.6 luật biên 6).
+     */
+    private int computeTeamScore(TeamAssignment roster) {
+        int sum = roster.getStudentIdsList().stream().mapToInt(this::totalScoreOf).sum();
+        int memberCount = roster.getStudentIdsList().size();
+        return scoreAggregation == ScoreAggregation.AVERAGE && memberCount > 0 ? sum / memberCount : sum;
+    }
+
+    /** Linear scan -- {@code teamRosters} has at most 4 entries (PO §3.1: `team_count` 2-4). */
+    private String teamIdOf(String studentId) {
+        return teamRosters.stream()
+                .filter(roster -> roster.getStudentIdsList().contains(studentId))
+                .findFirst()
+                .map(TeamAssignment::getTeamId)
+                .orElse("");
+    }
+
+    /**
+     * P2 Task 22 (INCLASS-GAME-001-v2.1 §5.6 luật biên 3): scoped draft sync -- {@code teamId} is
+     * ALWAYS looked up from {@link #teamRosters} (server's own roster), never trusted from a
+     * client-supplied value, same "never trust a client-asserted identity for routing" principle
+     * {@code room_id} already follows (§10.6). Returns one personally-addressed {@link GameMessage}
+     * per OTHER, currently-joined teammate -- {@code EngineResponseRouter} already routes any
+     * message with a non-empty envelope {@code student_id} to just that one student (Task 13), so
+     * no Gateway change was needed to make this scoped instead of room-wide.
+     */
+    List<GameMessage> updateDraft(String senderId, String draftContent) {
+        if (gameMode != GameMode.GAME_MODE_TEAM) {
+            return List.of();
+        }
+        String teamId = teamIdOf(senderId);
+        if (teamId.isEmpty()) {
+            return List.of();
+        }
+        List<GameMessage> outbound = new ArrayList<>();
+        for (TeamAssignment roster : teamRosters) {
+            if (!roster.getTeamId().equals(teamId)) {
+                continue;
+            }
+            for (String recipientId : roster.getStudentIdsList()) {
+                if (recipientId.equals(senderId) || !players.containsKey(recipientId)) {
+                    continue;
+                }
+                outbound.add(GameMessage.newBuilder()
+                        .setType(MessageType.UPDATE_DRAFT)
+                        .setRoomId(roomId)
+                        .setStudentId(recipientId)
+                        .setDraftUpdate(DraftUpdate.newBuilder()
+                                .setTeamId(teamId)
+                                .setStudentId(senderId)
+                                .setDraftContent(draftContent))
+                        .build());
+            }
+        }
+        return outbound;
     }
 
     /** §5.6 luật biên 6: floor, never round -- 33.33% must read as 33%, not 33 nor 34. */
@@ -647,14 +744,17 @@ final class RoomState {
 
     private PlayerState buildPlayerState(String studentId) {
         PlayerRecord record = players.get(studentId);
-        return PlayerState.newBuilder()
+        PlayerState.Builder builder = PlayerState.newBuilder()
                 .setStudentId(studentId)
                 .setStudentIndex(record.index)
                 .setDisplayName(record.displayName)
                 .setScore(totalScoreOf(studentId))
                 .setAnsweredCurrent(record.answeredCurrent)
-                .setConnected(record.connected)
-                .build();
+                .setConnected(record.connected);
+        if (gameMode == GameMode.GAME_MODE_TEAM) {
+            builder.setTeamId(teamIdOf(studentId));
+        }
+        return builder.build();
     }
 
     private void remember(String studentId, long sequence, GameMessage ack) {

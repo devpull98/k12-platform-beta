@@ -92,6 +92,15 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
     public record Resync(String studentId, long lastAckedSeq, List<GameMessage> pending,
             ActorRef<GameMessage> replyTo) implements Command {}
 
+    /**
+     * P2 Task 22 (INCLASS-GAME-001-v2.1 §5.6 luật biên 3): a scoped draft share. No
+     * {@code replyTo} -- unlike {@link SubmitAnswer}, this never replies to the sender, it fans
+     * out (0-N messages) to teammates via {@link #broadcastTarget} (personal delivery per
+     * recipient, see {@link RoomState#updateDraft}'s javadoc). A no-op for a {@code SOLO} room or
+     * a sender not on any team roster -- {@code RoomState.updateDraft} returns an empty list.
+     */
+    public record UpdateDraft(String studentId, String draftContent) implements Command {}
+
     public record EndGame() implements Command {}
 
     /**
@@ -270,6 +279,7 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
                 .onMessage(EndGame.class, watched(this::onEndGame))
                 .onMessage(StudentDisconnected.class, watched(this::onStudentDisconnected))
                 .onMessage(KickStudent.class, watched(this::onKickStudent))
+                .onMessage(UpdateDraft.class, watched(this::onUpdateDraft))
                 .onMessage(Flush.class, watched(this::onFlush))
                 .onMessage(LeaseLost.class, watched(this::onLeaseLost))
                 .build();
@@ -383,6 +393,16 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
     private Behavior<Command> onStudentDisconnected(StudentDisconnected command) {
         state.markDisconnected(command.studentId());
         scheduleFlushIfDirty();
+        return this;
+    }
+
+    /**
+     * Bypasses coalescing (§10.3's Critical bucket -- same reasoning as {@code KickStudent}): a
+     * draft share is a live-typing signal, stale by the time a 200ms coalescing window would let
+     * it out. No roster/dirty state changes, so no {@link #scheduleFlushIfDirty()} call.
+     */
+    private Behavior<Command> onUpdateDraft(UpdateDraft command) {
+        state.updateDraft(command.studentId(), command.draftContent()).forEach(broadcastTarget::tell);
         return this;
     }
 

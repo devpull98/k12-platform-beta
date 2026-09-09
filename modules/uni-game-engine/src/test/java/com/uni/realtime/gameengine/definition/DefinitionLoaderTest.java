@@ -212,17 +212,109 @@ class DefinitionLoaderTest {
     }
 
     @Test
-    void should_rejectAtLoadTime_when_gameModeIsTeam() {
-        // No RoomState team-mode implementation yet -- P2 Task 22.
-        GameDefinition base = cooperativeQuiz(10, SharedResourceType.NONE, 0);
-        GameDefinition definition = new GameDefinition(base.steps(), base.startStepId(), base.tickMode(),
-                base.scoringFormula(), base.missedStepPolicy(), base.maxTransitions(),
-                GameMode.GAME_MODE_TEAM, base.progressTarget(), base.progressStages(),
-                base.sharedResourceType(), base.sharedResourcePenalty());
+    void should_rejectAtLoadTime_when_gameModeIsIndividual() {
+        // No RoomState individual-mode implementation -- out of Task 22's scope (team mode only).
+        GameDefinition definition = teamQuiz(twoTeamsOfThree(), 5, ScoreAggregation.SUM_ALL);
+        GameDefinition individual = new GameDefinition(definition.steps(), definition.startStepId(),
+                definition.tickMode(), definition.scoringFormula(), definition.missedStepPolicy(),
+                definition.maxTransitions(), GameMode.GAME_MODE_INDIVIDUAL, definition.progressTarget(),
+                definition.progressStages(), definition.sharedResourceType(), definition.sharedResourcePenalty(),
+                definition.teamRosters(), definition.scoreAggregation());
+
+        assertThatThrownBy(() -> loader.load(individual))
+                .isInstanceOf(DefinitionRejectedException.class)
+                .hasMessageContaining("INDIVIDUAL");
+    }
+
+    // ------------------------- P2 Task 22 (INCLASS-GAME-001) -------------------------
+
+    @Test
+    void should_returnDefinition_when_teamModeIsValid() throws DefinitionRejectedException {
+        GameDefinition definition = teamQuiz(twoTeamsOfThree(), 5, ScoreAggregation.SUM_ALL);
+
+        assertThat(loader.load(definition)).isEqualTo(definition);
+    }
+
+    @Test
+    void should_rejectAtLoadTime_when_onlyOneTeamRosterIsGiven() {
+        GameDefinition definition = teamQuiz(List.of(team("A", "student-01")), 5, ScoreAggregation.SUM_ALL);
 
         assertThatThrownBy(() -> loader.load(definition))
                 .isInstanceOf(DefinitionRejectedException.class)
-                .hasMessageContaining("TEAM");
+                .hasMessageContaining("team_count");
+    }
+
+    @Test
+    void should_rejectAtLoadTime_when_moreThanFourTeamRostersAreGiven() {
+        GameDefinition definition = teamQuiz(List.of(
+                team("A", "s1"), team("B", "s2"), team("C", "s3"), team("D", "s4"), team("E", "s5")),
+                5, ScoreAggregation.SUM_ALL);
+
+        assertThatThrownBy(() -> loader.load(definition))
+                .isInstanceOf(DefinitionRejectedException.class)
+                .hasMessageContaining("team_count");
+    }
+
+    @Test
+    void should_rejectAtLoadTime_when_aTeamRosterIsEmpty() {
+        GameDefinition definition = teamQuiz(List.of(
+                team("A", "student-01", "student-02"), team("B")), 5, ScoreAggregation.SUM_ALL);
+
+        assertThatThrownBy(() -> loader.load(definition))
+                .isInstanceOf(DefinitionRejectedException.class)
+                .hasMessageContaining("no members");
+    }
+
+    @Test
+    void should_rejectAtLoadTime_when_aStudentAppearsInTwoTeamRosters() {
+        GameDefinition definition = teamQuiz(List.of(
+                team("A", "student-01", "student-02"), team("B", "student-02", "student-03")),
+                5, ScoreAggregation.SUM_ALL);
+
+        assertThatThrownBy(() -> loader.load(definition))
+                .isInstanceOf(DefinitionRejectedException.class)
+                .hasMessageContaining("more than one team");
+    }
+
+    @Test
+    void should_rejectAtLoadTime_when_teamModeHasNonPositiveProgressTarget() {
+        GameDefinition definition = teamQuiz(twoTeamsOfThree(), 0, ScoreAggregation.SUM_ALL);
+
+        assertThatThrownBy(() -> loader.load(definition))
+                .isInstanceOf(DefinitionRejectedException.class)
+                .hasMessageContaining("progress_target");
+    }
+
+    private static List<com.uni.realtime.protocol.TeamAssignment> twoTeamsOfThree() {
+        return List.of(
+                team("A", "student-01", "student-02", "student-03"),
+                team("B", "student-04", "student-05", "student-06"));
+    }
+
+    private static com.uni.realtime.protocol.TeamAssignment team(String teamId, String... studentIds) {
+        return com.uni.realtime.protocol.TeamAssignment.newBuilder()
+                .setTeamId(teamId)
+                .setTeamName("Team " + teamId)
+                .addAllStudentIds(List.of(studentIds))
+                .build();
+    }
+
+    private static GameDefinition teamQuiz(List<com.uni.realtime.protocol.TeamAssignment> teamRosters,
+            int progressTarget, ScoreAggregation scoreAggregation) {
+        return new GameDefinition(
+                List.of(new Step("q1", 25_000, List.of())),
+                "q1",
+                TickMode.COALESCE,
+                new ScoringFormula.Multiply(new ScoringFormula.IsCorrect(), new ScoringFormula.Constant(100)),
+                MissedStepPolicy.ZERO,
+                50,
+                GameMode.GAME_MODE_TEAM,
+                progressTarget,
+                List.of(),
+                SharedResourceType.NONE,
+                0,
+                teamRosters,
+                scoreAggregation);
     }
 
     private static GameDefinition cooperativeQuiz(int progressTarget, SharedResourceType sharedResourceType,
