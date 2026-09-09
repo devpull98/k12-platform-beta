@@ -6,6 +6,7 @@ import com.uni.realtime.gameengine.events.GameEventPublisher;
 import com.uni.realtime.gameengine.metrics.EngineMetrics;
 import com.uni.realtime.gameengine.scoring.ScoreCalculator;
 import com.uni.realtime.protocol.GameMessage;
+import com.uni.realtime.protocol.GamePhase;
 import io.micrometer.core.instrument.Timer;
 import org.apache.pekko.actor.typed.ActorRef;
 import org.apache.pekko.actor.typed.Behavior;
@@ -338,6 +339,14 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
         command.replyTo().tell(ack);
         scheduleFlushIfDirty();
         publishGameEvent(ack);
+        // P2 Task 23: a submission can end the game itself (progress_completed/first_to_finish) --
+        // only an ACCEPTED submission ever reaches RoomState's win-condition check, and once
+        // phase flips to FINISHED no later submission can be accepted (WRONG_PHASE), so this can
+        // only be true for the exact submission that just finished the game, never a repeat.
+        if (ack.getAnswerAck().getAccepted() && state.phase() == GamePhase.FINISHED) {
+            broadcastTarget.tell(state.buildGameOver());
+            return Behaviors.stopped();
+        }
         return this;
     }
 
@@ -385,8 +394,15 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
         }
     }
 
+    /**
+     * P2 Task 23: {@code GameOver} previously never broadcast at all on this path (a pre-existing
+     * Phase 1 gap, not something this task introduced -- {@code GameOver} has existed in the
+     * schema since Task 1 with no sender anywhere). CRITICAL, sent via {@code broadcastTarget}
+     * directly before the actor stops, same as {@code STUDENT_KICKED}.
+     */
     private Behavior<Command> onEndGame(EndGame command) {
         state.endGame();
+        broadcastTarget.tell(state.buildGameOver());
         return Behaviors.stopped();
     }
 

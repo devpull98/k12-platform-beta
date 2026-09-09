@@ -86,6 +86,11 @@ public final class DefinitionLoader {
         if (definition.progressTarget() <= 0) {
             throw new DefinitionRejectedException("progress_target must be positive for GAME_MODE_COOPERATIVE");
         }
+        if (definition.winCondition() != WinCondition.PROGRESS_COMPLETED) {
+            throw new DefinitionRejectedException(
+                    "win_condition " + definition.winCondition() + " is not implemented for GAME_MODE_COOPERATIVE "
+                            + "(only PROGRESS_COMPLETED -- plan.md P2 Task 23)");
+        }
         checkProgressStages(definition);
         if (definition.sharedResourceType() == SharedResourceType.LIVES) {
             throw new DefinitionRejectedException(
@@ -121,6 +126,12 @@ public final class DefinitionLoader {
         }
         if (definition.progressTarget() <= 0) {
             throw new DefinitionRejectedException("progress_target must be positive for GAME_MODE_TEAM");
+        }
+        if (definition.winCondition() != WinCondition.FIRST_TO_FINISH
+                && definition.winCondition() != WinCondition.MOST_POINTS_WHEN_TIME_UP) {
+            throw new DefinitionRejectedException(
+                    "win_condition " + definition.winCondition() + " is not implemented for GAME_MODE_TEAM "
+                            + "(only FIRST_TO_FINISH and MOST_POINTS_WHEN_TIME_UP -- plan.md P2 Task 23)");
         }
         checkProgressStages(definition);
     }

@@ -75,6 +75,23 @@ class RoomActorTest {
     }
 
     @Test
+    void should_broadcastGameOver_when_teacherEndsTheGame() {
+        // P2 Task 23: GameOver previously had no sender anywhere in this codebase (a pre-existing
+        // Phase 1 gap, not something Task 23 introduced) -- this is the regression guard for it.
+        TestInbox<GameMessage> broadcastInbox = TestInbox.create();
+        BehaviorTestKit<RoomActor.Command> kit = BehaviorTestKit.create(
+                RoomActor.create("room-101", clock, FormulaScoreCalculator.binaryChoice(),
+                        new EngineMetrics(new SimpleMeterRegistry()), TickMode.COALESCE, broadcastInbox.getRef()));
+        kit.run(new RoomActor.StartGame());
+
+        kit.run(new RoomActor.EndGame());
+
+        GameMessage gameOver = broadcastInbox.receiveMessage();
+        assertThat(gameOver.getType()).isEqualTo(com.uni.realtime.protocol.MessageType.GAME_OVER);
+        assertThat(gameOver.getGameOver().getReason()).isEqualTo("teacher_ended");
+    }
+
+    @Test
     void should_stampResponseTimeFromInjectedClock_when_answerAcceptedDuringPlaying() {
         startGameAndQuestion("q-1");
         clock.advanceMillis(250);

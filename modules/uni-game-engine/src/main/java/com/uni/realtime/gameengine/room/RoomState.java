@@ -4,12 +4,15 @@ import com.uni.realtime.gameengine.definition.MissedStepPolicy;
 import com.uni.realtime.gameengine.definition.ProgressStage;
 import com.uni.realtime.gameengine.definition.ScoreAggregation;
 import com.uni.realtime.gameengine.definition.SharedResourceType;
+import com.uni.realtime.gameengine.definition.WinCondition;
 import com.uni.realtime.gameengine.scoring.ScoreCalculator;
+import com.uni.realtime.gameengine.scoring.WinConditionEvaluator;
 import com.uni.realtime.protocol.AnswerAck;
 import com.uni.realtime.protocol.CommittedSeq;
 import com.uni.realtime.protocol.DraftUpdate;
 import com.uni.realtime.protocol.GameMessage;
 import com.uni.realtime.protocol.GameMode;
+import com.uni.realtime.protocol.GameOver;
 import com.uni.realtime.protocol.GamePhase;
 import com.uni.realtime.protocol.MessageType;
 import com.uni.realtime.protocol.PlayerState;
@@ -86,8 +89,20 @@ final class RoomState {
      */
     private final List<TeamAssignment> teamRosters;
     private final ScoreAggregation scoreAggregation;
+    /** P2 Task 23: what ends the game -- see {@code WinCondition}'s own javadoc per value. */
+    private final WinCondition winCondition;
     /** Room-wide count of correct answers so far, {@code GAME_MODE_COOPERATIVE} only. */
     private int roomProgress = 0;
+    /** Per-team count of correct answers so far, {@code GAME_MODE_TEAM} only, keyed by team_id. */
+    private final Map<String, Integer> teamProgress = new HashMap<>();
+    /**
+     * P2 Task 23: set the moment {@link #phase} flips to {@link GamePhase#FINISHED}, read by
+     * {@link #buildGameOver()}. {@code winnerId} is a team_id ({@code GAME_MODE_TEAM}) or empty
+     * (no single winner -- {@code GAME_MODE_COOPERATIVE}, a tied {@code most_points_when_time_up},
+     * or plain {@code SOLO}).
+     */
+    private String gameOverReason = "";
+    private String winnerId = "";
 
     private final Map<String, Long> lastSeenSequence = new HashMap<>();
     private final Map<String, GameMessage> lastAckByStudent = new HashMap<>();
@@ -138,18 +153,31 @@ final class RoomState {
             GameMode gameMode, int progressTarget, List<ProgressStage> progressStages,
             SharedResourceType sharedResourceType, int sharedResourcePenalty) {
         this(roomId, clock, scoreCalculator, missedStepPolicy, gameMode, progressTarget, progressStages,
-                sharedResourceType, sharedResourcePenalty, List.of(), ScoreAggregation.SUM_ALL);
+                sharedResourceType, sharedResourcePenalty, List.of(), ScoreAggregation.SUM_ALL,
+                WinCondition.PROGRESS_COMPLETED);
     }
 
     /**
-     * P2 Task 22: the true master constructor, adding team-mode config on top of the nine-arg
-     * constructor above (now just delegating here with no-team defaults) -- same
-     * additive-overload shape Task 14/17/21 already used.
+     * P2 Task 22's own shape (team-mode config, no explicit win condition) -- kept so every call
+     * site written before Task 23 keeps compiling unchanged, same additive-overload reasoning as
+     * above. Defaults {@code winCondition} to {@code FIRST_TO_FINISH}, the BDD-tested one.
      */
     RoomState(String roomId, Clock clock, ScoreCalculator scoreCalculator, MissedStepPolicy missedStepPolicy,
             GameMode gameMode, int progressTarget, List<ProgressStage> progressStages,
             SharedResourceType sharedResourceType, int sharedResourcePenalty,
             List<TeamAssignment> teamRosters, ScoreAggregation scoreAggregation) {
+        this(roomId, clock, scoreCalculator, missedStepPolicy, gameMode, progressTarget, progressStages,
+                sharedResourceType, sharedResourcePenalty, teamRosters, scoreAggregation, WinCondition.FIRST_TO_FINISH);
+    }
+
+    /**
+     * P2 Task 23: the true master constructor, adding {@code winCondition} on top of the
+     * eleven-arg constructor above -- same additive-overload shape Task 14/17/21/22 already used.
+     */
+    RoomState(String roomId, Clock clock, ScoreCalculator scoreCalculator, MissedStepPolicy missedStepPolicy,
+            GameMode gameMode, int progressTarget, List<ProgressStage> progressStages,
+            SharedResourceType sharedResourceType, int sharedResourcePenalty,
+            List<TeamAssignment> teamRosters, ScoreAggregation scoreAggregation, WinCondition winCondition) {
         this.roomId = roomId;
         this.clock = clock;
         this.scoreCalculator = scoreCalculator;
@@ -161,6 +189,7 @@ final class RoomState {
         this.sharedResourcePenalty = sharedResourcePenalty;
         this.teamRosters = teamRosters;
         this.scoreAggregation = scoreAggregation;
+        this.winCondition = winCondition;
     }
 
     /**
@@ -213,6 +242,12 @@ final class RoomState {
             }
 
             out.writeInt(roomProgress); // P2 Task 21: appended at the end, additive format
+
+            out.writeInt(teamProgress.size()); // P2 Task 23
+            for (Map.Entry<String, Integer> entry : teamProgress.entrySet()) {
+                out.writeUTF(entry.getKey());
+                out.writeInt(entry.getValue());
+            }
         } catch (IOException e) {
             // ByteArrayOutputStream/DataOutputStream never actually throw IOException in
             // practice (no real I/O underneath) -- this is here only so the try-with-resources
@@ -262,8 +297,19 @@ final class RoomState {
             MissedStepPolicy missedStepPolicy, GameMode gameMode, int progressTarget,
             List<ProgressStage> progressStages, SharedResourceType sharedResourceType, int sharedResourcePenalty,
             List<TeamAssignment> teamRosters, ScoreAggregation scoreAggregation, byte[] payload) {
+        return restore(roomId, clock, scoreCalculator, missedStepPolicy, gameMode, progressTarget, progressStages,
+                sharedResourceType, sharedResourcePenalty, teamRosters, scoreAggregation,
+                WinCondition.FIRST_TO_FINISH, payload);
+    }
+
+    /** P2 Task 23: additive over the eleven-arg {@link #restore} above, same reason as the constructor overload. */
+    static RoomState restore(String roomId, Clock clock, ScoreCalculator scoreCalculator,
+            MissedStepPolicy missedStepPolicy, GameMode gameMode, int progressTarget,
+            List<ProgressStage> progressStages, SharedResourceType sharedResourceType, int sharedResourcePenalty,
+            List<TeamAssignment> teamRosters, ScoreAggregation scoreAggregation, WinCondition winCondition,
+            byte[] payload) {
         RoomState state = new RoomState(roomId, clock, scoreCalculator, missedStepPolicy, gameMode, progressTarget,
-                progressStages, sharedResourceType, sharedResourcePenalty, teamRosters, scoreAggregation);
+                progressStages, sharedResourceType, sharedResourcePenalty, teamRosters, scoreAggregation, winCondition);
         try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(payload))) {
             state.phase = GamePhase.valueOf(in.readUTF());
             String questionId = in.readUTF();
@@ -306,6 +352,11 @@ final class RoomState {
             }
 
             state.roomProgress = in.readInt(); // P2 Task 21
+
+            int teamProgressCount = in.readInt(); // P2 Task 23
+            for (int i = 0; i < teamProgressCount; i++) {
+                state.teamProgress.put(in.readUTF(), in.readInt());
+            }
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
@@ -404,8 +455,47 @@ final class RoomState {
         }
     }
 
+    /**
+     * P2 Task 23: the generic "someone ended the game" path -- unlike {@link #applyCooperativeOutcome}/
+     * team progress (triggered automatically by a threshold crossed), this is always
+     * externally triggered ({@code TeacherCommand.END_GAME} today; a future round-time-limit
+     * timer for {@code most_points_when_time_up} is NOT built yet -- see {@code WinCondition}'s
+     * own javadoc). Only computes a winner for {@code MOST_POINTS_WHEN_TIME_UP}; every other
+     * combination (already finished via a win condition, or no winner concept at all) leaves
+     * {@link #gameOverReason}/{@link #winnerId} exactly as a prior {@link #applyCooperativeOutcome}/
+     * team-progress call left them.
+     */
     void endGame() {
-        phase = GamePhase.FINISHED;
+        if (phase != GamePhase.FINISHED) {
+            if (gameMode == GameMode.GAME_MODE_TEAM && winCondition == WinCondition.MOST_POINTS_WHEN_TIME_UP) {
+                Map<String, Integer> scoreByTeam = new HashMap<>();
+                teamRosters.forEach(roster -> scoreByTeam.put(roster.getTeamId(), computeTeamScore(roster)));
+                gameOverReason = "most_points_when_time_up";
+                winnerId = WinConditionEvaluator.singleHighestScorer(scoreByTeam).orElse("");
+            } else {
+                gameOverReason = "teacher_ended";
+            }
+            phase = GamePhase.FINISHED;
+        }
+    }
+
+    /**
+     * P2 Task 23: {@code final_standings} (every player, team_id tagged where applicable --
+     * {@link #buildPlayerState} already does this) + {@link #gameOverReason}/{@link #winnerId} as
+     * left by whichever of {@link #applyCooperativeOutcome}/team-progress/{@link #endGame} last
+     * finished the game. CRITICAL (§5.4/§10.3): callers send this via {@code broadcastTarget}
+     * directly, never through the coalesced flush -- same reasoning as {@code STUDENT_KICKED}.
+     */
+    GameMessage buildGameOver() {
+        GameOver.Builder gameOver = GameOver.newBuilder()
+                .setReason(gameOverReason)
+                .setWinnerId(winnerId);
+        players.keySet().forEach(studentId -> gameOver.addFinalStandings(buildPlayerState(studentId)));
+        return GameMessage.newBuilder()
+                .setType(MessageType.GAME_OVER)
+                .setRoomId(roomId)
+                .setGameOver(gameOver)
+                .build();
     }
 
     /**
@@ -467,8 +557,11 @@ final class RoomState {
             dirtyStudentIds.add(studentId);
         }
 
+        boolean correct = isCorrectAnswer(answerIds, currentCorrectAnswerIds);
         if (gameMode == GameMode.GAME_MODE_COOPERATIVE) {
-            applyCooperativeOutcome(isCorrectAnswer(answerIds, currentCorrectAnswerIds));
+            applyCooperativeOutcome(correct);
+        } else if (gameMode == GameMode.GAME_MODE_TEAM) {
+            applyTeamOutcome(studentId, correct);
         }
 
         GameMessage ack = buildAck(studentId, sequence, questionId, true, RejectReason.NONE,
@@ -490,18 +583,40 @@ final class RoomState {
      * the very next submission after {@link #phase} flips to {@link GamePhase#FINISHED} is
      * rejected by the {@code phase != PLAYING} check at the top of {@link #submitAnswer} before
      * it reaches here, so double-completion is structurally impossible without extra locking.
-     * This is only the {@code progress_completed} slice of the win condition -- {@code
-     * first_to_finish}/{@code most_points_when_time_up} need per-team state that does not exist
-     * until P2 Task 22, and belong in a dedicated evaluator (plan.md P2 Task 23) once they do.
      */
     private void applyCooperativeOutcome(boolean correct) {
         if (correct) {
             roomProgress++;
-            if (progressTarget > 0 && roomProgress >= progressTarget) {
+            if (WinConditionEvaluator.progressCompleted(roomProgress, progressTarget)) {
+                gameOverReason = "progress_completed";
                 phase = GamePhase.FINISHED;
             }
         } else if (sharedResourceType == SharedResourceType.TIME) {
             deadlineMs -= sharedResourcePenalty * 1000L;
+        }
+    }
+
+    /**
+     * P2 Task 22/23 (INCLASS-GAME-001-v2.1 §4): {@code first_to_finish} slice -- same
+     * single-threaded-mailbox argument as {@link #applyCooperativeOutcome} guarantees only one
+     * team's crossing can ever win the race, no extra locking needed. A wrong answer in
+     * {@code GAME_MODE_TEAM} has no {@link #sharedResourceType} to apply (that config is
+     * {@code cooperative}-only, PO §3.1) -- deliberately a no-op, not a gap.
+     */
+    private void applyTeamOutcome(String studentId, boolean correct) {
+        if (!correct) {
+            return;
+        }
+        String teamId = teamIdOf(studentId);
+        if (teamId.isEmpty()) {
+            return;
+        }
+        int newProgress = teamProgress.merge(teamId, 1, Integer::sum);
+        if (winCondition == WinCondition.FIRST_TO_FINISH
+                && WinConditionEvaluator.firstToFinish(newProgress, progressTarget)) {
+            gameOverReason = "first_to_finish";
+            winnerId = teamId;
+            phase = GamePhase.FINISHED;
         }
     }
 

@@ -238,6 +238,10 @@ message StudentJoined {
 message GameOver {
   repeated PlayerState final_standings = 1;
   string reason = 2;
+  // P2 Task 23: student_id for an individual winner, team_id for GAME_MODE_TEAM, empty when
+  // there is no single winner (GAME_MODE_COOPERATIVE -- the whole room wins together; a tied
+  // most_points_when_time_up; SOLO).
+  string winner_id = 3;
 }
 
 // CRITICAL. Sent when the engine hop is broken (9.7). The WebSocket stays OPEN on

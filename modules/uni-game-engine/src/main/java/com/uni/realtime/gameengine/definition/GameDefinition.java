@@ -31,6 +31,11 @@ import java.util.List;
  *     entry is ignored here -- {@code RoomState} computes and overwrites it on every broadcast.
  * @param scoreAggregation how each team's displayed score is derived from its members' scores,
  *     {@code GAME_MODE_TEAM} only.
+ * @param winCondition (P2 Task 23) what ends the game and decides {@code GameOver.winner_id}.
+ *     {@code PROGRESS_COMPLETED} is the only value {@link DefinitionLoader} allows for
+ *     {@code COOPERATIVE}; {@code FIRST_TO_FINISH}/{@code MOST_POINTS_WHEN_TIME_UP} for
+ *     {@code TEAM}. See {@link WinCondition#MOST_POINTS_WHEN_TIME_UP}'s own javadoc for what is
+ *     and is not implemented yet.
  */
 public record GameDefinition(
         List<Step> steps,
@@ -45,7 +50,8 @@ public record GameDefinition(
         SharedResourceType sharedResourceType,
         int sharedResourcePenalty,
         List<TeamAssignment> teamRosters,
-        ScoreAggregation scoreAggregation) {
+        ScoreAggregation scoreAggregation,
+        WinCondition winCondition) {
 
     /**
      * P2 Task 21: every Phase 1 call site (tests, {@code RoomSupervisor}) that has no
@@ -56,13 +62,15 @@ public record GameDefinition(
     public GameDefinition(List<Step> steps, String startStepId, TickMode tickMode,
             ScoringFormula scoringFormula, MissedStepPolicy missedStepPolicy, int maxTransitions) {
         this(steps, startStepId, tickMode, scoringFormula, missedStepPolicy, maxTransitions,
-                GameMode.GAME_MODE_SOLO, 0, List.of(), SharedResourceType.NONE, 0, List.of(), ScoreAggregation.SUM_ALL);
+                GameMode.GAME_MODE_SOLO, 0, List.of(), SharedResourceType.NONE, 0, List.of(), ScoreAggregation.SUM_ALL,
+                WinCondition.PROGRESS_COMPLETED);
     }
 
     /**
-     * P2 Task 21's own 11-arg canonical shape (cooperative-mode config, no team config) -- kept
-     * so {@code DefinitionLoaderTest}'s existing cooperative-mode call sites keep compiling
-     * unchanged, same additive-overload reasoning as above.
+     * P2 Task 21's own 11-arg shape (cooperative-mode config, no team config) -- kept so every
+     * call site written before Task 22/23 keeps compiling unchanged. Defaults
+     * {@code winCondition} to {@code PROGRESS_COMPLETED}, the only value {@link DefinitionLoader}
+     * allows for {@code COOPERATIVE} anyway.
      */
     public GameDefinition(List<Step> steps, String startStepId, TickMode tickMode,
             ScoringFormula scoringFormula, MissedStepPolicy missedStepPolicy, int maxTransitions,
@@ -70,6 +78,21 @@ public record GameDefinition(
             SharedResourceType sharedResourceType, int sharedResourcePenalty) {
         this(steps, startStepId, tickMode, scoringFormula, missedStepPolicy, maxTransitions, gameMode,
                 progressTarget, progressStages, sharedResourceType, sharedResourcePenalty, List.of(),
-                ScoreAggregation.SUM_ALL);
+                ScoreAggregation.SUM_ALL, WinCondition.PROGRESS_COMPLETED);
+    }
+
+    /**
+     * P2 Task 22's own 13-arg shape (team-mode config, no explicit win condition) -- kept so
+     * every call site written before Task 23 keeps compiling unchanged. Defaults
+     * {@code winCondition} to {@code FIRST_TO_FINISH}, the BDD-tested team win condition.
+     */
+    public GameDefinition(List<Step> steps, String startStepId, TickMode tickMode,
+            ScoringFormula scoringFormula, MissedStepPolicy missedStepPolicy, int maxTransitions,
+            GameMode gameMode, int progressTarget, List<ProgressStage> progressStages,
+            SharedResourceType sharedResourceType, int sharedResourcePenalty,
+            List<TeamAssignment> teamRosters, ScoreAggregation scoreAggregation) {
+        this(steps, startStepId, tickMode, scoringFormula, missedStepPolicy, maxTransitions, gameMode,
+                progressTarget, progressStages, sharedResourceType, sharedResourcePenalty, teamRosters,
+                scoreAggregation, WinCondition.FIRST_TO_FINISH);
     }
 }

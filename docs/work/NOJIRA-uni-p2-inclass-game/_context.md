@@ -22,9 +22,10 @@
 
 ## Trạng thái hiện tại
 - Đã chuẩn hoá tài liệu Product Brief V2.1 kèm bảng so sánh V1.0 vs V2.1.
-- **2026-09-09: Task 20 (schema protobuf) + Task 21 (cooperative mode) + Task 22 (team mode + scoped draft sync) đã XONG**, verify bằng `mvn clean install` toàn reactor (BUILD SUCCESS) — xem `plan.md` cho chi tiết + quyết định thiết kế. `GAME_MODE_COOPERATIVE` và `GAME_MODE_TEAM` đều chạy được end-to-end trong `RoomState`; `UPDATE_DRAFT` đã wire thật qua `RoomActor`/`RoomSupervisor` (không chỉ dừng ở đơn vị `RoomState`). `GAME_MODE_INDIVIDUAL` và `shared_resource=LIVES` vẫn bị `DefinitionLoader` từ chối có chủ đích (chưa implement, ngoài phạm vi Task 21/22).
-- **Gap đã biết, không phải thiếu sót của Task 21/22:** `RoomSupervisor.spawnRoom()` (đường join thật) vẫn CHƯA có nguồn `GameDefinition` nào để spawn phòng ở chế độ COOPERATIVE/TEAM — không có định dạng "game-definition-authoring" nào được chốt trong repo này (đã ghi nhận từ Task 11, plan.md P1). Toàn bộ logic Task 21/22 đã test kỹ ở tầng `RoomState`/`RoomActor`/`RoomSupervisor` (đơn vị + dispatch), nhưng chưa test được qua đường join thật end-to-end (Docker/WalkingSkeletonTest) vì gap này — giống hệt tình trạng `missedStepPolicy` từng trải qua giữa Task 11 và Task 17.
-- Tiếp theo: Task 23 (Win Condition Evaluator đầy đủ cho `first_to_finish`/`most_points_when_time_up` + `PenaltyCalculator` cho `shared_resource=LIVES`).
+- **2026-09-09: Task 20 (schema) + Task 21 (cooperative) + Task 22 (team + scoped draft sync) + Task 23 (win condition evaluator, phần lớn) đã XONG**, verify bằng `mvn clean install` toàn reactor (BUILD SUCCESS) — xem `plan.md` cho chi tiết + quyết định thiết kế. `GAME_MODE_COOPERATIVE` và `GAME_MODE_TEAM` đều chạy được end-to-end trong `RoomState` kể cả FSM tự chuyển `FINISHED` + broadcast `GameOver` thật (trước đây `GameOver` chưa từng được gửi ở BẤT KỲ đâu trong codebase, kể cả Phase 1 SOLO — phát hiện phụ khi làm Task 23, đã sửa luôn). `GAME_MODE_INDIVIDUAL` và `shared_resource=LIVES` vẫn bị `DefinitionLoader` từ chối có chủ đích (chưa implement).
+- **Gap đã biết, không phải thiếu sót của Task 21/22/23:** `RoomSupervisor.spawnRoom()` (đường join thật) vẫn CHƯA có nguồn `GameDefinition` nào để spawn phòng ở chế độ COOPERATIVE/TEAM — không có định dạng "game-definition-authoring" nào được chốt trong repo này (đã ghi nhận từ Task 11, plan.md P1). Toàn bộ logic đã test kỹ ở tầng `RoomState`/`RoomActor`/`RoomSupervisor` (đơn vị + dispatch), nhưng chưa test được qua đường join thật end-to-end (Docker/WalkingSkeletonTest) vì gap này.
+- **Gap mới của riêng Task 23 (có chủ ý, ghi trong `WinCondition.MOST_POINTS_WHEN_TIME_UP`'s javadoc):** không có cơ chế timer/deadline nào tự động kết thúc game khi "hết giờ" — logic ĐÁNH GIÁ ai thắng đã đúng (`WinConditionEvaluator` + `RoomState.endGame()`), chỉ thiếu cái TRIGGER tự động; hôm nay chỉ `TeacherCommand.END_GAME` (thủ công) kích hoạt được. `shared_resource=LIVES` vẫn treo vì PO V2.1 không đặc tả số lives ban đầu.
+- Tiếp theo: Task 24 (Kafka Event Publisher cho `lms-worker` — `TeamSubmitExerciseEvent`/`GroupDiscussionEvent`/`VoteGroupNameEvent`).
 
 ## State (machine-readable)
 ```yaml
@@ -48,8 +49,43 @@ progress: "2026-09-09: Task 20+21 xong (xem entry truoc). Task 22 (Team mode + S
   tra lai Green. mvn clean install toan reactor: BUILD SUCCESS - 5 protocol + 86 gateway + 148
   engine (134 cu + 14 moi) + 2 e2e, khong regress. Gap con lai (khong phai thieu sot): RoomSupervisor.
   spawnRoom() van chua co nguon GameDefinition that de spawn phong COOPERATIVE/TEAM qua duong join
-  that - ke thua dung gap da ghi nhan tu Task 11 (P1), khong phai rieng Task 21/22. Tiep theo:
-  Task 23 (WinConditionEvaluator + PenaltyCalculator cho shared_resource=LIVES)."
+  that - ke thua dung gap da ghi nhan tu Task 11 (P1), khong phai rieng Task 21/22.
+  2026-09-09 (tiep, cung phien): Task 23 (WinConditionEvaluator) xong phan lon. WinCondition enum
+  (PROGRESS_COMPLETED/FIRST_TO_FINISH/MOST_POINTS_WHEN_TIME_UP) them vao GameDefinition (additive,
+  14 tham so, 3 constructor telescoping moi de khong pha call site cu). WinConditionEvaluator
+  (scoring/, pure function, khong dung RoomState/actor) - progressCompleted()/firstToFinish() (predicate
+  giong nhau nhung tach ten ro cho tung counter)/highestScorers()/singleHighestScorer() (rong khi
+  hoa, khong tu chon bua 1 nguoi thang). RoomState: applyCooperativeOutcome doi sang goi
+  WinConditionEvaluator that thay vi check inline; them applyTeamOutcome (teamProgress map moi,
+  serialize/restore Hot Snapshot them field, additive o cuoi) cho first_to_finish; endGame() sua
+  lai - CHI tinh nguoi thang moi khi phase CHUA FINISHED (khong ghi de win condition da chot truoc
+  do), tinh most_points_when_time_up qua WinConditionEvaluator.singleHighestScorer tren diem tung
+  doi. Them buildGameOver() dung chung cho moi mode.
+  Phat hien phu quan trong: GameOver CHUA TUNG duoc gui o BAT KY dau trong toan bo codebase (ke
+  ca Phase 1 SOLO) - ton tai trong schema tu Task 1 nhung khong actor nao build/broadcast. Sua
+  luon (khong phai scope creep, day la bug that lo ra khi dung Task 23): RoomActor.onEndGame
+  broadcast GameOver truoc khi dung (CRITICAL, giong STUDENT_KICKED); onSubmitAnswer them nhanh
+  moi - neu submission vua lam FSM tu chuyen FINISHED (progress_completed/first_to_finish) thi
+  CUNG broadcast GameOver + dung actor luon (truoc day nhanh tu-ket-thuc nay KHONG dung actor,
+  ro ri giong dung bug 'RoomSupervisor khong don phong' da sua o review pass P1). Proto them
+  GameOver.winner_id (field 3, additive).
+  Khong tao PenaltyCalculator.java rieng (khac ten file trong plan.md goc) - chi co DUNG 1 luat
+  phat da implement (TIME, 1 dong code tu Task 21), tach class rieng luc nay la abstraction chua
+  co ly do ton tai.
+  Test moi: WinConditionEvaluatorTest (9/9, pure logic) + RoomStateWinConditionTest (7/7, ca 3
+  win condition + test rieng 'khong ghi de reason') + RoomActorTest (+1: GameOver broadcast that
+  qua EndGame, dung TestInbox lam broadcastTarget) + DefinitionLoaderTest (26/26, +3 case
+  win_condition hop le/khong hop le theo mode). Prove-it: tam bo guard 'khong ghi de neu da
+  FINISHED' trong endGame(), xac nhan dung 1/7 test Red truoc khi tra lai Green. mvn clean install
+  toan reactor: BUILD SUCCESS - 5 protocol + 86 gateway + 168 engine (148 cu + 20 moi) + 2 e2e,
+  khong regress.
+  Chua lam (co chu y, ghi trong WinCondition.MOST_POINTS_WHEN_TIME_UP javadoc): trigger tu dong
+  'het gio thi tu ket thuc' - khong co co che timer/deadline nao trong codebase nay tu truoc gio
+  (giong het gap TeacherCommand.NEXT_STEP da ghi tu Task 11). Logic DANH GIA ai thang da dung, chi
+  thieu cai TRIGGER; hom nay chi TeacherCommand.END_GAME (thu cong) kich hoat duoc nhanh nay.
+  shared_resource=LIVES van bi DefinitionLoader tu choi - PO V2.1 khong dac ta so luong lives ban
+  dau, doan mot con so la tu bia quyet dinh nghiep vu (dung tinh than G1a/G1c). Tiep theo: Task 24
+  (Kafka Event Publisher cho lms-worker)."
 dev_selftest: pending
 qc_status: pending
 trace: pending

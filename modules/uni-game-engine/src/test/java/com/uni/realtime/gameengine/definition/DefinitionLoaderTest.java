@@ -285,6 +285,48 @@ class DefinitionLoaderTest {
                 .hasMessageContaining("progress_target");
     }
 
+    // ------------------------- P2 Task 23 (INCLASS-GAME-001) -------------------------
+
+    @Test
+    void should_returnDefinition_when_teamModeUsesMostPointsWhenTimeUp() throws DefinitionRejectedException {
+        GameDefinition base = teamQuiz(twoTeamsOfThree(), 5, ScoreAggregation.SUM_ALL);
+        GameDefinition definition = new GameDefinition(base.steps(), base.startStepId(), base.tickMode(),
+                base.scoringFormula(), base.missedStepPolicy(), base.maxTransitions(), base.gameMode(),
+                base.progressTarget(), base.progressStages(), base.sharedResourceType(),
+                base.sharedResourcePenalty(), base.teamRosters(), base.scoreAggregation(),
+                WinCondition.MOST_POINTS_WHEN_TIME_UP);
+
+        assertThat(loader.load(definition)).isEqualTo(definition);
+    }
+
+    @Test
+    void should_rejectAtLoadTime_when_teamModeUsesProgressCompleted() {
+        GameDefinition base = teamQuiz(twoTeamsOfThree(), 5, ScoreAggregation.SUM_ALL);
+        GameDefinition definition = new GameDefinition(base.steps(), base.startStepId(), base.tickMode(),
+                base.scoringFormula(), base.missedStepPolicy(), base.maxTransitions(), base.gameMode(),
+                base.progressTarget(), base.progressStages(), base.sharedResourceType(),
+                base.sharedResourcePenalty(), base.teamRosters(), base.scoreAggregation(),
+                WinCondition.PROGRESS_COMPLETED);
+
+        assertThatThrownBy(() -> loader.load(definition))
+                .isInstanceOf(DefinitionRejectedException.class)
+                .hasMessageContaining("win_condition");
+    }
+
+    @Test
+    void should_rejectAtLoadTime_when_cooperativeModeUsesFirstToFinish() {
+        GameDefinition base = cooperativeQuiz(10, SharedResourceType.NONE, 0);
+        GameDefinition definition = new GameDefinition(base.steps(), base.startStepId(), base.tickMode(),
+                base.scoringFormula(), base.missedStepPolicy(), base.maxTransitions(), base.gameMode(),
+                base.progressTarget(), base.progressStages(), base.sharedResourceType(),
+                base.sharedResourcePenalty(), base.teamRosters(), base.scoreAggregation(),
+                WinCondition.FIRST_TO_FINISH);
+
+        assertThatThrownBy(() -> loader.load(definition))
+                .isInstanceOf(DefinitionRejectedException.class)
+                .hasMessageContaining("win_condition");
+    }
+
     private static List<com.uni.realtime.protocol.TeamAssignment> twoTeamsOfThree() {
         return List.of(
                 team("A", "student-01", "student-02", "student-03"),
