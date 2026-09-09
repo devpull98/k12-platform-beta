@@ -5,7 +5,7 @@
 > **Nguồn:** [`PO_Require_Game+nhóm_+tập+thể+Inclass.doc`](./PO_Require_Game+nhóm_+tập+thể+Inclass.doc) (yêu cầu gốc từ Product Owner)
 > **Domain:** `engine` (chính) + `protocol` (mở rộng schema dùng chung)
 > **Downstream:**
-> - BDD: [`docs/specs/bdd/INCLASS-GAME-001-cooperative-boss.feature`](../../bdd/INCLASS-GAME-001-cooperative-boss.feature), [`-002-team-speed-race.feature`](../../bdd/INCLASS-GAME-002-team-speed-race.feature), [`-003-lms-worker-sync.feature`](../../bdd/INCLASS-GAME-003-lms-worker-sync.feature)
+> - BDD: [`docs/specs/bdd/INCLASS-GAME-001-cooperative-boss.feature`](../../bdd/INCLASS-GAME-001-cooperative-boss.feature), [`-002-team-speed-race.feature`](../../bdd/INCLASS-GAME-002-team-speed-race.feature)
 > - Tech Design: [`docs/specs/tech-design/INCLASS-GAME-001-inclass-group-game-tech-design.md`](../../tech-design/INCLASS-GAME-001-inclass-group-game-tech-design.md)
 > - Work package: [`docs/work/NOJIRA-uni-p2-inclass-game/`](../../../work/NOJIRA-uni-p2-inclass-game/)
 
@@ -31,11 +31,12 @@ Bổ sung 3 chế độ chơi mới lên trên hạ tầng RoomActor/Gateway đ�
 3. **`individual` (Cá nhân mở rộng):** Vẫn thi cá nhân nhưng thêm mốc tiến trình và tài nguyên
    dùng chung của cả phòng (`shared_resource`: thời gian hoặc mạng sống), trả lời sai bị trừ vào
    tài nguyên chung thay vì chỉ trừ điểm cá nhân.
-4. **Tích hợp `lms-worker`:** Đẩy sự kiện kết quả (`TeamSubmitExerciseEvent`,
-   `GroupDiscussionEvent`, `VoteGroupNameEvent`) qua Kafka `game.events.v1` để hệ thống LMS cũ ghi
-   nhận cúp/thành tích — tái dùng đúng cơ chế cách ly Kafka đã có từ Task 18 (Giai đoạn 1).
 
 ## 3. Ngoài phạm vi (Non-goals)
+
+- **Tích hợp `lms-worker`** (đẩy sự kiện kết quả/thảo luận nhóm/bầu tên nhóm qua Kafka để hệ
+  thống LMS cũ ghi nhận cúp/thành tích) — từng nằm trong mục tiêu bản đầu, nhưng PO đã chốt **hủy
+  hẳn** khỏi phạm vi (2026-09-09). Xem `docs/work/NOJIRA-uni-p2-inclass-game/plan.md` Task 24.
 
 - **Không** đổi hành vi chế độ Solo hiện có của Giai đoạn 1 — 3 chế độ mới là bổ sung, không thay thế.
 - **Không** làm load-test/xác định capacity cho các chế độ mới (PH-1 vẫn ngoài phạm vi, như Giai đoạn 1).
@@ -60,7 +61,6 @@ Bổ sung 3 chế độ chơi mới lên trên hạ tầng RoomActor/Gateway đ�
 | Điều kiện thắng | `WinConditionEvaluator` (`progress_completed`/`first_to_finish`/`most_points_when_time_up`) | Xem Tech Design §2 |
 | Tài nguyên dùng chung | `shared_resource` (`time`/`lives`), phạt khi trả lời sai | Xem Tech Design §2 |
 | Gõ nháp chung nhóm | `DraftUpdate` (`team_id`, debounce 150ms, scoped fan-out) | Xem Tech Design §2-4 |
-| Tích hợp LMS cũ | `GameEventPublisher` → Kafka `game.events.v1` | Xem Tech Design §2 |
 
 Chi tiết đầy đủ (schema `.proto`, file dự kiến sửa, acceptance criteria từng task) nằm ở Tech
 Design và `plan.md` — Product Brief này chỉ giữ vai trò "vì sao làm", không lặp lại "làm thế nào".

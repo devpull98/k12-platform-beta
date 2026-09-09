@@ -171,6 +171,50 @@ parallel_safe: true
     `DockerComposeResyncIT` (1/1 xanh) sau khi sửa `ENGINE_POD_COUNT` — không regress.
 - **Verification Target gốc đã đạt:** `DockerComposeScaleUpIT` GREEN, không sửa assertion.
 
+### Task 22: Nén LZ4 cho hot path Gateway→Client — ✅ XONG (2026-09-09)
+- **Mục tiêu:** Kéo nén LZ4 từ GĐ3 lên GĐ1 theo yêu cầu người dùng ("code LZ4 thật ngay bây giờ,
+  áp dụng cho payload hiện tại GĐ1") — không phải đổi tài liệu, mà code thật trên hot path đang
+  chạy, đúng ngưỡng >150 bytes đã ghi ở `system-architecture.md` §3.6 từ trước.
+- **Điểm tích hợp:** đúng 1 chỗ — `EngineResponseRouter.route()` và
+  `broadcastConnectionDegraded()`, hai nơi DUY NHẤT `GameMessage` được encode thành bytes cho hop
+  Gateway→Client, luôn trước khi `Broadcaster` fan-out zero-copy (`retainedDuplicate()`). Hop nội
+  bộ Gateway↔Engine cố ý KHÔNG nén: Gateway đã re-encode ở đó để bóc `InternalHeader`, nên không
+  có zero-copy xuyên hop nào để giữ, và không phải payload client thấy.
+- `WireCompression` (mới, `uni-websocket-gateway/net`) — wire format 1 byte flag (`0x00`=raw,
+  `0x01`=LZ4) + 4 byte BE original-length nếu nén (LZ4 block format không tự mô tả độ dài), ngưỡng
+  `> 150 bytes` lấy nguyên văn từ tài liệu. `encode(byte[]) → ByteBuf`, `decode(byte[]) → byte[]`.
+- **Dependency thật phát hiện qua `dependency:tree`:** `org.lz4:lz4-java:1.8.0` (khai báo mới,
+  version pin tường minh) và `at.yawk.lz4:lz4-java:1.10.1` (transitive qua `kafka-clients` từ
+  `uni-observability`) cùng cung cấp package `net.jpountz.lz4` — split-package thật trên classpath,
+  chọn jar nào thắng vốn "tình cờ theo thứ tự classpath" trước khi sửa. Sửa bằng `<exclusion>` trên
+  dependency `uni-observability` trong `uni-websocket-gateway/pom.xml`; `dependency:tree` xác nhận
+  chỉ còn đúng 1 jar `org.lz4:lz4-java:1.8.0`.
+- **TDD + prove-it:** viết `WireCompressionTest` (5 case: dưới ngưỡng, đúng ngưỡng 150B, trên
+  ngưỡng 1 byte, payload lớn/lặp phải thực sự nhỏ hơn sau nén, payload lớn/ngẫu nhiên không nén
+  được vẫn round-trip đúng) TRƯỚC — Red xác nhận (`cannot find symbol WireCompression`) rồi mới
+  implement. Sau khi Green, cố tình sửa header original-length sai (`payload.length - 1`) — 2/5
+  test FAIL đúng chỗ (`LZ4Exception: Error decoding offset ...`) trước khi revert về đúng.
+- Wire vào 2 điểm encode thật (`EngineResponseRouter`) + cập nhật 2 điểm decode phía test/e2e
+  (`EngineResponseRouterTest`'s `decode()` helper, `SimulatedStudentClient`'s `channelRead0`) —
+  grep hết mọi `GameMessage.parseFrom` trong repo để xác nhận không còn điểm nào khác cần sửa (các
+  điểm còn lại là hop Client→Gateway inbound hoặc hop nội bộ Gateway↔Engine, không liên quan).
+- **Bug XML thật phát hiện lại (giống Task 21):** comment trong `pom.xml` chứa `--` làm POM
+  non-parseable (`in comment after two dashes`), sửa bằng `;`.
+- **Verification:** `mvn clean install` toàn reactor: BUILD SUCCESS — 7 protocol + 91 gateway
+  (thêm `WireCompressionTest` 5/5) + 175 engine + 4 e2e, 0 failures/errors.
+- **Tài liệu đã cập nhật:** `CLAUDE.md` (bỏ "no LZ4" khỏi Known Phase 1 trade-offs),
+  `system-architecture.md` §3.6, `EdTech_Game_Realtime_Architecture_v3.0.md` (Giai đoạn 3 — phân
+  biệt rõ LZ4 cơ bản đã bật vs "adaptive" HC/tự điều chỉnh ngưỡng vẫn còn ở GĐ3), `_context.md`
+  (Phạm vi đã chốt + state block).
+- **Chưa làm (cố ý, ngoài phạm vi):** LZ4 "adaptive" (HC codec, hoặc tự điều chỉnh ngưỡng theo tải
+  CPU đo thực tế) — vẫn là mục GĐ3 theo tài liệu, chưa có yêu cầu/số đo nào đòi hỏi bây giờ.
+- **Sự cố môi trường phát hiện ngay sau task này (2026-09-09):** một tiến trình nền không rõ
+  nguồn gốc đã cắt xén nghiêm trọng nhiều file trên đĩa (không chỉ mất comment như phát hiện ở P2
+  Task 26 — lần này `EdTech_Game_Realtime_Architecture_v3.0.md` mất từ 1540 xuống 318 dòng), kể cả
+  file vừa sửa xong. Khôi phục bằng `git show HEAD:<path>` (read-only) + Write lại thủ công đúng
+  nội dung + edit của mình, không dùng `git checkout` (bị auto-mode classifier chặn vì là lệnh
+  discard hàng loạt). Xem `_context.md` state block để biết chi tiết.
+
 ---
 
 ## Pre-merge Checklist

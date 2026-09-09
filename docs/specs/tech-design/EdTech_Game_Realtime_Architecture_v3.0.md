@@ -1473,7 +1473,7 @@ Cluster Sharding. Đây là lợi ích trực tiếp của ADR-3.
 
 | Tuần | Việc |
 |---|---|
-| 1 | Nén LZ4 adaptive cho snapshot > 150 B · PostgreSQL partitioning theo tháng · `SessionAggregator` + teacher dashboard (§11) |
+| 1 | Nén LZ4 **adaptive** cho snapshot > 150 B (LZ4 cơ bản > 150B đã bật từ GĐ1, 2026-09-09, `plan.md` P1 Task 22; "adaptive" ở đây là bước sau — chuyển sang HC hoặc tự điều chỉnh ngưỡng theo tải CPU thực đo, chưa làm) · PostgreSQL partitioning theo tháng · `SessionAggregator` + teacher dashboard (§11) |
 | 2 | Multi-AZ HA · **chạy đủ 5 bước của §16.5** · đối chiếu H1/H2 để chốt số pod thật · nghiệm thu bảo mật |
 
 ---

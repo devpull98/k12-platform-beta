@@ -1,6 +1,7 @@
 package com.uni.realtime.e2e.support;
 
 import com.uni.realtime.websocketgateway.net.GatewayPipeline;
+import com.uni.realtime.websocketgateway.net.WireCompression;
 import com.uni.realtime.protocol.GameMessage;
 import com.uni.realtime.protocol.JoinRoom;
 import com.uni.realtime.protocol.MessageType;
@@ -260,7 +261,8 @@ public final class SimulatedStudentClient {
                             @Override
                             protected void channelRead0(ChannelHandlerContext ctx, Object msg) throws Exception {
                                 if (msg instanceof BinaryWebSocketFrame frame) {
-                                    received.add(GameMessage.parseFrom(ByteBufUtil.getBytes(frame.content())));
+                                    byte[] wireBytes = ByteBufUtil.getBytes(frame.content());
+                                    received.add(GameMessage.parseFrom(WireCompression.decode(wireBytes)));
                                 }
                             }
 

@@ -32,6 +32,17 @@
         <dependency>
             <groupId>com.uni</groupId>
             <artifactId>uni-observability</artifactId>
+            <exclusions>
+                <!-- kafka-clients pulls in this fork of the same net.jpountz.lz4 package that
+                     org.lz4:lz4-java below also provides; without excluding it here the two
+                     jars split-package on the classpath and which one actually answers
+                     LZ4Factory.fastestInstance() at runtime becomes a classpath-order accident
+                     rather than the pinned 1.8.0 this module was tested against. -->
+                <exclusion>
+                    <groupId>at.yawk.lz4</groupId>
+                    <artifactId>lz4-java</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
         <dependency>
@@ -57,6 +68,17 @@
         <dependency>
             <groupId>io.lettuce</groupId>
             <artifactId>lettuce-core</artifactId>
+        </dependency>
+
+        <!-- P1 (2026-09-09): WireCompression's LZ4 block codec (tech-design.md SS3.6; compress
+             an outbound client frame when > 150 bytes). Same library Kafka already uses for its
+             own compression codecs (org.lz4:lz4-java, Java package net.jpountz.lz4 unchanged
+             across the groupId rename); version pinned explicitly since nothing in this module
+             already manages it transitively the way Netty/lettuce are via the parent BOM. -->
+        <dependency>
+            <groupId>org.lz4</groupId>
+            <artifactId>lz4-java</artifactId>
+            <version>1.8.0</version>
         </dependency>
     </dependencies>
 

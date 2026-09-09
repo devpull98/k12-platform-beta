@@ -20,7 +20,10 @@ Giai đoạn 2 bổ sung các chế độ chơi tương tác nhóm và tập th�
 1. **Chế độ Tập thể (`cooperative`):** 12 học sinh cùng nhau đóng góp đáp án đúng để hoàn thành thanh tiến trình chung (`progress_meter`), hạ gục Boss (ví dụ: Boss Rồng Số Học).
 2. **Chế độ Chia nhóm (`team`):** Chia phòng 12 học sinh thành 2–4 nhóm thi đấu tốc độ (`first_to_finish`) hoặc tổng điểm (`sum_all`), có hỗ trợ đồng bộ bản nháp gõ chung (`UPDATE_DRAFT`).
 3. **Chế độ Cá nhân Mở rộng (`individual`):** Mở rộng tính năng cá nhân kèm theo các mốc tiến trình và tài nguyên dùng chung (`shared_resource`: thời gian/mạng).
-4. **Tích hợp `lms-worker`:** Đẩy sự kiện kết quả thi đấu, thảo luận nhóm, bầu chọn tên nhóm qua Kafka `game.events.v1` để hệ thống cũ ghi nhận cúp và thành tích.
+
+> **2026-09-09: mục "Tích hợp `lms-worker`" (Task 24) đã bị PO chốt BỎ hẳn** — không còn trong
+> phạm vi Phase 2. Tài liệu/BDD/tài liệu tìm hiểu liên quan đã xoá; xem lịch sử git nếu cần tham
+> khảo lại phát hiện cũ về contract `lms-worker` thật.
 
 ### Risk Assessment
 
@@ -29,7 +32,6 @@ Giai đoạn 2 bổ sung các chế độ chơi tương tác nhóm và tập th�
 | **High Traffic Draft Sync (`UPDATE_DRAFT`) gây sập socket** | Med | **High** | Ép client debounce 150ms. Engine chỉ broadcast draft cho các thành viên trong *cùng nhóm*, không broadcast toàn phòng |
 | **Race Condition khi 2 HS cùng Submit làm vượt mốc 100% Progress** | Med | Med | `RoomActor` xử lý đơn luồng sequential. Dùng `AtomicInteger` / State check để đảm bảo chỉ trigger `GameOver` đúng 1 lần |
 | **Kafka lag làm block Engine thread ở chế độ Team** | Low | **High** | Đã xử lý ở Phase 1: `max.block.ms=0`, đẩy event qua worker thread riêng biệt |
-| **Lệch điểm giữa `lms-worker` và Game Engine** | Low | Med | Game Engine là **Authoritative Source**. Event gửi sang Kafka chứa kết quả cuối cùng đã verified bởi Server |
 
 ---
 
@@ -86,45 +88,12 @@ Giai đoạn 2 bổ sung các chế độ chơi tương tác nhóm và tập th�
   - **`shared_resource=LIVES`** vẫn bị `DefinitionLoader` từ chối — PO V2.1 không đặc tả số "lives ban đầu", đoán một con số là bịa quyết định nghiệp vụ (đúng tinh thần G1a/G1c).
 - **Verification:** `WinConditionEvaluatorTest` (9/9 case mới, pure logic) + `RoomStateWinConditionTest` (7/7 case mới, cả 3 win condition + không ghi đè reason) + `RoomActorTest` (10/10, +1 case: `GameOver` broadcast thật qua `EndGame`) + `DefinitionLoaderTest` (26/26, +3 case win_condition). Prove-it: tạm bỏ guard "không ghi đè nếu đã FINISHED" trong `endGame()`, xác nhận đúng 1/7 test Red trước khi trả lại Green. `mvn clean install` toàn reactor: BUILD SUCCESS — 5 protocol + 86 gateway + 168 engine (148 cũ + 20 mới) + 2 e2e, không regress.
 
-### Task 24: Tích hợp Kafka Event Publisher với `lms-worker` — ⛔ DỪNG LẠI, chỉ ghi nhận phát hiện (2026-09-09)
-- **Mô tả gốc:** Phát `TeamSubmitExerciseEvent`, `GroupDiscussionEvent`, `VoteGroupNameEvent` sang Kafka topic `game.events.v1`.
-- **File:** `modules/uni-game-engine/.../events/GameEventPublisher.java`
-- **Acceptance Criteria gốc:**
-  - [ ] Payload JSON/Protobuf đúng contract mà `SubmitExerciseListener` và `ActiveGroupDiscussionListener` của `lms-worker` mong đợi
-
-- **Đã đọc code thật của `lms-worker`** (người dùng cung cấp đường dẫn cục bộ:
-  `D:\Educa\k12-backend-java\k12-lms-service\lms-worker\src\main\java\vn\edupiaclass\lms\worker\listener\event\group_discussion\`)
-  — 4 listener (`SubmitExerciseListener`, `ActiveGroupDiscussionListener`, `VoteGroupNameListener`,
-  `ChatDiscussionRankListener`) + DTO (`TeamScoreDto`, `GroupMessageDto`, `VoteInput`) +
-  `ResultExerciseWorker`. **3 giả định trong mô tả/BDD gốc của Task 24 đều SAI so với hệ thống
-  thật:**
-
-  | Giả định trong BDD/Task 24 | Thực tế trong code `lms-worker` |
-  |---|---|
-  | Topic `game.events.v1` | `SubmitExerciseListener` nghe **`team-submit-exercise-response`**; `VoteGroupNameListener`/`ActiveGroupDiscussionListener`/`ChatDiscussionRankListener` đều nghe **`save-message-queue`** (queue broadcast chung của hệ thống socket cũ, không phải topic riêng cho game event) |
-  | "Dạng Protobuf/JSON" | Cả hai đều nhận **String JSON thuần** (`ObjectMapper.readValue(data, TeamScoreDto.class)` / `GroupMessageDto.class`) — không có đường Protobuf nào |
-  | `GameEventPublisher` (Task 18) đã sẵn sàng tái dùng | `GameEventPublisher`/`KafkaGameEventSink` hiện tại (Task 18) chỉ gửi **protobuf bytes** (`AnswerAck.toByteArray()`) sang `game.events.v1` — khác hoàn toàn topic + format cần cho lms-worker, cần đường publish JSON riêng (không tái dùng thẳng được) |
-
-- **Gap dữ liệu — lý do chính khiến task này KHÔNG thể code ngay được:** `TeamScoreDto` thật đòi
-  `profile_id`, `exercise_id`, `classroom_id`, `session_parent_id` (số nguyên, thuộc domain
-  LMS/CMS cũ). `VoteGroupNameListener` đòi thêm `payload.vote.teamNameId` (chọn 1 trong các tên đề
-  xuất sẵn) và `groupId` dạng `"{sessionParentId}-{classroomId}"`. **`uni-realtime` hiện không có
-  bất kỳ trường nào trong số này** — `JoinTokenClaims` (`modules/uni-websocket-gateway/.../auth/JoinTokenClaims.java`)
-  chỉ có `studentId`, `roomId`, `sessionId` (đều là String), không có ID số nguyên LMS nào. Đây
-  không phải "thêm 1 Kafka event" đơn thuần — thiếu cả một đường định danh LMS chưa từng chảy vào
-  `uni-realtime`, đòi hỏi mở rộng ở tầng join-token/xác thực (ngoài phạm vi module `uni-game-engine`
-  mà Task 24 khoanh vùng).
-- **Tính năng "vote tên nhóm" chưa tồn tại trong schema uni-realtime:** `VoteGroupNameListener`
-  cần chọn giữa NHIỀU tên đội đề xuất sẵn (`teamNameId`); `TeamAssignment.team_name` hiện tại
-  (Task 20/22) chỉ là 1 tên cố định/đội, không có cơ chế đề xuất + vote nào. `GroupDiscussionEvent`
-  (nhắc trong mô tả gốc) và `ActiveGroupDiscussionListener` cũng không khớp trực tiếp với bất kỳ
-  luồng nào Engine hiện có — listener đó được kích hoạt bởi 1 flow "bắt đầu thảo luận nhóm" hoàn
-  toàn khác (không phải do `GameOver`).
-- **Quyết định (người dùng, 2026-09-09):** dừng Task 24 lại ở bước ghi nhận phát hiện, KHÔNG viết
-  code Kafka event nào lúc này — tránh code "trông như tích hợp thật" nhưng thực chất sai topic/
-  format/thiếu dữ liệu, sẽ âm thầm không hoạt động khi đấu nối với `lms-worker` thật. Cần quyết
-  định rõ nguồn cho `profile_id`/`exercise_id`/`classroom_id`/`session_parent_id` (mở rộng
-  `JoinTokenClaims`? một service khác cung cấp?) trước khi mở lại task này.
+### Task 24: Tích hợp Kafka Event Publisher với `lms-worker` — ❌ HỦY (2026-09-09, quyết định PO)
+- Task này từng dừng ở bước ghi nhận phát hiện (contract `lms-worker` thật khác BDD/mô tả gốc —
+  sai topic, sai format, thiếu ID định danh LMS). PO sau đó chốt **bỏ hẳn** tích hợp `lms-worker`
+  khỏi phạm vi Phase 2 — không chỉ hoãn. Tài liệu chi tiết phát hiện cũ + BDD feature liên quan đã
+  xoá khỏi repo theo yêu cầu; xem lịch sử git (`git log -- docs/specs/bdd/INCLASS-GAME-003-lms-worker-sync.feature`)
+  nếu cần tra lại.
 
 ### Task 25: Unit Tests & RoomActor FSM Tests — ✅ XONG (2026-09-09)
 - **Mô tả:** Viết Unit Test phủ 100% logic tính tiến trình, phân nhóm, và phạt tài nguyên.
@@ -144,7 +113,7 @@ Giai đoạn 2 bổ sung các chế độ chơi tương tác nhóm và tập th�
 - **2 kịch bản BDD được cover thật (không phải giả định):**
   1. `INCLASS-GAME-001-cooperative-boss.feature`: 12 học sinh join thật, 3 vòng câu hỏi (3+4+3 học sinh trả lời đúng), xác nhận `progress_percentage`/`stage_index` đúng qua từng mốc (30%/70%/100%), `GameOver` (`reason=progress_completed`, `winner_id` rỗng) tới CẢ học sinh chưa từng trả lời câu nào (chứng minh broadcast toàn phòng, không chỉ người nộp bài).
   2. `INCLASS-GAME-002-team-speed-race.feature`: `UPDATE_DRAFT` chỉ tới đồng đội (Team B không bao giờ nhận được draft của Team A — assert bằng `assertNoMoreMessagesFor`), `first_to_finish` khi Team A đạt `progress_target` trước, `GameOver.winner_id="A"` tới TOÀN BỘ 4 đội (không chỉ đội thắng).
-- **`INCLASS-GAME-003-lms-worker-sync.feature` KHÔNG được cover** — Task 24 đã dừng ở bước ghi nhận phát hiện, không có producer nào để test.
+- Kịch bản BDD thứ 3 (`lms-worker` sync) không còn tồn tại — Task 24 đã bị PO hủy hẳn khỏi phạm vi (xem ghi chú ở đầu file).
 - **Bài học từ debug (đáng ghi lại):** lần chạy đầu tiên của kịch bản team bị Red không xác định (không phải mỗi lần) — điều tra bằng debug print xác nhận cả 2 `ANSWER_ACK` đều `accepted=true`, nghĩa là logic Engine đúng 100%; nguyên nhân là **race điều kiện thời gian trong chính test** (gửi câu trả lời thứ 2 ngay sau câu 1 mà không đợi ACK, đôi khi khiến việc chờ `GameOver` timeout trước khi message kịp tới). Sửa bằng cách đợi `ANSWER_ACK` của MỖI lần nộp bài trước khi tiếp tục — chạy lại 3/3 lần liên tiếp đều xanh sau khi sửa.
 - **Verification:** `mvn clean install` toàn reactor: BUILD SUCCESS — 5 protocol + 86 gateway + 175 engine + **4 e2e** (2 cũ + 2 mới). Chạy riêng `InclassGroupGameE2ETest` 3 lần liên tiếp: 3/3 xanh, không flaky.
 

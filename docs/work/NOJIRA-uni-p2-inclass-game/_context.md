@@ -15,7 +15,7 @@
 - **BDD Feature Specifications:**
   - [`docs/specs/bdd/INCLASS-GAME-001-cooperative-boss.feature`](../../specs/bdd/INCLASS-GAME-001-cooperative-boss.feature)
   - [`docs/specs/bdd/INCLASS-GAME-002-team-speed-race.feature`](../../specs/bdd/INCLASS-GAME-002-team-speed-race.feature)
-  - [`docs/specs/bdd/INCLASS-GAME-003-lms-worker-sync.feature`](../../specs/bdd/INCLASS-GAME-003-lms-worker-sync.feature)
+  - ~~`INCLASS-GAME-003-lms-worker-sync.feature`~~ — xoá 2026-09-09, tích hợp `lms-worker` bị PO hủy hẳn (Task 24)
 - **Implementation Plan:** [`plan.md`](./plan.md)
 
 ---
@@ -25,18 +25,16 @@
 - **2026-09-09: Task 20 (schema) + Task 21 (cooperative) + Task 22 (team + scoped draft sync) + Task 23 (win condition evaluator, phần lớn) đã XONG**, verify bằng `mvn clean install` toàn reactor (BUILD SUCCESS) — xem `plan.md` cho chi tiết + quyết định thiết kế. `GAME_MODE_COOPERATIVE` và `GAME_MODE_TEAM` đều chạy được end-to-end trong `RoomState` kể cả FSM tự chuyển `FINISHED` + broadcast `GameOver` thật (trước đây `GameOver` chưa từng được gửi ở BẤT KỲ đâu trong codebase, kể cả Phase 1 SOLO — phát hiện phụ khi làm Task 23, đã sửa luôn). `GAME_MODE_INDIVIDUAL` và `shared_resource=LIVES` vẫn bị `DefinitionLoader` từ chối có chủ đích (chưa implement).
 - **Gap đã biết, không phải thiếu sót của Task 21/22/23:** `RoomSupervisor.spawnRoom()` (đường join thật) vẫn CHƯA có nguồn `GameDefinition` nào để spawn phòng ở chế độ COOPERATIVE/TEAM — không có định dạng "game-definition-authoring" nào được chốt trong repo này (đã ghi nhận từ Task 11, plan.md P1). Toàn bộ logic đã test kỹ ở tầng `RoomState`/`RoomActor`/`RoomSupervisor` (đơn vị + dispatch), nhưng chưa test được qua đường join thật end-to-end (Docker/WalkingSkeletonTest) vì gap này.
 - **Gap mới của riêng Task 23 (có chủ ý, ghi trong `WinCondition.MOST_POINTS_WHEN_TIME_UP`'s javadoc):** không có cơ chế timer/deadline nào tự động kết thúc game khi "hết giờ" — logic ĐÁNH GIÁ ai thắng đã đúng (`WinConditionEvaluator` + `RoomState.endGame()`), chỉ thiếu cái TRIGGER tự động; hôm nay chỉ `TeacherCommand.END_GAME` (thủ công) kích hoạt được. `shared_resource=LIVES` vẫn treo vì PO V2.1 không đặc tả số lives ban đầu.
-- **⛔ 2026-09-09: Task 24 DỪNG LẠI ở bước ghi nhận phát hiện (quyết định người dùng), không code.** Đọc code thật `lms-worker` (đường dẫn cục bộ người dùng cung cấp:
-  `D:\Educa\k12-backend-java\k12-lms-service\lms-worker\.../listener/event/group_discussion\`) lộ ra
-  3 giả định sai trong BDD/mô tả Task 24 gốc (topic thật `team-submit-exercise-response`/
-  `save-message-queue`, không phải `game.events.v1`; JSON thuần, không Protobuf) **và** một gap dữ
-  liệu chặn hẳn việc code: `TeamScoreDto`/`VoteInput` cần `profile_id`/`exercise_id`/`classroom_id`/
-  `session_parent_id` (LMS domain, số nguyên) mà `uni-realtime` không có nguồn nào — `JoinTokenClaims`
-  chỉ có `studentId`/`roomId`/`sessionId` (String). Chi tiết đầy đủ ở `plan.md` Task 24. Cần quyết
-  định nguồn cho các ID này (mở rộng `JoinTokenClaims`? service khác cấp?) trước khi mở lại task.
+- **❌ 2026-09-09: Task 24 (tích hợp `lms-worker`) đã bị PO chốt HỦY hẳn khỏi phạm vi Phase 2** —
+  không còn là "tạm dừng chờ nguồn ID LMS" nữa. Tài liệu phát hiện chi tiết cũ (contract `lms-worker`
+  thật khác BDD/mô tả gốc) + BDD feature `INCLASS-GAME-003-lms-worker-sync.feature` đã xoá khỏi
+  repo theo yêu cầu; xem lịch sử git nếu cần tra lại.
 - **2026-09-09: Task 25 (Unit Test & RoomActor FSM Tests) đã XONG.** Thêm `RoomActor.create()` overload mới (master constructor mang toàn bộ config cooperative/team) + `CooperativeRoomActorTest`/`TeamRoomActorTest` (actor-level, dùng `BehaviorTestKit`, xác nhận qua `RoomActor` thật chứ không chỉ `RoomState` đơn lẻ) — xem `plan.md` chi tiết. `RoomSupervisor.spawnRoom()` vẫn KHÔNG gọi overload mới này (vẫn thiếu nguồn `GameDefinition` thật, gap Task 11 chưa đổi).
-- **2026-09-09: Task 26 (E2E) đã XONG — viết JUnit5 thật (không phải Cucumber, theo quyết định người dùng).** `InclassGroupGameE2ETest` (2 test, 12 client WebSocket thật/mỗi test) cover 2/3 kịch bản BDD (cooperative-boss + team-speed-race qua Gateway/Engine thật). Gap chặn E2E COOPERATIVE/TEAM đã đóng bằng hook mới `RoomSupervisor.SpawnConfiguredRoom` (cùng tinh thần `GetRoomActor`). `INCLASS-GAME-003-lms-worker-sync.feature` không cover được (Task 24 vẫn dừng).
+- **2026-09-09: Task 26 (E2E) đã XONG — viết JUnit5 thật (không phải Cucumber, theo quyết định người dùng).** `InclassGroupGameE2ETest` (2 test, 12 client WebSocket thật/mỗi test) cover 2 kịch bản BDD còn lại (cooperative-boss + team-speed-race qua Gateway/Engine thật) — kịch bản thứ 3 (`lms-worker` sync) không còn tồn tại (Task 24 đã bị PO hủy). Gap chặn E2E COOPERATIVE/TEAM đã đóng bằng hook mới `RoomSupervisor.SpawnConfiguredRoom` (cùng tinh thần `GetRoomActor`).
 - **⚠️ Phát hiện môi trường (2026-09-09, ngoài phạm vi task, người dùng đã xác nhận bỏ qua):** trong lúc làm Task 26, phát hiện một tiến trình KHÔNG rõ nguồn gốc đang xoá javadoc/comment khỏi rất nhiều file `.java` trên đĩa (73 file bị đổi, gồm cả file từ Task 1-18 không hề bị đụng tới trong phiên này) — không phải do git (không có filter/hook nào khớp), có vẻ là 1 IDE plugin/file watcher trên máy người dùng. Bản đã commit trước đó vẫn nguyên vẹn, nhưng commit Task 26 (xem git log) vô tình chốt lại 1 bản `RoomActor.java` đã mất một phần javadoc cũ (class-level + vài chỗ khác) vì lúc kiểm tra trước khi commit chỉ soát phần MỚI thêm, không soát toàn file. Người dùng xác nhận không cần khôi phục, tiếp tục bình thường — ghi lại đây để biết nguyên nhân nếu sau này thấy mất tài liệu ở các file khác.
-- **Toàn bộ Phase 2 (Task 20-23, 25, 26) đã XONG.** Task 24 dừng ở ghi nhận phát hiện (chờ quyết định nguồn ID LMS). Kế tiếp không còn task nào trong `plan.md` — cần quyết định: mở lại Task 24 (nếu có nguồn ID), hay coi Phase 2 hoàn tất ở mức hiện tại.
+- **2026-09-09: Nén LZ4 (P1 Task 22) kéo lên GĐ1 theo yêu cầu người dùng** — không thuộc Phase 2, xem `docs/work/NOJIRA-uni-p1-realtime-core/plan.md` Task 22.
+- **2026-09-09: Task 24 (`lms-worker`) bị PO chốt HỦY hẳn** — không còn treo trong `plan.md`, tài liệu/BDD liên quan đã xoá.
+- **Toàn bộ Phase 2 (Task 20-23, 25, 26) đã XONG; Task 24 đã hủy.** Không còn task nào mở trong `plan.md` — Phase 2 coi như hoàn tất ở mức hiện tại.
 
 ## State (machine-readable)
 ```yaml
@@ -158,7 +156,31 @@ progress: "2026-09-09: Task 20+21 xong (xem entry truoc). Task 22 (Team mode + S
   Ban da commit truoc do van nguyen ven, nhung commit Task 26 vo tinh chot lai 1 ban RoomActor.java
   da mat mot phan javadoc cu (chi kiem tra phan MOI truoc khi commit, khong soat toan file).
   Nguoi dung xac nhan khong can khoi phuc. Toan bo Phase 2 (Task 20-23, 25, 26) da XONG. Task 24
-  van dung o buoc ghi nhan phat hien, cho quyet dinh nguon ID LMS."
+  van dung o buoc ghi nhan phat hien, cho quyet dinh nguon ID LMS.
+  2026-09-09 (tiep, phien khac - P1 Task 22 LZ4): xem docs/work/NOJIRA-uni-p1-realtime-core/plan.md,
+  khong thuoc Phase 2 nay.
+  2026-09-09 (tiep): PO chot HUY han Task 24 (tich hop lms-worker) khoi pham vi - khong con la
+  'tam dung cho nguon ID' nua. Xoa docs/specs/bdd/INCLASS-GAME-003-lms-worker-sync.feature (toan
+  bo file). Sua cross-reference o: plan.md (xoa muc 4 scope, xoa risk row 'lech diem lms-worker',
+  thay nguyen phan Task 24 bang 1 doan ngan noi HUY, sua dong Task 26 nhac feature -003), _context.md
+  nay (link BDD -003 gach bo, khoi Task 24 rut gon, dong Task 26, dong tong ket Phase 2),
+  system-architecture.md SS10 (xoa row bang 'Tuong thich He thong Cu lms-worker', xoa cau Kafka/
+  lms-worker cuoi kich ban BDD 2, xoa buoc 'Worker Integration' trong workflow dieu SS10.3),
+  INCLASS-GAME-001-inclass-group-game-tech-design.md (xoa bullet + row lms-worker), docs/specs/
+  modules/engine/INCLASS-GAME-001-inclass-group-cooperative-games.md (xoa muc 4 yeu cau + link BDD
+  -003, xoa row 'Tich hop LMS cu' o SS5 phat hien them sau), modules/uni-e2e/.../InclassGroupGameE2ETest.java
+  (sua javadoc, khong nhac feature da xoa nua). KHONG dung code nao trong modules/ tham chieu
+  lms-worker truoc do (da grep xac nhan tu luc Task 24 dung lai - chi co 1 dong comment trong
+  InclassGroupGameE2ETest, da sua). Khong dung file PO_Require...doc goc (van la tai lieu nguon PO
+  cung cap, khong tu sua/xoa).
+  2026-09-09 (tiep, sau khi sua project-context.yaml + chuan bi push): phat hien moi truong nghiem
+  trong hon nhieu so voi lan truoc - tien trinh nen dang XOA/TRUNCATE noi dung file that (khong chi
+  javadoc), vi du EdTech_Game_Realtime_Architecture_v3.0.md 1540->318 dong, note.md 806->43 dong, va
+  anh huong ca file vua sua xong (project-context.yaml bi cat vai giay sau edit). Dung lai truoc khi
+  push, KHONG dung git checkout hang loat (bi auto-mode classifier chan). Nguoi dung xac nhan dung
+  cach khac: git show HEAD:<path> (read-only) lay noi dung sach + tu tay ap lai dung cac edit that
+  su cua minh roi Write de. Chi tiet day du o docs/work/NOJIRA-uni-p1-realtime-core/_context.md
+  (Task 22's state block), vi day la van de xuyen suot ca 2 work package, khong rieng P2."
 dev_selftest: pending
 qc_status: pending
 trace: pending

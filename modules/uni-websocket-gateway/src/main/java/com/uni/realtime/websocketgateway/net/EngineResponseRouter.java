@@ -8,7 +8,6 @@ import com.uni.realtime.protocol.GameMessage;
 import com.uni.realtime.protocol.MessageType;
 import com.uni.realtime.protocol.RoutingStatus;
 import io.netty.buffer.ByteBuf;
-import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelFutureListener;
 import io.netty.handler.codec.http.websocketx.BinaryWebSocketFrame;
 
@@ -47,7 +46,7 @@ public final class EngineResponseRouter {
         // Avoiding it entirely would mean hand-rolling protobuf field removal instead of using
         // the immutable-message API -- not worth it to strip one field.
         GameMessage forClient = message.toBuilder().clearInternal().build();
-        ByteBuf frame = Unpooled.wrappedBuffer(forClient.toByteArray());
+        ByteBuf frame = WireCompression.encode(forClient.toByteArray());
 
         if (message.getType() == MessageType.STUDENT_KICKED) {
             sendToOneStudentAndClose(message.getRoomId(), message.getStudentId(), frame);
@@ -100,7 +99,7 @@ public final class EngineResponseRouter {
                             .setMessage("engine pod connection lost")
                             .setRetryable(true))
                     .build();
-            broadcaster.broadcast(roomId, Unpooled.wrappedBuffer(degraded.toByteArray()), DeliveryClass.BEST_EFFORT);
+            broadcaster.broadcast(roomId, WireCompression.encode(degraded.toByteArray()), DeliveryClass.BEST_EFFORT);
         }
     }
 

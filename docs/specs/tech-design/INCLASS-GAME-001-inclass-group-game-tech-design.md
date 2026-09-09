@@ -14,7 +14,9 @@ Hệ thống `uni-realtime` Phase 1 đã hoàn thiện hạ tầng Core (WebSock
 - **`cooperative` (Đánh Boss Tập thể):** Cả lớp 12 học sinh đóng góp câu trả lời đúng để hoàn thành thanh tiến trình `progress_meter` (ví dụ: Boss Rồng Số Học).
 - **`team` (Chia nhóm thi đấu):** Chia phòng thành 2–4 nhóm thi đấu tốc độ (`first_to_finish`) hoặc tổng điểm (`sum_all`), có tính năng đồng bộ bản nháp gõ chung (`UPDATE_DRAFT`).
 - **`individual` (Cá nhân mở rộng):** Thi đấu cá nhân kèm mốc tiến trình và phạt tài nguyên chung (`shared_resource`).
-- **Tích hợp `lms-worker`:** Đẩy sự kiện qua Kafka `game.events.v1` để dịch vụ cũ ghi nhận cúp và lưu lịch sử bài tập.
+
+> Mục "Tích hợp `lms-worker`" từng ở đây đã bị PO chốt hủy khỏi phạm vi (2026-09-09) — xem
+> `docs/work/NOJIRA-uni-p2-inclass-game/plan.md` Task 24.
 
 ---
 
@@ -27,7 +29,6 @@ Hệ thống `uni-realtime` Phase 1 đã hoàn thiện hạ tầng Core (WebSock
 | **Điều kiện Thắng (`win_condition`):**<br>- `progress_completed`<br>- `first_to_finish`<br>- `most_points_when_time_up` | Modifiers trong `WinConditionEvaluator`. Khi điều kiện thỏa mãn, `RoomActor` đổi FSM sang `FINISHED` và dừng ván game. | `modules/uni-game-engine/.../scoring/WinConditionEvaluator.java` |
 | **Phạt tài nguyên chung (`shared_resource`):**<br>- `time`<br>- `lives` | Cấu hình `shared_resource_type` và `penalty_value`. Trả lời sai trừ trực tiếp `step_deadline_at` hoặc `remaining_lives`. | `modules/uni-game-engine/.../room/RoomState.java` |
 | **Gõ nháp chung nhóm (`UPDATE_DRAFT`):** | Event `UPDATE_DRAFT` với `team_id`. Client debounce 150ms. Engine chỉ broadcast cho 3 thành viên cùng nhóm. | `modules/uni-game-engine/.../room/RoomActor.java` |
-| **Tương thích `lms-worker`:** | Đẩy `TeamSubmitExerciseEvent`, `GroupDiscussionEvent`, `VoteGroupNameEvent` sang Kafka topic `game.events.v1`. | `modules/uni-game-engine/.../events/GameEventPublisher.java` |
 
 ---
 

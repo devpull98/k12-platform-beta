@@ -211,7 +211,8 @@ class EngineResponseRouterTest {
             return null;
         }
         try {
-            return GameMessage.parseFrom(io.netty.buffer.ByteBufUtil.getBytes(frame.content()));
+            byte[] wireBytes = io.netty.buffer.ByteBufUtil.getBytes(frame.content());
+            return GameMessage.parseFrom(WireCompression.decode(wireBytes));
         } finally {
             frame.release();
         }

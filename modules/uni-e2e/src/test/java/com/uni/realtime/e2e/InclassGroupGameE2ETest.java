@@ -46,11 +46,10 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * P2 Task 26: real-socket E2E coverage for the 2 BDD scenarios this repo can actually run today
- * (INCLASS-GAME-001-cooperative-boss.feature, INCLASS-GAME-002-team-speed-race.feature) --
- * INCLASS-GAME-003-lms-worker-sync.feature is NOT covered here, on purpose: plan.md Task 24
- * stopped at documenting findings (real lms-worker topics/format/required LMS ids are a separate,
- * still-open integration question), so there is no producer to exercise.
+ * P2 Task 26: real-socket E2E coverage for the 2 BDD scenarios this repo runs
+ * (INCLASS-GAME-001-cooperative-boss.feature, INCLASS-GAME-002-team-speed-race.feature). A third
+ * scenario covering lms-worker sync (Task 24) is not covered here -- that integration was cut
+ * from Phase 2 scope entirely by PO decision (2026-09-09), not deferred.
  *
  * <p>No Cucumber anywhere in this repo (checked before starting this task) -- per user decision,
  * written as plain JUnit5 real-socket tests, same convention {@link WalkingSkeletonTest} already

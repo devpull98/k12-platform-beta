@@ -267,7 +267,7 @@ Framing kênh nội bộ sử dụng 4-byte big-endian length prefix (`LengthFie
 ### 3.6 Tối ưu Payload
 - **Delta snapshot**: Mặc định chỉ gửi phần dữ liệu thay đổi so với tick trước. Gửi full snapshot khi mới Join, Resync, hoặc chu kỳ N tick.
 - **`student_index`**: Dùng 1 byte (0–11) thay thế cho UUID 16 byte.
-- **Nén LZ4**: Áp dụng khi payload > 150 bytes (dưới ngưỡng này chi phí CPU lớn hơn băng thông tiết kiệm). Chưa bật ở GĐ1.
+- **Nén LZ4**: Áp dụng khi payload > 150 bytes (dưới ngưỡng này chi phí CPU lớn hơn băng thông tiết kiệm). **Đã bật ở GĐ1** (2026-09-09, `plan.md` P1 Task 22) — `WireCompression` (`uni-websocket-gateway`) nén đúng 1 lần tại `EngineResponseRouter`, điểm duy nhất `GameMessage` được encode thành bytes cho hop Gateway→Client, trước khi fan-out zero-copy; hop nội bộ Gateway↔Engine không nén (Gateway đã re-encode ở đó để bóc `InternalHeader` nên không có zero-copy xuyên hop để giữ).
 - **Khoảng cách schema đã biết**: `MessageType` có enum `UPDATE_DRAFT` nhưng chưa có message payload tương ứng trong `oneof`.
 
 ---
@@ -1181,7 +1181,6 @@ Mục này trình bày ví dụ thực tế quy trình chuyển đổi tài li�
 | **Điều kiện Thắng (`win_condition`):**<br>- `progress_completed`: Đạt 100%<br>- `first_to_finish`: Đội đầu tiên chạm 100%<br>- `most_points_when_time_up`: Điểm cao nhất khi hết giờ | Thêm `WinConditionEvaluator` vào `RoomState.evaluateStep()`. Khi thỏa mãn điều kiện, `RoomActor` chuyển FSM sang trạng thái `FINISHED` và dừng ván game. | `modules/uni-game-engine/.../room/RoomState.java`<br>`modules/uni-game-engine/.../scoring/FormulaScoreCalculator.java` |
 | **Tài nguyên dùng chung (`shared_resource`):**<br>- `time`: Trừ thời gian khi sai<br>- `lives`: Trừ số mạng của phòng | Thêm `shared_resource_type` và `penalty_value`. Khi nộp bài sai, `RoomState` trừ trực tiếp vào `step_deadline_at` hoặc `remaining_lives` của nhóm/phòng. | `modules/uni-game-engine/.../room/RoomState.java` |
 | **Tự động hiện nút "Vào chơi" (No Room Code):**<br>- Không cần link hay mã phòng.<br>- Lấy danh tính từ tài khoản Uniclass/CMS | Xác thực `JoinTokenAuthHandler` tại Gateway qua JWT join token một lần (`JoinTokenAuthHandler.java`). Trích xuất `student_id`, `room_id`, `session_id` từ token claim. | `modules/uni-websocket-gateway/.../auth/JoinTokenAuthHandler.java` |
-| **Tương thích Hệ thống Cũ (`lms-worker`):**<br>- Thảo luận nhóm, nộp bài tập nhóm, trao cúp thành tích | `GameEventPublisher` đẩy `GameEvent` bất đồng bộ sang Kafka topic `game.events.v1`. Các listener `lms-worker` (`ActiveGroupDiscussionListener`, `SubmitExerciseListener`) tiêu thụ sự kiện từ Kafka để trao cúp/lưu DB. | `modules/uni-game-engine/.../events/GameEventPublisher.java`<br>`vn.edupiaclass.lms.worker.listener.event.group_discussion.*` |
 
 ---
 
@@ -1217,8 +1216,6 @@ Feature: Chế độ chơi Chia Nhóm thi đấu (Team Mode)
     Then Server RoomActor cộng dồn điểm cho Đội Đỏ và đóng dấu server_received_at chuẩn xác
     And Đội Đỏ hoàn thành tiến trình 100% trước Đội Xanh
     Then Server RoomActor tuyên bố Đội Đỏ thắng cuộc (first_to_finish)
-    And Đẩy sự kiện TeamSubmitExerciseEvent sang Kafka topic game.events.v1
-    And lms-worker (SubmitExerciseListener) nhận sự kiện và trao cúp danh dự cho Đội Đỏ trong DB
 ```
 
 #### 🧪 Kịch bản BDD 3: Khôi Phục Kết Nối Giữa Chừng & Chống Nộp Bài Trùng (Resilience & Deduplication)
@@ -1247,6 +1244,5 @@ Feature: Khôi phục kết nối và Chống nộp trùng dữ liệu
    └─► 3. Ánh xạ vào Codebase hiện tại:
            ├── Protocol: Thêm field vào GameMessage / RoomStateSnapshot (uni-protocol)
            ├── Engine FSM: Bổ sung WinCondition & Progress Calculator vào RoomState (uni-game-engine)
-           ├── Gateway: Giữ nguyên JoinTokenAuthHandler & RouteCache (uni-websocket-gateway)
-           └─► Worker Integration: Đẩy Kafka Event sang lms-worker / SubmitExerciseListener
+           └─► Gateway: Giữ nguyên JoinTokenAuthHandler & RouteCache (uni-websocket-gateway)
 ```

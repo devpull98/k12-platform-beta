@@ -164,10 +164,16 @@ code that passes a naive test and breaks in production.
     this repo yet; see `system-architecture.md` §7.6 and §9.2 Risk 4.
   - The UI still has to show degraded state until both Task 14 and Task 21 are turned on in
     production and verified against real staging, not just Docker-on-one-machine.
-- No `RESYNCING` state, no dashboard fan-in, no LZ4. Valkey Cluster (join-token dedup + Hot
+- No `RESYNCING` state, no dashboard fan-in. Valkey Cluster (join-token dedup + Hot
   Snapshot) and Kafka Cluster (event streaming) **are** in Phase 1 scope, off the hot path —
   see the note above; this used to say "no Redis, no Kafka" before the 2026-09-05 decision
   (and "Redis Cluster" rather than "Valkey Cluster" before the 2026-09-07 Valkey switch).
+  LZ4 **is** also in Phase 1 scope now too (2026-09-09, `plan.md` Task 22, this used to say
+  "no LZ4"): `WireCompression` (`uni-websocket-gateway`) compresses any Gateway→client frame
+  over 150 bytes (`system-architecture.md` §3.6's documented threshold), wired into the single
+  point that turns a `GameMessage` into wire bytes for that hop (`EngineResponseRouter`), before
+  the zero-copy fan-out. Only "adaptive" LZ4 (HC / load-based threshold tuning) is still a
+  Phase 3 item — see `EdTech_Game_Realtime_Architecture_v3.0.md`'s Giai đoạn 3 line.
 - PH-3: the client-side contract (ring buffer, `sequence`, RESYNC) does not exist yet, so
   the "zero data loss" SLA has no basis regardless of server correctness. Do not publish it.
 

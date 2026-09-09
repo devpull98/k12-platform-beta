@@ -18,6 +18,7 @@ domains:
   - engine                  # modules/uni-game-engine  — RoomActor FSM
   - protocol                # modules/uni-protocol — game_message.proto (dùng chung 2 hop)
   - observability           # modules/uni-observability — Prometheus/OTLP/JSON log/alert relay
+  - e2e                     # modules/uni-e2e — real-socket integration/E2E tests (không có main sources)
 
 # --- Infrastructure ---
 # Giai đoạn 1 KHÔNG có datastore trên hot path — không MySQL, không Valkey, không Kafka.

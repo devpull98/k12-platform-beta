@@ -45,8 +45,9 @@
 | FSM `LOBBY → PLAYING → FINISHED` | Tối thiểu để chơi được một ván |
 | **Valkey Cluster (Join token SETNX & Snapshot)** | Hạ tầng có sẵn: chặn join token replay và bảo hiểm Zero Data Loss cho Engine |
 | **Kafka Cluster (Event Streaming)** | Hạ tầng có sẵn: đẩy sự kiện sau trận cho Dashboard và PostgreSQL |
+| **Nén LZ4 (>150B, §3.6)** | 2026-09-09 (Task 22): kéo lên từ GĐ3 theo yêu cầu thật — payload hot-path GĐ1 đã đủ lớn (RoomStateSnapshot/DraftUpdate) để đáng nén ngay, không cần chờ Cluster Sharding |
 
-**Ngoài Giai đoạn 1:** Cluster Sharding đa node + SBR (§9.1) · trạng thái `RESYNCING` đa node tự động · nén LZ4.
+**Ngoài Giai đoạn 1:** Cluster Sharding đa node + SBR (§9.1) · trạng thái `RESYNCING` đa node tự động · LZ4 "adaptive" (HC / tự điều chỉnh ngưỡng theo tải CPU — LZ4 cơ bản đã bật, xem Task 22).
 
 ## Quyết định đã chốt (2026-09-05) — Task 1 không còn bị chặn
 
@@ -503,7 +504,46 @@ progress: "T1, T2, T4, T5, T10 xong. T6 MOT PHAN xong (GatewayPipeline + WS hand
   canh bao van hanh) sang XONG, van giu dung 'ca Task 14 lan Task 21 deu TAT mac dinh production'.
   CHUA lam (co chu y, ngoai pham vi Task 21): DnsHeadlessEnginePodResolver (K8s headless Service,
   multi-A-record that) - cho quyet dinh topology That; room-store van la 1 Valkey instance don,
-  chua phai Cluster."
+  chua phai Cluster.
+  Task 22 (2026-09-09): LZ4 keo tu GD3 len GD1 theo yeu cau nguoi dung ('code that ngay bay gio,
+  ap dung cho payload hien tai GD1'), khong phai chi doi tai lieu. Doc kien truc truoc khi code:
+  system-architecture.md dong 183 (Hot Snapshot < 5KB) + dong 270 (nguong >150B, GD1 chua bat) +
+  EdTech_Game_Realtime_Architecture_v3.0.md dong 276 (GD3 'LZ4 adaptive'). Xac dinh diem tich hop
+  DUY NHAT: EngineResponseRouter.route()/broadcastConnectionDegraded() - noi GameMessage thanh
+  bytes cho hop Gateway->Client (Unpooled.wrappedBuffer(...toByteArray())), truoc khi Broadcaster
+  fan-out zero-copy bang retainedDuplicate(); hop noi bo Gateway<->Engine KHONG nen vi Gateway da
+  re-encode o do de boc InternalHeader, khong co zero-copy xuyen hop de giu. WireCompression moi
+  (uni-websocket-gateway/net) - wire format 1 byte flag (0x00 raw / 0x01 LZ4) + 4 byte BE original
+  length neu nen, nguong >150B dung nguyen van tu tai lieu. TDD: viet WireCompressionTest TRUOC (5
+  case: duoi nguong, dung nguong, tren nguong 1 byte, nen thuc su nho hon voi payload lap, round-
+  trip voi random byte khong nen duoc) roi moi implement - Red xac nhan (khong tim thay class).
+  Prove-it: sua tam original-length header thanh sai (payload.length - 1) sau khi Green, xac nhan
+  2/5 test FAIL dung cho (LZ4Exception decode offset) truoc khi revert ve dung.
+  Dependency that: them org.lz4:lz4-java:1.8.0 vao uni-websocket-gateway/pom.xml. Phat hien
+  split-package that qua dependency:tree - kafka-clients (qua uni-observability) da keo transitive
+  at.yawk.lz4:lz4-java:1.10.1, cung goi net.jpountz.lz4 nhung khac artifact - hai jar cung goi tren
+  classpath lam viec chon jar nao thang thanh 'tinh co theo thu tu classpath' thay vi 1.8.0 da test.
+  Sua bang <exclusion> tren dependency uni-observability trong uni-websocket-gateway/pom.xml -
+  dependency:tree xac nhan chi con dung 1 jar org.lz4:lz4-java:1.8.0.
+  Da wire vao 2 diem encode that trong EngineResponseRouter + cap nhat 2 diem decode phia test/e2e
+  (EngineResponseRouterTest's decode() helper, SimulatedStudentClient's channelRead0) - grep het
+  moi GameMessage.parseFrom trong repo de xac nhan khong con diem nao khac can sua (cac diem con
+  lai la hop Client->Gateway inbound hoac hop noi bo Gateway<->Engine, khong lien quan).
+  Bug XML that phat hien lai (giong Task 21): comment pom.xml chua '--' lam POM non-parseable, sua
+  bang ';'. mvn clean install toan reactor sau khi wire xong: BUILD SUCCESS - 7 protocol + 91
+  gateway (them WireCompressionTest 5/5) + 175 engine + 4 e2e, 0 failures/errors. Tai lieu da cap
+  nhat: CLAUDE.md (bo 'no LZ4' khoi Known Phase 1 trade-offs), system-architecture.md dong 270,
+  EdTech_Game_Realtime_Architecture_v3.0.md dong 276 (phan biet ro LZ4 co ban vs 'adaptive'), file
+  nay (Pham vi da chot).
+  QUAN TRONG - phat hien moi truong nghiem trong (2026-09-09, sau khi hoan tat Task 22): mot tien
+  trinh nen KHONG ro nguon goc dang XOA/TRUNCATE noi dung file that tren dia, khong chi javadoc/
+  comment nhu phat hien o P2 Task 26 - lan nay cat EdTech_Game_Realtime_Architecture_v3.0.md tu
+  1540 xuong 318 dong (mat ~80% noi dung), note.md tu 806 xuong 43 dong, va anh huong ca file vua
+  moi sua xong (project-context.yaml bi cat vai giay sau khi edit). Dung lai KHONG push, khong
+  git checkout (bi auto-mode classifier chan vi la lenh discard hang loat), thay vao do dung git
+  show HEAD:<path> (read-only) de lay noi dung sach roi Write lai file that + tu tay ap lai dung
+  cac edit cua minh - khong dua vao working tree hien tai vi co the bi corrupt bat cu luc nao.
+  Nguoi dung xac nhan lam theo cach nay (khong dung git checkout hang loat)."
 dev_selftest: pending
 qc_status: pending
 trace: pending
