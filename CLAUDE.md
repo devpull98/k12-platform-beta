@@ -23,8 +23,7 @@ for context.
 
 ## Stack
 
-- **Java 25**, Maven multi-module (no wrapper committed; IntelliJ's bundled Maven works —
-  `%LOCALAPPDATA%\Programs\IntelliJ IDEA Ultimate\plugins\maven-plugin\lib\maven3\bin\mvn.cmd`)
+- **Java 25**, Maven multi-module 
 - **Spring Boot 4.1.1** — boots the process and serves `/actuator/*`. It is **not** on the
   packet path in either service.
 - **Netty** — the WebSocket edge (gateway) and the internal frame channel (both sides),
