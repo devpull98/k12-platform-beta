@@ -74,7 +74,7 @@
             "uid": "prometheus-k12"
           },
           "editorMode": "code",
-          "expr": "count(count by (application) (label_replace(up{job!~\".*-monitor\"}, \"application\", \"$1\", \"job\", \"(.*)\") or label_replace(up{job=~\".*-monitor\"}, \"application\", \"$1\", \"job\", \"(.*)-monitor\")))",
+          "expr": "count(count by (application) (label_replace(up{namespace=\"k12\", job!~\".*-monitor\"}, \"application\", \"$1\", \"job\", \"(.*)\") or label_replace(up{namespace=\"k12\", job=~\".*-monitor\"}, \"application\", \"$1\", \"job\", \"(.*)-monitor\")))",
           "legendFormat": "Total Services",
           "range": false,
           "refId": "A"
@@ -140,7 +140,7 @@
             "uid": "prometheus-k12"
           },
           "editorMode": "code",
-          "expr": "count((label_replace(up{job!~\".*-monitor\"}, \"application\", \"$1\", \"job\", \"(.*)\") or label_replace(up{job=~\".*-monitor\"}, \"application\", \"$1\", \"job\", \"(.*)-monitor\")) == 1)",
+          "expr": "count((label_replace(up{namespace=\"k12\", job!~\".*-monitor\"}, \"application\", \"$1\", \"job\", \"(.*)\") or label_replace(up{namespace=\"k12\", job=~\".*-monitor\"}, \"application\", \"$1\", \"job\", \"(.*)-monitor\")) == 1)",
           "legendFormat": "Healthy Instances",
           "range": false,
           "refId": "A"
@@ -738,7 +738,7 @@
               },
               {
                 "id": "noValue",
-                "value": "N/A (chờ BUG-A: NOJIRA-platform-mongodb-driver-event-metrics-gap)"
+                "value": "N/A (không dùng MongoDB)"
               }
             ]
           }
@@ -770,7 +770,7 @@
             "uid": "prometheus-k12"
           },
           "editorMode": "code",
-          "expr": "min by (application) (label_replace(up{job!~\".*-monitor\"}, \"application\", \"$1\", \"job\", \"(.*)\") or label_replace(up{job=~\".*-monitor\"}, \"application\", \"$1\", \"job\", \"(.*)-monitor\"))",
+          "expr": "min by (application) (label_replace(up{namespace=\"k12\", job!~\".*-monitor\"}, \"application\", \"$1\", \"job\", \"(.*)\") or label_replace(up{namespace=\"k12\", job=~\".*-monitor\"}, \"application\", \"$1\", \"job\", \"(.*)-monitor\"))",
           "format": "table",
           "instant": true,
           "legendFormat": "Status",
@@ -878,7 +878,7 @@
             "uid": "prometheus-k12"
           },
           "editorMode": "code",
-          "expr": "sum(rate(redis_command_errors_total[$__rate_interval])) by (application) or sum(rate(redis_command_seconds_count[$__rate_interval])) by (application) * 0",
+          "expr": "sum(rate(redis_command_errors_total[$__rate_interval])) by (application) or sum(rate(redis_command_seconds_seconds_count[$__rate_interval])) by (application) * 0",
           "format": "table",
           "instant": true,
           "legendFormat": "RedisErrors",
@@ -1081,7 +1081,7 @@
       ],
       "title": "All Services Stability Matrix (Real-time)",
       "type": "table",
-      "description": "Status dùng job (đã strip suffix -monitor) làm application — hiện đúng cả service đang DOWN (metric khác sẽ trống với hàng đó, không phải bug). QUAN TRỌNG: 'Scrape Status (UP/DOWN)' chỉ nghĩa là Prometheus scrape /actuator/prometheus thành công (process còn sống) — KHÔNG phải health thật của service. Job/dependency lỗi (DB, Kafka, Rabbit, Redis, hoặc @Scheduled job fail âm thầm) vẫn hiện 🟢 UP nếu app process/actuator endpoint còn phản hồi. Luôn đọc kèm các cột 5xx Error Rate / MySQL Timeout / MongoDB Failed / Redis Errors / Kafka Producer Errors bên cạnh, đừng chỉ nhìn cột Status. Áp dụng cho mọi service Java trên dashboard này, không riêng service nào. 'Real Health (UP/DOWN)' đọc từ metric app_health_status (Gauge bind từ /actuator/health aggregate, source: shared lib k12-logging, bean k12HealthMetricsBinder) — phản ánh health thật (bao gồm DB/Kafka/Rabbit/Redis/Mongo), không chỉ scrape reachable. 'Scheduler Job Failures (rate)' đọc từ scheduler_job_failures_total (Counter tăng khi @Scheduled job throw exception không bắt). Cả 2 metric này CHỈ có ở service đã bật tương ứng @EnableK12Metrics / TaskScheduler.setErrorHandler — service chưa áp dụng sẽ hiện 'N/A' ở 2 cột này (không phải lỗi dashboard, là chưa rollout xong cho service đó). 'Redis Errors (rate)' đã đổi sang metric redis_command_errors_total (Counter, AOP RedisMetricsAspect quanh RedisService trong shared lib k12-redis) — KHÔNG còn dùng lettuce_seconds_count vì hệ thống dùng JedisCluster/Redisson, không phải Lettuce. 'Aerospike Connected' đọc từ aerospike_client_connected (Gauge, shared lib k12-logging, bean aerospikeMetricsBinder) — service không dùng Aerospike sẽ hiện 'N/A'. 'MongoDB Failed (rate)' đã sửa từ mongodb_driver_pool_checkoutfailed_total (KHÔNG phải metric có thật — verify qua Prometheus API confirm không tồn tại) sang mongodb_driver_commands_seconds_count{status!=\"SUCCESS\"} (metric thật từ MongoMetricsCommandListener, đã confirm có data thật trên cluster). 'Mongo Pool Wait Queue' đọc mongodb_driver_pool_waitqueuesize — số thread đang phải đợi vì hết connection trong pool, đây là tín hiệu pool exhaustion THẬT (khác với 'MongoDB Failed' là lỗi command). Lưu ý: mongodb_driver_pool_size là số connection đang mở thật (tự giãn theo tải), KHÔNG phải giới hạn max cấu hình — đừng suy ra % utilization từ checkedout/size, chỉ cần theo dõi waitqueuesize > 0 kéo dài là đủ. 'Mongo Heartbeat Failures (rate)' đọc mongodb_driver_heartbeat_failures_total — metric CHƯA deploy (chờ team platform, xem docs/work/NOJIRA-platform-mongodb-driver-event-metrics-gap bên repo k12-backend-java, BUG-A), sẽ tự có data khi deploy xong, không cần sửa dashboard thêm. Đây là timeout THẬT của thread giám sát topology (ServerMonitorListener), khác với 'MongoDB Failed' (đi qua CommandListener, code path khác — 2 nguồn lỗi mongodb riêng biệt)."
+      "description": "'Scrape Status' chỉ là Prometheus scrape thành công — KHÔNG phải health thật (dependency lỗi vẫn hiện 🟢 UP nếu app còn phản hồi). Dùng kèm 'Real Health' (app_health_status, tổng hợp DB/Kafka/Redis/Mongo) và các cột lỗi bên cạnh (5xx/MySQL/Redis/Kafka/Mongo) để đánh giá đúng. N/A ở một cột nghĩa là service không dùng dependency đó hoặc chưa rollout metric — không phải lỗi dashboard."
     },
     {
       "collapsed": false,
@@ -1786,13 +1786,14 @@
             "uid": "prometheus-k12"
           },
           "editorMode": "code",
-          "expr": "sum(rate(mongodb_driver_pool_checkoutfailed_total[$__rate_interval])) by (application)",
+          "expr": "sum(rate(mongodb_driver_pool_checkout_failed_total[$__rate_interval])) by (application)",
           "legendFormat": "{{application}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "MongoDB — Checkout Failed (rate) per Service",
+      "description": "Chờ BUG-B (NOJIRA-platform-mongodb-driver-event-metrics-gap) — mongodb_driver_pool_checkout_failed_total chưa có data trên cluster.",
+      "title": "MongoDB — Checkout Failed (rate) per Service — pending BUG-B",
       "type": "timeseries"
     },
     {
@@ -1882,7 +1883,7 @@
             "uid": "prometheus-k12"
           },
           "editorMode": "code",
-          "expr": "sum(rate(lettuce_seconds_count{error!=\"none\"}[$__rate_interval])) by (application) or sum(rate(lettuce_seconds_count[$__rate_interval])) by (application) * 0",
+          "expr": "sum(rate(redis_command_errors_total[$__rate_interval])) by (application) or sum(rate(redis_command_seconds_seconds_count[$__rate_interval])) by (application) * 0",
           "legendFormat": "{{application}}",
           "range": true,
           "refId": "A"
@@ -2195,7 +2196,7 @@
       ],
       "title": "Total Process Resident Memory / RSS",
       "type": "stat",
-      "description": "cAdvisor container_memory_rss — app-level process_memory_rss_bytes KHÔNG tồn tại (Micrometer 1.7/Boot 2.5.4 chưa có ProcessMemoryMetrics binder), nên lấy RSS ở tầng container thay thế."
+      "description": "container_memory_rss (cAdvisor) — app-level RSS binder chưa có nên lấy ở tầng container thay thế."
     },
     {
       "datasource": {
@@ -2249,7 +2250,7 @@
             "uid": "prometheus-k12"
           },
           "editorMode": "code",
-          "expr": "sum(jvm_buffer_memory_used_bytes{id=\"direct\"})",
+          "expr": "sum(jvm_buffer_memory_used_bytes{namespace=\"k12\", id=\"direct\"})",
           "legendFormat": "Total Direct Buffer Memory Used",
           "range": false,
           "refId": "A"
@@ -2311,7 +2312,7 @@
             "uid": "prometheus-k12"
           },
           "editorMode": "code",
-          "expr": "sum(jvm_buffer_count_buffers{id=\"direct\"})",
+          "expr": "sum(jvm_buffer_count_buffers{namespace=\"k12\", id=\"direct\"})",
           "legendFormat": "Total Direct Buffer Count",
           "range": false,
           "refId": "A"

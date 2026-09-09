@@ -245,7 +245,7 @@
         "type": "prometheus",
         "uid": "prometheus-k12"
       },
-      "description": "Top 10 busiest endpoints by request rate. A table (not a line chart) so this stays readable no matter how many routes the app grows to — topk caps it at 10 rows regardless of endpoint count.",
+      "description": "Bảng thay vì line chart để luôn đọc được dù app có bao nhiêu route — topk giới hạn cứng 10 hàng.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -996,126 +996,6 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 118
-      },
-      "id": 102,
-      "title": "Resilience4j",
-      "type": "row"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus-k12"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 12,
-        "x": 0,
-        "y": 119
-      },
-      "id": 6,
-      "options": {
-        "legend": {
-          "calcs": [
-            "last"
-          ],
-          "displayMode": "table",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi"
-        }
-      },
-      "targets": [
-        {
-          "expr": "resilience4j_circuitbreaker_state{application=\"$application\"}",
-          "legendFormat": "{{name}} state",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus-k12"
-          }
-        },
-        {
-          "expr": "rate(resilience4j_circuitbreaker_calls_seconds_count{application=\"$application\",kind=\"failed\"}[$__rate_interval])",
-          "legendFormat": "{{name}} failure rate",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus-k12"
-          }
-        }
-      ],
-      "title": "Circuit Breaker",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus-k12"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 12,
-        "x": 12,
-        "y": 119
-      },
-      "id": 7,
-      "options": {
-        "legend": {
-          "calcs": [
-            "last"
-          ],
-          "displayMode": "table",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi"
-        }
-      },
-      "targets": [
-        {
-          "expr": "resilience4j_ratelimiter_available_permissions{application=\"$application\"}",
-          "legendFormat": "{{name}} available",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus-k12"
-          }
-        },
-        {
-          "expr": "resilience4j_ratelimiter_waiting_threads{application=\"$application\"}",
-          "legendFormat": "{{name}} waiting",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus-k12"
-          }
-        }
-      ],
-      "title": "Rate Limiter",
-      "type": "timeseries"
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
         "y": 79
       },
       "id": 103,
@@ -1349,7 +1229,7 @@
           "mode": "multi"
         }
       },
-      "description": "mongodb_driver_pool_checkoutfailed_total không phải metric có thật (Micrometer MongoMetricsConnectionPoolListener không emit counter này) — dùng mongodb_driver_commands_seconds_count{status!=\"SUCCESS\"} từ MongoMetricsCommandListener thay thế, đã confirm có data thật trên cluster Prometheus.",
+      "description": "checkoutfailed_total không phải metric có thật — dùng commands_seconds_count{status!=\"SUCCESS\"} thay thế.",
       "targets": [
         {
           "expr": "sum(rate(mongodb_driver_commands_seconds_count{application=\"$application\", status!=\"SUCCESS\"}[$__rate_interval])) by (command, server_address)",
@@ -1364,12 +1244,108 @@
       "type": "timeseries"
     },
     {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 95
+      },
+      "id": 522,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(mongodb_driver_commands_seconds_count{application=\"$application\"}[$__rate_interval])) by (command)",
+          "legendFormat": "{{command}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "MongoDB Command Rate (all)",
+      "description": "Throughput mọi command (không chỉ failed) — baseline để so sánh với 'Command Failures'.",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 95
+      },
+      "id": 523,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(mongodb_driver_commands_seconds_sum{application=\"$application\"}[$__rate_interval])) by (command) / sum(rate(mongodb_driver_commands_seconds_count{application=\"$application\"}[$__rate_interval])) by (command)",
+          "legendFormat": "{{command}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "MongoDB Avg Command Latency (all)",
+      "description": "Latency trung bình mọi command — phát hiện DB chậm dần trước khi command bắt đầu fail hẳn.",
+      "type": "timeseries"
+    },
+    {
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 95
+        "y": 131
       },
       "id": 106,
       "title": "Redis Client",
@@ -1393,7 +1369,7 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 96
+        "y": 132
       },
       "id": 32,
       "options": {
@@ -1411,7 +1387,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(redis_command_seconds_sum{application=\"$application\"}[$__rate_interval])) by (command) / sum(rate(redis_command_seconds_count{application=\"$application\"}[$__rate_interval])) by (command)",
+          "expr": "sum(rate(redis_command_seconds_seconds_sum{application=\"$application\"}[$__rate_interval])) by (command) / sum(rate(redis_command_seconds_seconds_count{application=\"$application\"}[$__rate_interval])) by (command)",
           "legendFormat": "{{command}}",
           "datasource": {
             "type": "prometheus",
@@ -1437,12 +1413,12 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 7,
+        "h": 3,
         "w": 12,
         "x": 12,
-        "y": 96
+        "y": 132
       },
-      "id": 33,
+      "id": 514,
       "options": {
         "legend": {
           "calcs": [
@@ -1458,15 +1434,67 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(redis_command_seconds_count{application=\"$application\"}[$__rate_interval]))",
+          "expr": "sum(rate(redis_command_seconds_seconds_count{application=\"$application\"}[$__rate_interval]))",
           "legendFormat": "commands/s",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus-k12"
           }
+        }
+      ],
+      "title": "Redis Command Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "ops",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.001
+              }
+            ]
+          }
         },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 12,
+        "y": 135
+      },
+      "id": 515,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
         {
-          "expr": "sum(rate(redis_command_errors_total{application=\"$application\"}[$__rate_interval])) or sum(rate(redis_command_seconds_count{application=\"$application\"}[$__rate_interval])) * 0",
+          "expr": "sum(rate(redis_command_errors_total{application=\"$application\"}[$__rate_interval])) or sum(rate(redis_command_seconds_seconds_count{application=\"$application\"}[$__rate_interval])) * 0",
           "legendFormat": "errors/s",
           "datasource": {
             "type": "prometheus",
@@ -1474,7 +1502,386 @@
           }
         }
       ],
-      "title": "Redis Command Rate & Errors",
+      "title": "Redis Command Errors",
+      "type": "timeseries"
+    },
+    {
+      "title": "Redis Pool Active",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 4,
+        "x": 0,
+        "y": 139
+      },
+      "id": 516,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "redis_jedis_pool_active{application=\"$application\"}",
+          "legendFormat": "active",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          },
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Redis Pool Idle",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 4,
+        "x": 4,
+        "y": 139
+      },
+      "id": 517,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "redis_jedis_pool_idle{application=\"$application\"}",
+          "legendFormat": "idle",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          },
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Redis Pool Waiters",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 4,
+        "x": 8,
+        "y": 139
+      },
+      "id": 518,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "redis_jedis_pool_waiters{application=\"$application\"}",
+          "legendFormat": "waiters",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          },
+          "refId": "A"
+        }
+      ],
+      "description": "waiters > 0 kéo dài = pool exhaustion thật (thread đang phải đợi connection)."
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 139
+      },
+      "id": 511,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "redis_jedis_pool_borrow_wait_max_ms{application=\"$application\"}",
+          "legendFormat": "borrow wait max (ms)",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        },
+        {
+          "expr": "redis_jedis_pool_nodes{application=\"$application\"}",
+          "legendFormat": "cluster nodes",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "Redis Jedis Borrow Wait & Cluster Nodes",
+      "description": "borrow_wait tăng đột biến = cảnh báo sớm hơn waiters. cluster nodes giảm = mất node JedisCluster.",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 146
+      },
+      "id": 512,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(redis_jedis_command_duration_seconds_sum{application=\"$application\"}[$__rate_interval])) by (command) / sum(rate(redis_jedis_command_duration_seconds_count{application=\"$application\"}[$__rate_interval])) by (command)",
+          "legendFormat": "{{command}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "Redis Jedis Avg Command Duration",
+      "description": "Latency đo tại client (JedisCluster), tách theo lệnh — độc lập với panel 'Avg Command Latency' cũ.",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 146
+      },
+      "id": 513,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(redis_jedis_command_duration_seconds_count{application=\"$application\"}[$__rate_interval])) by (command, outcome)",
+          "legendFormat": "{{command}} - {{outcome}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "Redis Jedis Command Rate by Outcome",
+      "description": "Tách success/failure theo từng lệnh để biết chính xác lệnh nào đang fail.",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 153
+      },
+      "id": 519,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "max(redis_jedis_command_duration_seconds_max{application=\"$application\"}) by (command)",
+          "legendFormat": "{{command}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "Redis Jedis Max Command Duration",
+      "description": "Đỉnh latency per-command — avg có thể che spike.",
       "type": "timeseries"
     },
     {
@@ -1483,7 +1890,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 103
+        "y": 160
       },
       "id": 107,
       "title": "Kafka Client",
@@ -1507,7 +1914,7 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 104
+        "y": 161
       },
       "id": 34,
       "options": {
@@ -1554,7 +1961,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 104
+        "y": 161
       },
       "id": 35,
       "options": {
@@ -1596,7 +2003,7 @@
         "type": "prometheus",
         "uid": "prometheus-k12"
       },
-      "description": "Records/sec và bytes/sec consumer thực sự đang tiêu thụ — bổ sung cho Consumer Lag (biết lag CAO là do consumer chậm hay do producer đẩy nhanh hơn).",
+      "description": "Bổ sung cho Consumer Lag: biết lag cao do consumer chậm hay producer đẩy nhanh.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1634,7 +2041,7 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 111
+        "y": 168
       },
       "id": 36,
       "options": {
@@ -1672,7 +2079,7 @@
         "type": "prometheus",
         "uid": "prometheus-k12"
       },
-      "description": "Producer records/sec theo topic + tỷ lệ buffer còn trống (buffer cạn dần về 0 là dấu hiệu sớm của backpressure/broker chậm, trước khi record_error tăng).",
+      "description": "Buffer cạn dần về 0 = backpressure/broker chậm, cảnh báo sớm hơn record_error.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1714,7 +2121,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 111
+        "y": 168
       },
       "id": 37,
       "options": {
@@ -1753,7 +2160,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 126
+        "y": 183
       },
       "id": 108,
       "title": "Availability",
@@ -1806,7 +2213,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 127
+        "y": 184
       },
       "id": 51,
       "options": {
@@ -2093,7 +2500,7 @@
         "type": "prometheus",
         "uid": "prometheus-k12"
       },
-      "description": "NIO buffer pool (direct + mapped) — direct dùng cho Netty/socketio, mapped hiếm khi non-zero trừ khi app mmap file trực tiếp.",
+      "description": "direct dùng cho Netty/socketio; mapped hiếm khi non-zero.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2169,7 +2576,7 @@
         "type": "prometheus",
         "uid": "prometheus-k12"
       },
-      "description": "Từ kubelet/cAdvisor (job=kubelet), KHÔNG phải app metrics — namespace k12, pod khớp tên $application. Loại trừ container rỗng/POD (pause container) để tránh double-count.",
+      "description": "Từ cAdvisor (kubelet), không phải app metric — loại trừ pause container để tránh double-count.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2237,7 +2644,7 @@
         "type": "prometheus",
         "uid": "prometheus-k12"
       },
-      "description": "cAdvisor container_fs_* — đọc/ghi đĩa của container (mượn qua containerd cgroup, không phải app metrics).",
+      "description": "cAdvisor — I/O đĩa container, không phải app metric.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2289,7 +2696,7 @@
         "type": "prometheus",
         "uid": "prometheus-k12"
       },
-      "description": "cAdvisor container_network_* — gắn trên pause container vì nó sở hữu netns của pod (bình thường, không lọc container).",
+      "description": "cAdvisor — gắn trên pause container vì nó sở hữu netns của pod, bình thường.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2341,7 +2748,7 @@
         "type": "prometheus",
         "uid": "prometheus-k12"
       },
-      "description": "Số lượng buffer đang mở theo loại (direct/mapped) — tăng liên tục không giảm là dấu hiệu leak.",
+      "description": "Tăng liên tục không giảm = leak.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2401,7 +2808,7 @@
         "type": "prometheus",
         "uid": "prometheus-k12"
       },
-      "description": "Old-gen heap còn sống ngay sau full GC (live) vs giới hạn ước tính (max) — live tiến sát max liên tục là dấu hiệu heap pressure thật, không phải noise của minor GC.",
+      "description": "Live tiến sát max liên tục = heap pressure thật.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2453,7 +2860,7 @@
         "type": "prometheus",
         "uid": "prometheus-k12"
       },
-      "description": "% thời gian process dừng để GC — Micrometer tự tính theo cửa sổ trượt. Ngưỡng cảnh báo thường >10-15% kéo dài.",
+      "description": "Ngưỡng cảnh báo thường >10-15% kéo dài.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2539,7 +2946,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 9000
+        "y": 9057
       },
       "id": 500,
       "title": "Aerospike Client",
@@ -2550,7 +2957,7 @@
         "type": "prometheus",
         "uid": "prometheus-k12"
       },
-      "description": "aerospike_client_connected (Gauge, shared lib k12-logging, bean aerospikeMetricsBinder) — 1 = connected, 0 = disconnected, mỗi client 1 series (label client). Service không dùng Aerospike sẽ không có series nào (No data), không phải bug.",
+      "description": "1=connected, 0=disconnected. Service không dùng Aerospike sẽ No data, không phải bug.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2591,7 +2998,7 @@
         "h": 6,
         "w": 24,
         "x": 0,
-        "y": 9001
+        "y": 9058
       },
       "id": 501,
       "options": {
@@ -2600,7 +3007,9 @@
         "justifyMode": "auto",
         "orientation": "horizontal",
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -2620,12 +3029,124 @@
       "type": "stat"
     },
     {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 9064
+      },
+      "id": 520,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "aerospike_connection_pool_opened{application=\"$application\"}",
+          "legendFormat": "{{client}} - opened",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        },
+        {
+          "expr": "aerospike_connection_pool_closed{application=\"$application\"}",
+          "legendFormat": "{{client}} - closed",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "Aerospike Connection Pool (Opened/Closed)",
+      "description": "opened/closed tăng liên tục = connection churn — network chập chờn hoặc pool quá nhỏ.",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-k12"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 9064
+      },
+      "id": 521,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "aerospike_connection_pool_in_use{application=\"$application\"}",
+          "legendFormat": "{{client}} - in use",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        },
+        {
+          "expr": "aerospike_connection_pool_in_pool{application=\"$application\"}",
+          "legendFormat": "{{client}} - in pool (idle)",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-k12"
+          }
+        }
+      ],
+      "title": "Aerospike Connection Pool (In Use/Idle)",
+      "description": "in_use gần max kéo dài = pool sắp cạn, giống Mongo Pool Wait Queue / Redis Pool Waiters.",
+      "type": "timeseries"
+    },
+    {
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 9010
+        "y": 102
       },
       "id": 502,
       "title": "MongoDB Failure Detail",
@@ -2636,7 +3157,7 @@
         "type": "prometheus",
         "uid": "prometheus-k12"
       },
-      "description": "Latency thực tế của các command bị FAILED — dùng để phân biệt lỗi timeout thật (latency gần bằng ngưỡng timeout cấu hình, thường vài giây) với fail nhanh kiểu connection refused/auth reject (latency gần 0).",
+      "description": "Phân biệt timeout thật (latency gần ngưỡng timeout) với fail nhanh kiểu connection refused (latency gần 0).",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2650,12 +3171,15 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 9011
+        "y": 103
       },
       "id": 503,
       "options": {
         "legend": {
-          "calcs": ["mean", "max"],
+          "calcs": [
+            "mean",
+            "max"
+          ],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -2681,7 +3205,7 @@
         "type": "prometheus",
         "uid": "prometheus-k12"
       },
-      "description": "Tổng số command FAILED cộng dồn từ lúc app start — khác với panel 'rate' ở trên: rate có thể về 0 ngay cả khi tổng số lỗi rất cao (lỗi xảy ra rồi dừng, không còn tăng tiếp), panel này cho thấy con số tích lũy thật để không bị bỏ sót.",
+      "description": "Tích lũy từ app start — khác panel rate (có thể về 0 dù tổng lỗi cao nếu lỗi đã dừng tăng).",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2690,9 +3214,18 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 1 },
-              { "color": "red", "value": 10 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 10
+              }
             ]
           }
         },
@@ -2702,7 +3235,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 9011
+        "y": 103
       },
       "id": 504,
       "options": {
@@ -2711,7 +3244,9 @@
         "justifyMode": "auto",
         "orientation": "horizontal",
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -2735,7 +3270,7 @@
         "type": "prometheus",
         "uid": "prometheus-k12"
       },
-      "description": "Metric CHƯA tồn tại (chờ team platform triển khai — xem docs/work/NOJIRA-platform-mongodb-driver-event-metrics-gap bên repo k12-backend-java, BUG-A). Đây là timeout THẬT của thread giám sát topology (ServerMonitorListener) — khác với 'MongoDB Command Failures' ở trên (đi qua CommandListener, code path khác). Panel sẽ tự có data ngay khi metric mongodb_driver_heartbeat_failures_total được deploy, không cần sửa dashboard thêm.",
+      "description": "Timeout của thread giám sát topology (ServerMonitorListener) — khác 'Command Failures' (qua CommandListener).",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2749,12 +3284,15 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 9018
+        "y": 110
       },
       "id": 505,
       "options": {
         "legend": {
-          "calcs": ["mean", "max"],
+          "calcs": [
+            "mean",
+            "max"
+          ],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -2772,7 +3310,7 @@
           }
         }
       ],
-      "title": "MongoDB Heartbeat Failures (rate) — pending BUG-A",
+      "title": "MongoDB Heartbeat Failures (rate)",
       "type": "timeseries"
     },
     {
@@ -2780,7 +3318,7 @@
         "type": "prometheus",
         "uid": "prometheus-k12"
       },
-      "description": "Metric CHƯA tồn tại (chờ BUG-A). Latency heartbeat thật — dùng để phát hiện server chậm dần trước khi timeout hẳn.",
+      "description": "Phát hiện server chậm dần trước khi timeout hẳn.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2794,12 +3332,15 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 9018
+        "y": 110
       },
       "id": 506,
       "options": {
         "legend": {
-          "calcs": ["mean", "max"],
+          "calcs": [
+            "mean",
+            "max"
+          ],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -2817,7 +3358,7 @@
           }
         }
       ],
-      "title": "MongoDB Heartbeat Latency (max) — pending BUG-A",
+      "title": "MongoDB Heartbeat Latency (max)",
       "type": "timeseries"
     },
     {
@@ -2825,7 +3366,7 @@
         "type": "prometheus",
         "uid": "prometheus-k12"
       },
-      "description": "Metric CHƯA tồn tại (chờ BUG-B). checkout_failed = lý do checkout connection thất bại (TIMEOUT/CONNECTION_ERROR/POOL_CLOSED); connections_closed = lý do đóng connection (idle bình thường vs lỗi).",
+      "description": "connections_closed đã có data (lý do đóng connection). checkout_failed vẫn chờ BUG-B — chưa có metric.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2839,12 +3380,15 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 9025
+        "y": 117
       },
       "id": 507,
       "options": {
         "legend": {
-          "calcs": ["mean", "max"],
+          "calcs": [
+            "mean",
+            "max"
+          ],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -2870,7 +3414,7 @@
           }
         }
       ],
-      "title": "MongoDB Pool Checkout Failed / Connections Closed (rate) — pending BUG-B",
+      "title": "MongoDB Pool Checkout Failed (pending) / Connections Closed (rate)",
       "type": "timeseries"
     },
     {
@@ -2878,7 +3422,7 @@
         "type": "prometheus",
         "uid": "prometheus-k12"
       },
-      "description": "Metric CHƯA tồn tại (chờ BUG-B/BUG-C). pool_cleared = pool bị clear toàn bộ (thường do lỗi nghiêm trọng/failover, hiếm nhưng critical); cluster_topology_changes = số lần topology cluster đổi (failover, node join/leave). Tổng tích lũy từ lúc app start.",
+      "description": "pool_cleared = pool bị clear toàn bộ (failover, hiếm nhưng critical); topology_changes = số lần đổi topology cluster.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2887,9 +3431,18 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 1 },
-              { "color": "red", "value": 5 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
             ]
           }
         },
@@ -2899,7 +3452,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 9025
+        "y": 117
       },
       "id": 508,
       "options": {
@@ -2908,7 +3461,9 @@
         "justifyMode": "auto",
         "orientation": "horizontal",
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -2932,7 +3487,7 @@
           }
         }
       ],
-      "title": "MongoDB Pool Cleared / Topology Changes (total) — pending BUG-B/C",
+      "title": "MongoDB Pool Cleared / Topology Changes (total)",
       "type": "stat"
     },
     {
@@ -2940,7 +3495,7 @@
         "type": "prometheus",
         "uid": "prometheus-k12"
       },
-      "description": "Metric CHƯA tồn tại (chờ BUG-C). Số lần 1 server cụ thể đổi trạng thái (vd CONNECTED → UNKNOWN) — cảnh báo sớm trước khi dẫn tới hàng loạt timeout/command fail.",
+      "description": "Cảnh báo sớm trước khi dẫn tới hàng loạt timeout/command fail.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2954,12 +3509,15 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 9032
+        "y": 124
       },
       "id": 509,
       "options": {
         "legend": {
-          "calcs": ["mean", "max"],
+          "calcs": [
+            "mean",
+            "max"
+          ],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -2977,7 +3535,7 @@
           }
         }
       ],
-      "title": "MongoDB Server State Changes (rate) — pending BUG-C",
+      "title": "MongoDB Server State Changes (rate)",
       "type": "timeseries"
     }
   ],
