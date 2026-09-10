@@ -99,6 +99,12 @@ kiện sau đều đạt:
 Sau khi đạt cả hai, runbook có thể đổi từ "cấm tuyệt đối" thành hướng dẫn vận hành lease (theo
 dõi `zombie_actor_stopped_total`, giám sát TTL/renewal) — cập nhật lại file này khi đó, không xoá.
 
+**Quy trình đo cụ thể (2026-09-10):** xem
+[`staging-valkey-cluster-verification.md`](staging-valkey-cluster-verification.md) — checklist chi
+tiết từng kịch bản cần chạy, cách đo, tiêu chí pass/fail, và đúng thứ tự cập nhật tài liệu sau khi
+đạt cả 2 điều kiện ở trên. Chưa chạy được vì môi trường code hiện tại không có quyền truy cập
+staging Valkey Cluster thật.
+
 ## Tài liệu liên quan
 
 - [`plan.md`](../work/NOJIRA-uni-p1-realtime-core/plan.md) Task 14 (fix thật) và Task 19 (runbook này).

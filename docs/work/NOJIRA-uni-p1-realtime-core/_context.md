@@ -623,7 +623,22 @@ progress: "T1, T2, T4, T5, T10 xong. T6 MOT PHAN xong (GatewayPipeline + WS hand
   lan 1 3/3 pass (recoveryMs=18816, engine-0 chet -> phuc hoi tren engine-1), lan 2 3/3 pass
   (recoveryMs=24818, engine-1 chet -> phuc hoi tren engine-0) - ca 2 deu nam trong dai baseline cu
   21.8s-27.9s (Task 14), KHONG flaky qua 2 lan chay lien tiep. docker compose down dep sach sau khi
-  xong."
+  xong.
+  2026-09-10 (tiep): nguoi dung hoi 'verify voi staging Valkey Cluster that khi nao co' - tra loi
+  thang: khong co quyen truy cap staging/Valkey Cluster that tu phien code nay. Hoi nguoi dung
+  muon chuan bi gi - chon 'viet runbook checklist chi tiet'. Tao moi
+  docs/runbook/staging-valkey-cluster-verification.md: dieu kien tien quyet ha tang (Valkey Cluster
+  >=3 node that, >=3 Engine pod that, tai dai dien >=500-1000 ket noi/phong - PH-1 van chua dung),
+  7 kich ban can do (baseline lease acquisition, Engine pod crash lap lai >=5 lan de co phan phoi
+  p50/p90/p99 thay vi 1 mau nhu Docker, them pod moi giua phien, scale down co chu dich - kich ban
+  CHUA tung test o Docker, Valkey Cluster mat 1 node - CHUA tung test vi Docker chi co 1 instance,
+  Valkey Cluster mat ket noi hoan toan dung hop dong 'unresolved' cua Task 23, do duoi tai dai
+  dien), tieu chi pass/fail cu the tung kich ban, va thu tu cap nhat tai lieu sau khi verify xong
+  (_context.md -> plan.md Task 14 -> engine-scaling-freeze.md -> CLAUDE.md). Da lien ket 2 chieu tu
+  engine-scaling-freeze.md's 'Dieu kien de noi long'. Phat hien phu: canh bao
+  production-deployment-and-configuration.md (file cua nguoi dung tu viet) SS3 van con nhac
+  ENGINE_POD_COUNT/ENGINE_ROOM_STORE_ENABLED/'fallback modulo' - da bi xoa khoi code tu Task 23
+  (2026-09-09) - ghi canh bao staleness trong runbook moi, KHONG tu sua file cua nguoi dung."
 dev_selftest: pending
 qc_status: pending
 trace: pending
