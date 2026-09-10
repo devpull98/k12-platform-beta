@@ -142,6 +142,27 @@ Giai đoạn 2 bổ sung các chế độ chơi tương tác nhóm và tập th�
   - [ ] §3.1 Group A schema còn thiếu hoàn toàn: `max_players`, `team_count`, `team_assignment` (random/manual), `late_join_policy`, `scoring_rule=speed_based`; thiếu 1 phần: `team_names/colors` (chưa có màu), `score_aggregation` (chỉ có `SUM_ALL`/`AVERAGE`, thiếu `first_correct_only`/`majority_vote`).
   - [ ] §3.2 `progress_display_mode` (`simple_bar`/`staged_visual`) chưa có field — engine luôn gửi stage index, không có cờ bật/tắt hiển thị theo kiểu client cần.
   - Đây là việc CMS/form/Group A authoring thật (§6 hạ tầng), không thuộc `uni-game-engine` — cần Product Brief/task riêng, không tự mở rộng `GameDefinition` mà không biết CMS sẽ gửi field nào thật.
+- **Cập nhật 2026-09-10 (đối chiếu trực tiếp 2 file `.doc` gốc, không phải bảng tóm tắt trong
+  `.md`):** decode MIME/quoted-printable 2 file `PO_Require_Game+nhóm_+tập+thể+Inclass.doc` (V1.0)
+  và `...V2.1.doc` rồi diff trực tiếp — phát hiện bảng so sánh V1.0 vs V2.1 trong
+  `INCLASS-GAME-001-inclass-group-cooperative-games-v2.1.md` **sai 4/6 dòng** (đã sửa lại file đó
+  cùng ngày, xem note trong chính file). 2 gap MỚI phát hiện qua diff, chưa từng ghi ở đâu trong
+  repo trước đây:
+  - [ ] **`streak_bonus` mâu thuẫn ngay trong tài liệu PO V2.1:** §5.4 (Cách tính điểm) mô tả
+    `streak_bonus` (đúng liên tiếp N câu → +% thưởng, reset khi sai 1 câu) như 1 giá trị của
+    `scoring_rule`, nhưng bảng schema chính thức §7 (Input Schema) **vẫn chỉ liệt kê
+    `fixed`/`speed_based`** — PO tự mâu thuẫn giữa 2 mục trong cùng 1 tài liệu. Thêm vào backlog
+    schema Group A ở trên (`GameDefinition`/`FormulaScoreCalculator` chưa có `streak_bonus`) —
+    cần PO xác nhận đây có phải scope thật hay chỉ là ví dụ minh hoạ chưa chốt.
+  - [ ] **Luật "Hoà" khi `first_to_finish`/`most_points_when_time_up` — PO TỰ FLAG là chưa chốt**
+    (§5.3 V2.1, nguyên văn: "2 phe chạm đích cùng thời điểm server, hoặc bằng điểm khi hết giờ: cần
+    luật phụ... ví dụ ai có nhiều câu trả lời đúng nhanh hơn thắng, hoặc hiển thị Hoà"). Khác các
+    gap khác (LIVES, luật biên 5) — mục này KHÔNG cần đoán ý PO, vì chính PO đã ghi rõ đây là điểm
+    treo. Hiện tại `WinConditionEvaluator.singleHighestScorer()` trả rỗng khi hoà (đúng, không tự
+    bịa 1 người thắng) — hành vi này ĐÃ ĐÚNG tinh thần "không tự quyết", chỉ cần biết đây là do
+    PO chưa trả lời, không phải thiếu sót code.
+  - Không có gap MỚI nào khác về mặt input schema — diff xác nhận §7 giống hệt 100% giữa V1.0/V2.1,
+    nên danh sách backlog schema Group A ở trên (từ review 2026-09-09) vẫn đầy đủ và chính xác.
 - **Verification:** `mvn -pl :uni-game-engine test`: 175/175 pass (dead-code cleanup only, không đổi hành vi runtime).
 
 ---

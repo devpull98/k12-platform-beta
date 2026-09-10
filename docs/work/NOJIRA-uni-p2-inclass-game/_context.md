@@ -205,7 +205,20 @@ progress: "2026-09-09: Task 20+21 xong (xem entry truoc). Task 22 (Team mode + S
   khong - KHONG co (khong co field 'tong thoi gian van', khong co dinh nghia 'het gio' cho
   most_points_when_time_up ngoai 'GV bam Ket thuc'). Khong tu doan, khong code them - Task 23 giu
   nguyen 'PHAN LON XONG', chua doi thanh 'XONG'. Da ghi cross-reference 2 chieu giua Task 23 va
-  Task 27 trong plan.md."
+  Task 27 trong plan.md.
+  2026-09-10 (tiep): nguoi dung hoi v2.1 co gi moi so voi v1 khong. Thay vi tin bang tom tat co san
+  trong file .md, decode 2 file .doc goc that (hoa ra la Confluence export dang MIME/HTML, khong
+  phai Word binary that - dung antiword phat hien, roi tu decode quoted-printable bang Python) va
+  diff truc tiep. Phat hien bang so sanh V1.0-vs-V2.1 trong INCLASS-GAME-001-v2.1.md SAI 4/6 dong
+  (Input Schema Group A/B, progress_display_mode, tach Mode/Mechanic, phat shared_resource - ca 4
+  da co nguyen van tu V1.0, khong phai diem moi that su). Da sua lai bang do. Diem MOI that su xac
+  nhan qua diff: SS5.2 game loop/FSM, SS5.3 dieu kien thang thua (PO TU FLAG luat 'Hoa' chua chot -
+  khac cac gap khac vi khong can doan y PO, PO da ghi ro day la diem treo), SS5.4 cach tinh diem
+  (them streak_bonus nhung KHONG co trong bang schema chinh thuc SS7 - PO tu mau thuan trong chinh
+  tai lieu), SS5.5 luat tuong tac, SS5.6 6 luat bien (dung nhu bang cu da ghi), SS9 'Chi so do
+  luong' moi nhung de trong. Xac nhan SS7 Input Schema giong het 100% giua 2 ban - khong co gap
+  schema moi nao ngoai backlog da ghi tu truoc. Da ghi 2 gap moi (streak_bonus, luat Hoa) vao
+  plan.md Task 27."
 dev_selftest: pending
 qc_status: pending
 trace: pending

@@ -9,14 +9,24 @@
 
 ## 📊 Bảng So Sánh Tổng Quan V1.0 vs V2.1
 
+> [!IMPORTANT]
+> **Sửa lại 2026-09-10** — bảng dưới đây trước đó ghi sai 4/6 dòng: "Input Schema Group A/B",
+> "`progress_display_mode`", "tách Mode/Mechanic", và "phạt `shared_resource`" **đã có nguyên văn
+> từ V1.0** (`INCLASS-GAME-001-inclass-group-cooperative-games.md` §7/§4.2), không phải điểm mới
+> của V2.1. Bảng này được viết lại sau khi diff trực tiếp 2 file `.doc` gốc
+> (`PO_Require_Game+nhóm_+tập+thể+Inclass.doc` vs `...V2.1.doc`) thay vì suy đoán — §7 Input
+> Schema **giống hệt 100%** giữa 2 bản, không đổi 1 chữ.
+
 | Tiêu chí | Bản V1.0 | Bản V2.1 (Mới nhất) | Tác động kỹ thuật Backend (Engine/Protocol) |
 |---|---|---|---|
-| **Mô hình Input Schema** | Sơ khai, chưa phân loại trường cấu hình | Tách bạch **Group A** (Form học thuật điền) & **Group B** (LLM tự sinh) | Thêm enum & message Protobuf cho Group A & Group B (§5) |
-| **Kiểu hiển thị Tiến trình** | Thanh % đơn giản | Thêm `progress_display_mode`: `simple_bar` hoặc `staged_visual` | `RoomState` quản lý chuyển đổi mốc ảnh SVG khi % vượt mốc |
-| **Phân định Nguyên tắc** | Trộn lẫn chế độ và luật chơi | Tách rõ **Mode** (cấu trúc phe) và **Mechanic** (luật chơi) | Giúp Engine mở rộng thêm Mechanic mới sau này không sửa Mode |
-| **Server Game Loop & FSM** | Chưa quy định FSM cụ thể | Chuẩn hoá 4 bước FSM (`INIT` → `WAITING` → `IN_PROGRESS` → `ENDED`) | Khớp hoàn toàn với Pekko `RoomActor` FSM của Phase 1 |
-| **Luật Biên (Edge Cases)** | Chưa đề cập | Bổ sung 6 luật biên chi tiết (§6) | Đổi đáp án draft, Hard disconnect, Cấm GV hủy giữa ván, Floor % |
-| **Tài nguyên phạt** | Phạt chung | Phạt `shared_resource` (`time`/`lives`) khi trả lời sai (`cooperative`) | `RoomActor` giảm thời gian hoặc mạng của cả phòng khi sai |
+| **Input Schema (§7), `progress_display_mode`, tách Mode/Mechanic (§4.2), `shared_resource`** | Đã có nguyên văn, giống hệt V2.1 | **Không đổi** — 0 khác biệt khi diff trực tiếp | Không có tác động mới nào riêng cho các mục này |
+| **Server Game Loop & FSM (§5.2, mới)** | Chưa quy định FSM cụ thể | Chuẩn hoá: `INIT` → `WAITING_FOR_PLAYERS` → `IN_PROGRESS` → `ENDED`, có mô tả từng bước (kể cả nhánh hết câu hỏi mà chưa ngã ngũ) | Khớp hoàn toàn với Pekko `RoomActor` FSM của Phase 1 |
+| **Điều kiện thắng thua (§5.3, mới)** | Chưa đề cập | Chi tiết theo từng mode + **PO tự flag 1 edge case CHƯA CHỐT**: "Hoà — 2 phe chạm đích cùng thời điểm server, hoặc bằng điểm khi hết giờ: cần luật phụ" | `WinConditionEvaluator.singleHighestScorer()` hiện trả rỗng khi hoà — **đúng tinh thần "không tự bịa" cho tới khi PO chốt luật hoà**, không phải thiếu sót |
+| **Cách tính điểm (§5.4, mới)** | Chưa đề cập | 2 loại điểm song song (cá nhân vs tiến trình phe), đồng đội đúng → 50% điểm, quy đổi điểm→cúp, và **thêm `streak_bonus`** (đúng liên tiếp N câu → +% thưởng) | `streak_bonus` **KHÔNG có trong bảng schema chính thức §7** (`scoring_rule` ở đó vẫn chỉ ghi `fixed`/`speed_based`) — mâu thuẫn ngay trong tài liệu PO, xem `plan.md` Task 27 |
+| **Cách chơi / luật tương tác (§5.5, mới)** | Chưa đề cập | Câu hỏi hiện đồng thời, không thấy đáp án người khác, tự chuyển câu khi hết giờ (GV vẫn có nút override thủ công) | Chưa có điểm gắn trong repo — `TeacherCommand.NEXT_STEP` vẫn là gap cũ từ Task 11 |
+| **Luật Biên (§5.6, mới)** | Chưa đề cập | Bổ sung 6 luật biên chi tiết | Đổi đáp án draft, Hard disconnect, Cấm GV hủy giữa ván, Floor % |
+| **"Chỉ số đo lường" (§9, mới)** | Không có | Thêm tiêu đề mục nhưng **để trống hoàn toàn**, không có nội dung | Không có gì để implement — chỉ ghi nhận PO chưa điền |
+| **Hạ tầng real-time (đoạn cũ ở §6)** | Có câu hỏi mở: tự xây hay dùng SDK bên thứ 3 (Agora/Twilio), roster đọc trực tiếp được không | **Đã xoá khỏi V2.1** | Không còn liên quan — `uni-realtime` đã tự xây xong (Netty/Pekko) |
 
 ---
 
