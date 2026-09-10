@@ -87,8 +87,12 @@ parallel_safe: true
 - **Verification:** `mvn -pl :uni-websocket-gateway,:uni-game-engine test -Dtest=BackpressureTest` (7/7 pass).
 
 ### Task 10: Room Ownership Engine & `NOT_OWNER` Stamp — ✅ XONG
-- Interface `RoomOwnership` (`ModuloRoomOwnership` % N). Response đóng dấu `InternalHeader.owner_pod_id` hoặc `NOT_OWNER`.
-- **Verification:** `mvn -pl :uni-game-engine test -Dtest=RoomOwnershipTest,RoomOwnershipHandlerTest` (7/7 pass).
+- Interface `RoomOwnership`. Response đóng dấu `InternalHeader.owner_pod_id` hoặc `NOT_OWNER`.
+- **Cập nhật 2026-09-09 (Task 23):** implementation gốc lúc Task 10 là `ModuloRoomOwnership`
+  (`room_id % N`), nhưng đã bị **xoá hẳn** cùng `RoomOwnershipTest` — xem Task 23.
+  `LeaseBasedRoomOwnership` (Task 14) giờ là `RoomOwnership` DUY NHẤT.
+- **Verification:** `mvn -pl :uni-game-engine test -Dtest=RoomOwnershipHandlerTest` pass (contract
+  `NOT_OWNER` không đổi qua Task 23 — `RoomOwnershipTest` gốc đã xoá cùng `ModuloRoomOwnership`).
 
 ### Task 11: Game Definition & Guardrails — ✅ XONG
 - Loader validate DAG (chống chu trình), DSL toán tử đóng `ScoringFormula`. Bắt buộc `missed_step_policy: ZERO` và `tick_mode: COALESCE`.
