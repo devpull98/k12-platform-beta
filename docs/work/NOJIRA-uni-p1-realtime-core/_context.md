@@ -638,7 +638,24 @@ progress: "T1, T2, T4, T5, T10 xong. T6 MOT PHAN xong (GatewayPipeline + WS hand
   engine-scaling-freeze.md's 'Dieu kien de noi long'. Phat hien phu: canh bao
   production-deployment-and-configuration.md (file cua nguoi dung tu viet) SS3 van con nhac
   ENGINE_POD_COUNT/ENGINE_ROOM_STORE_ENABLED/'fallback modulo' - da bi xoa khoi code tu Task 23
-  (2026-09-09) - ghi canh bao staleness trong runbook moi, KHONG tu sua file cua nguoi dung."
+  (2026-09-09) - ghi canh bao staleness trong runbook moi, KHONG tu sua file cua nguoi dung.
+  2026-09-10 (tiep): nguoi dung yeu cau sua luon production-deployment-and-configuration.md cho
+  khop code that (commit rieng, lan dau file nay duoc track). Sua: xoa ENGINE_POD_COUNT/
+  ENGINE_ROOM_STORE_ENABLED khoi bang bien moi truong, sua lai 'Quy tac scale engine' + doan
+  rollback (khong con ly do 'fallback modulo', nhung van chua an toan tu-scale vi chua verify
+  staging - dan sang staging-valkey-cluster-verification.md), lam ro Valkey gio la bat buoc (khong
+  con 'neu bat Valkey/Kafka' mo ho). Nhan tien sua 4 loi ten bien moi truong sai so voi code that,
+  co san tu truoc khong lien quan room_id % N: GATEWAY_ENGINE_POD_DISCOVERY_VALKEY_URI -> dung la
+  ..._ROOM_STORE_URI, ..._POLL_INTERVAL_MS -> dung la ..._POLL_INTERVAL_SECONDS,
+  ENGINE_ROOM_STORE_VALKEY_URI -> dung la ENGINE_ROOM_STORE_URI, ENGINE_ROOM_STORE_LEASE_TTL ->
+  dung la ENGINE_ROOM_STORE_LEASE_TTL_SECONDS. Sau do nguoi dung yeu cau chay
+  scripts/governance-check.sh de xac nhan van xanh sau toan bo dot sua room_id % N (3 commit
+  33faa97/4bdd999/b5b96fc/4ed9aaa): XANH CA 5 GATE - skill graph (skip, dung nhu CLAUDE.md ghi),
+  stack rules (OK), SDD gate (PASS, code+spec deu doi khop nhau), trace coverage (0 GAP, 2 WARN cu
+  thieu SC-ID o 2 BDD feature P2 - khong phai blocker, khong doi so voi truoc), context state/ship
+  gate (PASS, ca 2 work package van phase=dev nen bo qua ship gate - dev_selftest/qc_status/trace
+  van pending, dung nhu CLAUDE.md canh bao 'gate xanh khong co nghia da xong'). Khong co gi doi ve
+  governance sau dot sua nay."
 dev_selftest: pending
 qc_status: pending
 trace: pending
