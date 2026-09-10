@@ -52,11 +52,27 @@ Ba ràng buộc dưới đây **suy ra được từ thiết kế đã chốt**,
 | R2 | Join token phải mang chữ ký | [README §2.3](../../architecture/system-architecture.md#23-bên-trong-gateway): *"Mọi gói sau đó KHÔNG verify lại chữ ký"* — câu đó chỉ có nghĩa nếu có chữ ký để verify một lần |
 | R3 | Claim tối thiểu: `student_id`, `room_id`, `session_id`, `roles`, `exp` | [README §3.4](../../architecture/system-architecture.md#34-xác-thực-one-time-join-token) bước 3 — đó đúng là tập `ChannelAttributes` gateway phải bind |
 
-**Chưa quyết được ở đây, phải xác nhận với đội dịch vụ nền tảng:** thuật toán ký (HMAC dùng
-secret chung hay chữ ký bất đối xứng), cách phân phối/xoay khoá, và encoding cụ thể.
-`_context.md` ghi `POST /session/{id}/join` **đã có** ở dịch vụ nền tảng — nên format join token là
-**sự thật cần đi hỏi, không phải thứ tài liệu này được phép thiết kế**. Bịa ra một format ở đây
-sẽ được code theo và lệch với thứ đang chạy thật.
+> [!IMPORTANT]
+> **G1a ĐÃ CHỐT KIẾN TRÚC (2026-09-10, người dùng quyết định) — code CHƯA làm ở cả 2 phía.**
+> Grep thật vào `uniclass-product-api` (dịch vụ nền tảng) xác nhận: endpoint `GET /learning-lesson`
+> chỉ dùng JWT đăng nhập thường (`AuthService.checkToken`, HS256, secret dùng chung
+> `config.jwtSecretKey`, không có `jti`) — **không tồn tại** một endpoint mint "join token dùng 1
+> lần" nào như câu trên từng giả định. `_context.md`'s câu "`POST /session/{id}/join` đã có" là
+> **sai/lỗi thời** so với code thật — phải sửa lại giả định đó, không phải đi hỏi thêm để xác nhận
+> một cái không tồn tại.
+
+**Thiết kế đã chốt: JWT ký bất đối xứng + phân phối public key qua K8s ConfigMap (Stateless
+One-Time Join Token + Replay Guard).**
+
+| Thành phần | Quyết định |
+|---|---|
+| Thuật toán ký | Bất đối xứng (RS256/ES256 — chọn cụ thể loại nào vẫn cần đội nền tảng xác nhận khi code, nhưng đã chốt KHÔNG dùng HMAC/secret-chung) — private key nằm hẳn trong team phát hành (Node.js), Gateway **chỉ bao giờ cầm public key**, không thể tự mint token dù config bị lộ |
+| Claims bắt buộc | `sub`=student_id, `room_id`, `jti`, `iat`, `exp` (ngắn, ~30s, khớp TTL guard bên dưới), `iss` (định danh team phát hành), `aud`="uni-realtime-gateway" |
+| **Vì sao có `aud`/`iss`:** | Hệ này sẽ có nhiều team dùng lại cùng cơ chế ký (LMS/CMS/B2B...) — nếu Gateway chỉ verify chữ ký mà không ép `aud`/`iss`, một token hợp lệ do team KHÁC phát hành (cho mục đích khác) vẫn verify pass ở đây. Đây là điều kiện bắt buộc, không phải tuỳ chọn |
+| Phân phối public key | **GitOps, không CDN/S3:** team giữ private key tự tạo key-pair → PR public key vào repo `jwks-registry` → SecOps/Arch Team review & approve → CI render thành **K8s ConfigMap**, apply vào cluster (hệ thống cũ của tổ chức đã chạy K8s — không dùng CDN static file vì Gateway không cần fetch mạng nếu key đã có sẵn trên đĩa) |
+| Cách Gateway đọc key | Mount ConfigMap vào pod **không dùng `subPath`** (subPath không tự cập nhật khi ConfigMap đổi — gotcha của K8s). Gateway đọc file local + có file-watcher (`java.nio.file.WatchService`) reload key set khi phát hiện đổi — **không có network call nào lúc verify**, không vi phạm R1/§13.2 |
+| Một-lần-dùng (G1b, đã chốt từ trước) | Không đổi — vẫn `SET join-token:{jti} "1" EX 30 NX` trên Valkey **của riêng Gateway/team này**, không chia sẻ `jti`-store giữa các team khác dùng chung cơ chế ký |
+| Rủi ro còn treo | (1) Đây là kiến trúc, **chưa có dòng code nào** — `JoinTokenVerifier` thật thay `DevJoinTokenVerifier`/`AlwaysAcceptJoinTokenVerifier` vẫn chưa viết. (2) Giả định hệ thống chạy K8s ở production — nếu sai giả định này (ví dụ môi trường staging vẫn Docker Compose thuần), cần fallback tương đương (bind-mount file, cùng code đọc file, không cần code riêng). (3) Thuật toán cụ thể RS256 hay ES256, và quy trình đăng ký/rotate key vào `jwks-registry` (ai duyệt, overlap key cũ/mới bao lâu) vẫn cần đội dịch vụ nền tảng xác nhận bằng văn bản trước khi code T6 thật |
 
 > [!NOTE]
 > **Cơ chế cưỡng chế "Dùng MỘT lần" với Valkey Cluster (ĐÃ CHỐT):**
@@ -195,10 +211,17 @@ sao: `stack: spring` ở repo này chỉ nghĩa là "boot bằng Spring Boot" �
 
 ### 9.1 Kỹ thuật — chặn task, quyết được trong đội
 
-- [ ] **G1a** Thuật toán ký join token + phân phối khoá — **đi hỏi đội dịch vụ nền tảng**, không tự
-      thiết kế (dịch vụ đã tồn tại). *Chặn T6.*
+- [x] **G1a** Thuật toán ký join token + phân phối khoá → **ĐÃ CHỐT KIẾN TRÚC (2026-09-10, người
+      dùng quyết định):** JWT ký bất đối xứng (RS256/ES256, thuật toán cụ thể còn cần đội nền tảng
+      xác nhận) + `aud`/`iss` bắt buộc (nhiều team dùng chung cơ chế ký) + phân phối public key qua
+      GitOps → K8s ConfigMap (không CDN, vì hạ tầng cũ đã chạy K8s) — xem chi tiết đầy đủ ở mục G1
+      phía trên. **Code CHƯA làm** — phát hiện thêm: `_context.md`'s giả định `POST /session/{id}/join`
+      đã tồn tại là SAI, dịch vụ nền tảng hiện chỉ có JWT đăng nhập thường, không có endpoint mint
+      join-token nào. Vẫn *chặn T6* tới khi code xong, không phải tới khi có quyết định — quyết định
+      đã có, việc còn lại là hiện thực.
 - [x] **G1b** "Một lần" hay "TTL ngắn"? → **ĐÃ CHỐT:** Cưỡng chế vé 1 lần bằng Valkey Cluster `SET join-token:{jti} "1" EX 30 NX` tại Gateway handshake. Không còn chặn T6.
-- [ ] **G1c** Dung sai lệch đồng hồ khi kiểm `exp`. *Chặn T6.*
+- [ ] **G1c** Dung sai lệch đồng hồ khi kiểm `exp` — đề xuất ±5s (token sống ngắn ~30s) nhưng
+      **chưa được đội dịch vụ nền tảng xác nhận cùng nguồn NTP** — không tự chốt số này. *Chặn T6.*
 - [x] **G2a** `N` = bao nhiêu lần flush thì gửi full snapshot? → **ĐÃ CHỐT (2026-09-06, trong đội):**
       `N = 10` (~2 giây ở trần 200ms/flush). Hiện thực ở
       `RoomState.FULL_SNAPSHOT_EVERY_N_FLUSHES`. Không còn chặn T3.
@@ -217,7 +240,7 @@ trúc sẽ được code theo và không ai biết nó chưa từng được duy
 | # | Câu hỏi | Ai quyết | Chặn gì ở đây | Trạng thái |
 |---|---|---|---|---|
 | 1 | **Công thức điểm cụ thể cho quiz** | Product | `AnswerAck.awarded_points` không tính được → `ScoreCalculator` của **T2** và Game Definition của **T11** | ✅ ĐÃ CHỐT (2026-09-06) — xem ghi chú dưới |
-| 2 | `missed_step_policy` mặc định | Product | Schema Game Definition (**T11**) | 🔴 Còn treo |
+| 2 | `missed_step_policy` mặc định | ~~Product~~ → Dev/Eng (nội bộ) | Schema Game Definition (**T11**) | ✅ ĐÃ CHỐT (2026-09-10, xem ghi chú dưới) |
 
 > [!NOTE]
 > **Câu 1 đã chốt (2026-09-06, Product):** trắc nghiệm 1-trong-4 đáp án, nhị phân đúng/sai —
@@ -229,9 +252,24 @@ trúc sẽ được code theo và không ai biết nó chưa từng được duy
 > theo công thức trên và thay `PlaceholderScoreCalculator` trong `GatewayBootstrap`/nơi khởi
 > tạo `RoomActor` — **chưa làm**, đây là việc kế tiếp khi quay lại T2/T11.
 >
-> Câu 2 (`missed_step_policy` mặc định) **vẫn còn treo** — T11 đã hiện thực schema với giá trị
-> `ZERO` theo đúng chữ AC của plan.md Task 11, nhưng đó là lựa chọn kỹ thuật để test chạy được,
-> **không phải** quyết định Product chính thức cho câu này.
+> **Câu 2 đã chốt (2026-09-10, quyết định NỘI BỘ dev/eng — PO không tham gia câu này, khác câu 1
+> ở trên):** giữ `ZERO` là giá trị DUY NHẤT cho GĐ1, không mở `SKIP`/`ALLOW_LATE`.
+> `DefinitionLoader.java:24-28` tiếp tục hard-reject 2 giá trị đó nguyên trạng — **không có thay
+> đổi code nào** kèm quyết định này, chỉ là ghi nhận chính thức hoá một hành vi code đã đúng sẵn.
+>
+> Lý do chốt `ZERO`-only thay vì mở `SKIP`: đánh giá rủi ro trước khi chốt cho thấy mở `SKIP` kéo
+> theo (1) phải thêm field `%` vào `RoomStateSnapshot`/`AnswerAck` — đổi `.proto` dùng chung theo
+> ADR-1, ảnh hưởng cả 2 service; (2) rủi ro công bằng: loại câu đã bỏ lỡ khỏi mẫu số khiến học
+> sinh vào muộn có `%` cao hơn người làm đủ nếu lỡ dùng `SKIP` cho phòng thi đấu — cần ràng buộc
+> chống lạm dụng bằng code (flag "không thi đấu" trên `GameDefinition`), không chỉ dựa quy ước tài
+> liệu. GĐ1 hiện chỉ có use-case thi đấu, chưa ship use-case tự học nào cần `SKIP`/`ALLOW_LATE` —
+> nên chưa đáng đánh đổi. Nếu sau này có nhu cầu tự học thật, mở lại câu hỏi này kèm bản thiết kế
+> đầy đủ (field protocol + ràng buộc chống lạm dụng), không chỉ đổi 1 dòng `DefinitionLoader`.
+>
+> **Ghi rõ vì sao KHÔNG phải quyết định Product:** đúng nguyên tắc *"không tự điền một giá trị hợp
+> lý"* ở §9.2 — quyết định này KHÔNG được PO duyệt, chỉ là dev/eng tự chốt phạm vi kỹ thuật nội bộ
+> (giữ nguyên hành vi code đã có, không mở rộng thêm). Nếu Product sau này có yêu cầu khác, câu hỏi
+> này coi như MỞ LẠI, không phải đã đóng vĩnh viễn.
 
 ---
 

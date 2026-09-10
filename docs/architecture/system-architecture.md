@@ -678,11 +678,11 @@ t ≈ 22s     Phòng trở lại PLAYING, broadcast state đầy đủ cho học
 - **PH-3 · Hợp đồng phía Client chưa hoàn thiện**: Client bắt buộc phải có RingBuffer 10 submission, `sequence` tăng dần, cơ chế gửi `RESYNC`, debounce 150ms khi gõ phím. Nếu client không hoàn thành, cam kết *"mất dữ liệu = 0"* không thể đạt được kể cả khi server hoạt động hoàn hảo 100%.
 
 ### 7.5 Quyết định còn treo
-Năm câu hỏi cần cấp thẩm quyền quyết định — **3/5 đã chốt (2026-09-06)**, 2 câu còn mở:
+Năm câu hỏi cần cấp thẩm quyền quyết định — **4/5 đã chốt (2026-09-10)**, 1 câu còn mở:
 
 | # | Câu hỏi | Người quyết định | Ảnh hưởng | Trạng thái |
 |---|---|---|---|---|
-| 1 | Mặc định của `missed_step_policy` | **Product** | Quyết định kích thước snapshot < 5 KB ([§4.8](#48-vào-phòng-muộn-late-join-vs-kết-nối-lại)) | 🔴 Còn treo |
+| 1 | Mặc định của `missed_step_policy` | ~~Product~~ → **Dev/Eng (nội bộ, PO không tham gia)** | Quyết định kích thước snapshot < 5 KB ([§4.8](#48-vào-phòng-muộn-late-join-vs-kết-nối-lại)) | ✅ ĐÃ CHỐT (2026-09-10, quyết định nội bộ dev/eng, không qua PO) — **giữ `ZERO` là giá trị DUY NHẤT cho GĐ1, không mở `SKIP`/`ALLOW_LATE`.** `DefinitionLoader` tiếp tục hard-reject 2 giá trị đó (không đổi code) — lý do: `SKIP` cần thêm field `%` vào protocol + ràng buộc chống lạm dụng (người vào muộn lợi thế % nếu lỡ dùng cho phòng thi đấu), không đáng đánh đổi khi GĐ1 chỉ có use-case thi đấu, chưa có use-case tự học nào ship. Không phải quyết định Product — ghi rõ để không hiểu nhầm là PO đã duyệt. |
 | 2 | Công thức tính điểm Quiz GĐ1 | **Product** | Hoàn thiện `ScoreCalculator` (Task 2) | ✅ ĐÃ CHỐT — xem [§2.5](#25-game-definition--guardrails) |
 | 3 | Ngân sách hạ tầng hàng tháng | **Business** | Số lượng pod Gateway & Engine tối ưu | 🔴 Còn treo |
 | 4 | Hệ thống chạy bao nhiêu giờ mỗi ngày? | **Business** | Nếu chỉ chạy 4–6 tiếng/ngày có thể buộc phải đảo ngược [ADR-002](#adr-002) do chi phí duy trì quorum Pekko cluster luôn-bật | ✅ ĐÃ CHỐT — chạy cả ngày, ADR-002 **giữ nguyên**, xem [§1.1](#11-bài-toán--đặc-thù-edtech) |

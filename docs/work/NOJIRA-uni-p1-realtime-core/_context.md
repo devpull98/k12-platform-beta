@@ -43,8 +43,24 @@ progress: "Code Giai doan 1 (T1-T23) da xong, mvn clean install toan reactor xan
   Con GAP CHUA dong truoc khi ship that (khong phai '100% hoan thanh'): staging Valkey Cluster
   chua verify (moi Docker 1 may); PH-3 client contract (ring buffer/RESYNC) chua co doi nhan;
   JoinTokenVerifier that con chan boi G1a/G1c; nguong L1 IP 4000/phut chua do tai that (PH-1);
-  missed_step_policy khac ZERO + ngan sach ha tang van cho Product/Business tra loi. Chi tiet day
-  du (B1-B5, lich su tung task) xem git history cua file nay truoc ban rut gon 2026-09-10."
+  ngan sach ha tang van cho Business tra loi. Chi tiet day
+  du (B1-B5, lich su tung task) xem git history cua file nay truoc ban rut gon 2026-09-10.
+  2026-09-10 (tiep): missed_step_policy mac dinh DA CHOT - quyet dinh NOI BO dev/eng, PO khong
+  tham gia cau nay (khac G1a o duoi, PO co tham gia). Giu ZERO la gia tri DUY NHAT cho GD1, khong
+  mo SKIP/ALLOW_LATE - DefinitionLoader tiep tuc hard-reject nguyen trang, KHONG doi code. Ly do:
+  mo SKIP keo theo doi .proto (them field %, anh huong ca 2 service theo ADR-1) + rui ro cong bang
+  (nguoi vao muon loi the % neu lo dung SKIP cho phong thi dau) - GD1 chua co use-case tu hoc nao
+  can toi, chua dang danh doi. Chi tiet day du: NOJIRA-uni-p1-tech-design.md muc 9.2 cau 2,
+  system-architecture.md §7.5 dong 1.
+  2026-09-10 (tiep, thao luan kien truc G1a): nguoi dung quyet dinh kien truc join-token: JWT ky
+  bat doi xung (RS256/ES256) + aud/iss bat buoc (nhieu team dung chung co che ky sau nay) +
+  phan phoi public key qua GitOps (repo jwks-registry, SecOps/Arch duyet) -> K8s ConfigMap (khong
+  CDN, vi ha tang cu da chay K8s). Chi tiet day du: NOJIRA-uni-p1-tech-design.md muc G1 + checklist
+  9.1 (G1a danh dau XONG kien truc, code CHUA lam). Phat hien quan trong: grep that vao
+  uniclass-product-api (dich vu nen tang) xac nhan gia dinh cu 'POST /session/{id}/join da co' LA
+  SAI - dich vu do hien chi co JWT dang nhap thuong (AuthService.checkToken, HS256, secret dung
+  chung config.jwtSecretKey, khong co jti), khong ton tai endpoint mint join-token nao. G1c (dung
+  sai dong ho check exp) van con treo, de xuat +-5s nhung chua duoc doi nen tang xac nhan."
 dev_selftest: pending
 qc_status: pending
 trace: pending
