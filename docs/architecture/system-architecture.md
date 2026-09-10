@@ -1191,16 +1191,23 @@ khỏi phần **đề xuất cho GĐ2** (cần ADR riêng, chưa được phép 
 
 Mục này trình bày ví dụ thực tế quy trình chuyển đổi tài liệu yêu cầu nghiệp vụ từ **Product Owner (PO)** (`PO_Require_Game+nhóm_+tập+thể+Inclass.doc`) sang **Đặc Tả Kỹ Thuật cho Developer (Dev Specs)** và các **Kịch Bản Kiểm Thử Hành Vi (BDD - Behavior Driven Development)** nhằm đảm bảo tính toàn vẹn giữa Yêu cầu Sản phẩm và Hiện thực Mã nguồn.
 
+> [!IMPORTANT]
+> **Cập nhật 2026-09-10:** mục này viết trước khi Task 20-27 code xong, bảng 10.1 gốc có 4 dòng
+> không khớp implementation thật (đã sửa lại bên dưới) — cùng lỗi đã tìm thấy và sửa ở
+> `docs/specs/tech-design/INCLASS-GAME-001-inclass-group-game-tech-design.md` §2 (tài liệu đó có
+> chi tiết đầy đủ hơn bảng rút gọn ở đây). Xem `docs/work/NOJIRA-uni-p2-inclass-game/plan.md`
+> Task 27 cho danh sách gap schema/nghiệp vụ còn treo mới nhất.
+
 ---
 
 ### 10.1 Bảng Ánh Xạ Chuyển Đổi Yêu Cầu PO (PO Specs) $\rightarrow$ Kỹ Thuật Developer (Dev Specs)
 
-| Yêu cầu PO (`PO_Require_Game...doc`) | Đặc tả Kỹ thuật Developer (Dev Specs) | Thành phần / Codebase Phụ trách |
+| Yêu cầu PO (`PO_Require_Game...doc`) | Đặc tả Kỹ thuật Developer (Dev Specs) — **đã khớp code thật** | Thành phần / Codebase Phụ trách |
 |---|---|---|
-| **Chế độ chơi (Game Modes):**<br>- `cooperative`: Tập thể (Đánh boss)<br>- `team`: Chia X nhóm thi đấu<br>- `individual`: Thi đấu cá nhân | Mở rộng `GameDefinition` (Task 11) chứa enum `game_mode` (`SOLO`, `COOPERATIVE`, `TEAM`, `INDIVIDUAL`). Khai báo `team_count` và `team_assignment` trong Data Model `RoomState`. | `modules/uni-game-engine/.../definition/GameDefinition.java`<br>`modules/uni-game-engine/.../room/RoomState.java` |
-| **Cơ chế Mechanic:**<br>- `progress_meter` (Thanh tiến trình)<br>- `progress_display_mode`: `simple_bar` / `staged_visual` | Cấu hình `progress_target` (đích tiến trình). Thêm mốc phần trăm (`progress_stages`) trong payload Protobuf `RoomStateSnapshot`. `RoomActor` tự tính `% = (câu đúng / progress_target) * 100`. | `modules/uni-protocol/.../game_message.proto`<br>`modules/uni-game-engine/.../room/RoomActor.java` |
-| **Điều kiện Thắng (`win_condition`):**<br>- `progress_completed`: Đạt 100%<br>- `first_to_finish`: Đội đầu tiên chạm 100%<br>- `most_points_when_time_up`: Điểm cao nhất khi hết giờ | Thêm `WinConditionEvaluator` vào `RoomState.evaluateStep()`. Khi thỏa mãn điều kiện, `RoomActor` chuyển FSM sang trạng thái `FINISHED` và dừng ván game. | `modules/uni-game-engine/.../room/RoomState.java`<br>`modules/uni-game-engine/.../scoring/FormulaScoreCalculator.java` |
-| **Tài nguyên dùng chung (`shared_resource`):**<br>- `time`: Trừ thời gian khi sai<br>- `lives`: Trừ số mạng của phòng | Thêm `shared_resource_type` và `penalty_value`. Khi nộp bài sai, `RoomState` trừ trực tiếp vào `step_deadline_at` hoặc `remaining_lives` của nhóm/phòng. | `modules/uni-game-engine/.../room/RoomState.java` |
+| **Chế độ chơi (Game Modes):**<br>- `cooperative`: Tập thể (Đánh boss)<br>- `team`: Chia X nhóm thi đấu<br>- `individual`: Thi đấu cá nhân | `GameDefinition` chứa `game_mode` (`SOLO`/`COOPERATIVE`/`TEAM`/`INDIVIDUAL`). Roster đội là **TĨNH** — `GameDefinition.teamRosters` (`List<TeamAssignment>`), CMS/upstream quyết định trước khi nạp Engine. **Không có** field `team_count`/`team_assignment` (random/manual) nào trong code — gap schema, xem `plan.md` Task 27. | `modules/uni-game-engine/.../definition/GameDefinition.java`<br>`modules/uni-game-engine/.../room/RoomState.java` |
+| **Cơ chế Mechanic:**<br>- `progress_meter` (Thanh tiến trình)<br>- `progress_display_mode`: `simple_bar` / `staged_visual` | `progress_target` + `progress_stages` trong `GameDefinition`. `RoomState` (không phải `RoomActor` trực tiếp) tự tính `% = floor(câu đúng / progress_target × 100)` mỗi lần chấm câu. **`progress_display_mode` không có field riêng** — engine luôn gửi `stage_index`, gap schema. | `modules/uni-protocol/.../uni/realtime/v1/{common,server_events}.proto`<br>`modules/uni-game-engine/.../room/RoomState.java` |
+| **Điều kiện Thắng (`win_condition`):**<br>- `progress_completed`: Đạt 100%<br>- `first_to_finish`: Đội đầu tiên chạm 100%<br>- `most_points_when_time_up`: Điểm cao nhất khi hết giờ | `WinConditionEvaluator` (pure function, `scoring/`). Khi thoả mãn, `RoomState.endGame()`/`RoomActor` chuyển FSM sang `FINISHED`, broadcast `GameOver`. Luật "Hoà" khi ngang điểm — **PO tự flag chưa chốt**, `singleHighestScorer()` trả rỗng, đúng chủ đích. `most_points_when_time_up` chưa có trigger tự động "hết giờ" — chỉ `TeacherCommand.END_GAME` thủ công. | `modules/uni-game-engine/.../scoring/WinConditionEvaluator.java`<br>`modules/uni-game-engine/.../room/RoomState.java` |
+| **Tài nguyên dùng chung (`shared_resource`):**<br>- `time`: Trừ thời gian khi sai<br>- `lives`: Trừ số mạng của phòng | `GameDefinition.sharedResourceType` (`TIME`/`LIVES`/`NONE`) + `sharedResourcePenalty`. `type=TIME` trừ `deadlineMs` — **đã xong**. `type=LIVES` **bị `DefinitionLoader` từ chối tại load-time** — PO chưa đặc tả số lives ban đầu, không tự bịa số. | `modules/uni-game-engine/.../definition/{GameDefinition,DefinitionLoader}.java`<br>`modules/uni-game-engine/.../room/RoomState.java` |
 | **Tự động hiện nút "Vào chơi" (No Room Code):**<br>- Không cần link hay mã phòng.<br>- Lấy danh tính từ tài khoản Uniclass/CMS | Xác thực `JoinTokenAuthHandler` tại Gateway qua JWT join token một lần (`JoinTokenAuthHandler.java`). Trích xuất `student_id`, `room_id`, `session_id` từ token claim. | `modules/uni-websocket-gateway/.../auth/JoinTokenAuthHandler.java` |
 
 ---
@@ -1218,7 +1225,7 @@ Feature: Chế độ chơi Tập thể đánh Boss chung (Cooperative Mode)
     And Boss đang ở trạng thái 0% sát thương (Giai đoạn visual 1: Rồng nguyên vẹn)
     When 5 học sinh gửi đáp án đúng SubmitAnswer trong câu 1
     Then Server RoomActor tính toán tiến trình đạt (5 / 10) * 100 = 50%
-    And Server broadcast gói tin RoomStateSnapshot mang delta progress_percentage = 50% và stage_index = 3 (Rồng lộ xương sườn)
+    And Server broadcast gói tin RoomStateSnapshot mang delta progress_percentage = 50% và stage_index = 2 (Rồng lộ xương sườn — stage_index 0-based, khớp RoomState.stageIndexFor() thật)
     And submit_ack trả về cho 5 học sinh có latency p99 < 100ms
     When thêm 5 học sinh khác gửi đáp án đúng SubmitAnswer ở câu 2
     Then tiến trình phòng đạt 100% (progress_completed)
