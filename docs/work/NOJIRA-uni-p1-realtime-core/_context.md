@@ -614,11 +614,20 @@ progress: "T1, T2, T4, T5, T10 xong. T6 MOT PHAN xong (GatewayPipeline + WS hand
   toan reactor: BUILD SUCCESS (2:24) - 7 protocol + 92 gateway + 170 engine + 4 e2e, khong Docker.
   Tai lieu da cap nhat: CLAUDE.md (rule B2 + Known Phase 1 trade-offs), docs/runbook/engine-scaling-freeze.md
   (rui ro GOC da het vi khong con N de doi, nhung runbook CHUA go bo vi dieu kien 'verify Valkey
-  Cluster that o staging' van chua dat - chi Docker 1 may)."
+  Cluster that o staging' van chua dat - chi Docker 1 may).
+  2026-09-10 (phien khac, nguoi dung yeu cau chay lai 2 lan de kiem tra flaky): dep sach wslrelay.exe
+  mo coi tren port 9000 truoc khi chay - xac nhan luc do KHONG con tien trinh mo coi nao (wslrelay
+  moi xuat hien sau khi 'docker compose up' la binh thuong, gan lien voi container vua khoi dong,
+  xac nhan bang curl WS handshake that tra 101 Switching Protocols, khong phai loai mo coi nhu lan
+  truoc). Chay DockerComposeResyncIT + DockerComposeChaosIT 2 lan lien tiep voi RUN_DOCKER_IT=true:
+  lan 1 3/3 pass (recoveryMs=18816, engine-0 chet -> phuc hoi tren engine-1), lan 2 3/3 pass
+  (recoveryMs=24818, engine-1 chet -> phuc hoi tren engine-0) - ca 2 deu nam trong dai baseline cu
+  21.8s-27.9s (Task 14), KHONG flaky qua 2 lan chay lien tiep. docker compose down dep sach sau khi
+  xong."
 dev_selftest: pending
 qc_status: pending
 trace: pending
-updated: "2026-09-09"
+updated: "2026-09-10"
 ```
 
 **Ship-ready khi:** `dev_selftest: pass` **và** `qc_status ∈ {pass, na}` **và** `trace: pass`.

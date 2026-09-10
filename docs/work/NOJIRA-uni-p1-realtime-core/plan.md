@@ -285,6 +285,13 @@ parallel_safe: true
     Task 14, không regress), `DockerComposeScaleUpIT` (1/1, `engine-2` sau khi build lại image mới
     tự khởi động đúng `LeaseBasedRoomOwnership`, không còn dòng log
     `ModuloRoomOwnership`/`ENGINE_POD_COUNT` nào). Đã `docker compose down` dọn sạch sau khi xong.
+  - **Kiểm tra flaky (2026-09-10, theo yêu cầu người dùng):** dọn xác nhận không còn `wslrelay.exe`
+    mồ côi nào trước khi chạy (relay mới xuất hiện sau `docker compose up` là bình thường, xác nhận
+    bằng WS handshake thật trả `101 Switching Protocols`, khác hẳn loại mồ côi gây timeout ở lần
+    trước). Chạy `DockerComposeResyncIT` + `DockerComposeChaosIT` **2 lần liên tiếp** trên cùng 1
+    stack fresh: lần 1 — 3/3 pass, phục hồi 18816ms (engine-0 chết → engine-1 giành lại); lần 2 —
+    3/3 pass, phục hồi 24818ms (engine-1 chết → engine-0 giành lại). Cả 2 lần đều nằm trong dải đã
+    đo ở Task 14 (21.8s-27.9s) — **không flaky qua 2 lần chạy liên tiếp**.
 
 ---
 
