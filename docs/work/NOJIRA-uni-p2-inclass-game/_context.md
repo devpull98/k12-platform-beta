@@ -195,7 +195,17 @@ progress: "2026-09-09: Task 20+21 xong (xem entry truoc). Task 22 (Team mode + S
   goi endGame() giua van truoc progress_target ma khong doi deadlineMs troi qua - 1 guard chan
   EndGame luc PLAYING se pha chinh test nay. Ghi lai thanh cau hoi nghiep vu can PO quyet dinh
   (giong G1a/G1c/LIVES), khong tu doan ranh gioi 'huy' vs 'bao het gio'. mvn -pl :uni-game-engine
-  test: 175/175 pass, khong regress. Chi tiet: plan.md Task 27."
+  test: 175/175 pass, khong regress. Chi tiet: plan.md Task 27.
+  2026-09-10 (tiep, nguoi dung yeu cau cap nhat Task 23): xac nhan 2 muc 'chua lam' cu cua Task 23
+  (trigger tu dong most_points_when_time_up + shared_resource=LIVES) va muc 'chua sua' cua Task 27
+  (luat bien 5 - GV khong duoc huy giua van) THUC RA la CUNG 1 cau hoi nghiep vu goc, khong phai 3
+  gap doc lap: TeacherCommand.END_GAME luc PLAYING dang la co che DUY NHAT cho
+  most_points_when_time_up, nen bat ky guard nao chan EndGame de tuan luat bien 5 se vo hieu hoa
+  luon con duong do. Doc lai INCLASS-GAME-001-v2.1.md SS3-SS5 lan nua de kiem tra co thong tin moi
+  khong - KHONG co (khong co field 'tong thoi gian van', khong co dinh nghia 'het gio' cho
+  most_points_when_time_up ngoai 'GV bam Ket thuc'). Khong tu doan, khong code them - Task 23 giu
+  nguyen 'PHAN LON XONG', chua doi thanh 'XONG'. Da ghi cross-reference 2 chieu giua Task 23 va
+  Task 27 trong plan.md."
 dev_selftest: pending
 qc_status: pending
 trace: pending

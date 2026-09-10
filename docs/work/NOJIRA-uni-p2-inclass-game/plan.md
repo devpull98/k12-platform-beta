@@ -86,6 +86,21 @@ Giai đoạn 2 bổ sung các chế độ chơi tương tác nhóm và tập th�
 - **Chưa làm (có chủ ý, ghi rõ trong `WinCondition.MOST_POINTS_WHEN_TIME_UP`'s javadoc):**
   - **Trigger tự động cho `most_points_when_time_up`** ("hết giờ thì tự kết thúc") — không có cơ chế timer/deadline nào tự động chuyển FSM ở bất kỳ đâu trong codebase này (giống hệt gap `TeacherCommand.NEXT_STEP` đã ghi từ Task 11: "chưa có định dạng nào được chốt"). Logic ĐÁNH GIÁ ai thắng khi game kết thúc đã đúng (`WinConditionEvaluator.singleHighestScorer` + `RoomState.endGame()`); chỉ thiếu cái TRIGGER tự động — hôm nay chỉ `TeacherCommand.END_GAME` (thủ công) mới kích hoạt được nhánh này.
   - **`shared_resource=LIVES`** vẫn bị `DefinitionLoader` từ chối — PO V2.1 không đặc tả số "lives ban đầu", đoán một con số là bịa quyết định nghiệp vụ (đúng tinh thần G1a/G1c).
+  - **Cập nhật 2026-09-10 (phiên khác, review code sau refactor DDD + đối chiếu Product Brief V2.1
+    — xem `plan.md` Task 27):** gap "trigger tự động" ở trên hoá ra ĐAN XEN với 1 câu hỏi nghiệp vụ
+    khác chưa có lời giải — INCLASS-GAME-001-v2.1.md §5.6 luật biên 5 ("GV không được hủy giữa
+    ván"). Vì `TeacherCommand.END_GAME` lúc `PLAYING` hiện là cơ chế DUY NHẤT kích hoạt
+    `most_points_when_time_up`, thêm 1 guard chặn `EndGame` để tuân luật biên 5 sẽ VÔ HIỆU HOÁ luôn
+    con đường duy nhất đang có cho win condition này — 2 gap này thực ra là 1: đều cần PO trả lời
+    "hết giờ" nghĩa là gì (hết giờ của 1 câu hỏi? hết giờ toàn ván theo đồng hồ riêng chưa có field
+    nào trong schema? hay đơn thuần là quyết định thủ công của GV, và nếu vậy ranh giới "hủy" vs
+    "báo hết giờ" là gì). Đã đọc lại `INCLASS-GAME-001-v2.1.md` §3-§5 lần nữa — **không có thông tin
+    mới nào** trả lời được câu hỏi này (không có field "tổng thời gian ván", không có định nghĩa
+    "hết giờ" cho `most_points_when_time_up` ngoài "GV bấm Kết thúc" ở §6.3). Cả 2 mục "chưa làm"
+    trong Task 23 (trigger tự động + `LIVES`) và mục "chưa sửa" của Task 27 (luật biên 5) **cùng
+    chờ 1 câu trả lời PO duy nhất** — không tách 3 task riêng cho 3 câu hỏi con của cùng 1 gap gốc.
+    Không tự đoán, không tự code thêm — trạng thái Task 23 giữ nguyên "PHẦN LỚN XONG", không đổi
+    thành "XONG" cho tới khi có câu trả lời đó.
 - **Verification:** `WinConditionEvaluatorTest` (9/9 case mới, pure logic) + `RoomStateWinConditionTest` (7/7 case mới, cả 3 win condition + không ghi đè reason) + `RoomActorTest` (10/10, +1 case: `GameOver` broadcast thật qua `EndGame`) + `DefinitionLoaderTest` (26/26, +3 case win_condition). Prove-it: tạm bỏ guard "không ghi đè nếu đã FINISHED" trong `endGame()`, xác nhận đúng 1/7 test Red trước khi trả lại Green. `mvn clean install` toàn reactor: BUILD SUCCESS — 5 protocol + 86 gateway + 168 engine (148 cũ + 20 mới) + 2 e2e, không regress.
 
 ### Task 24: Tích hợp Kafka Event Publisher với `lms-worker` — ❌ HỦY (2026-09-09, quyết định PO)
