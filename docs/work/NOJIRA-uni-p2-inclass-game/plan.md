@@ -218,7 +218,24 @@ Giai đoạn 2 bổ sung các chế độ chơi tương tác nhóm và tập th�
   người dùng, chưa viết code/test nào.
 - **Phụ thuộc:** Task 29 (bên dưới) — Engine cần `questions` tồn tại trong `GameDefinition` trước
   khi có nội dung thật để tự bắn câu hỏi 1; nếu làm Task 28 trước, chỉ nối dây được `RULES_DISPLAY`
-  → `IN_PROGRESS`, còn "câu hỏi 1" vẫn phải hard-code tạm.
+  → `IN_PROGRESS`, còn "câu hỏi 1" vẫn phải hard-code tạm. **Task 29 đã XONG (xem bên dưới)** —
+  gap này giờ đã mở, nhưng phát sinh thêm câu hỏi mới khi bắt đầu code thật (xem ngay dưới đây).
+- **Câu hỏi thiết kế MỚI phát hiện (2026-09-11, lúc bắt đầu code) — cần quyết định trước khi làm
+  tiếp, không tự đoán:** PO V2.2 §4 không nói `RULES_DISPLAY` tồn tại bao lâu hay điều gì kích hoạt
+  việc rời khỏi state đó. Đối chiếu kỹ thuật: nếu server chuyển `RULES_DISPLAY → PLAYING` NGAY
+  TRONG CÙNG 1 lần xử lý lệnh `START_GAME` (không có gì chờ ở giữa), thì `RULES_DISPLAY` không bao
+  giờ thực sự được broadcast riêng cho client thấy — vì cơ chế flush hiện tại chỉ gửi state SAU KHI
+  actor xử lý xong lệnh, lúc đó `phase` đã là `PLAYING` mất rồi. Để `RULES_DISPLAY` có ý nghĩa thật
+  (client thấy được màn hình luật chơi), Engine cần: **hoặc (a)** giữ ở `RULES_DISPLAY` một khoảng
+  thời gian cố định trước khi tự chuyển tiếp — nhưng cần 1 con số giây thật (PO không cho), và đây
+  sẽ là **timer tự động ĐẦU TIÊN trong toàn bộ codebase này** (đã ghi nhận nhiều lần trước đây:
+  "chưa có cơ chế timer/deadline nào tự động chuyển FSM ở bất kỳ đâu") — xây timer mới chỉ cho
+  riêng bước này, trong khi câu hỏi tương tự cho "tự động chuyển câu 2 trở đi" (mục trên) vẫn đang
+  treo, có thể tạo ra 2 cơ chế timer không nhất quán nếu làm vội; **hoặc (b)** coi `RULES_DISPLAY`
+  chỉ là 1 giá trị enum mang tính hình thức, broadcast xong chuyển ngay (không giữ), chấp nhận
+  client gần như không kịp thấy nó trên thực tế (không đúng tinh thần "màn hình luật chơi" PO mô
+  tả, nhưng không cần xây timer mới, không cần bịa con số giây). Chưa chọn phương án — hỏi người
+  dùng trước khi code tiếp phần này của Task 28.
 
 ### Task 29: Input Schema Group A/B theo PO V2.2 (§3) — ✅ XONG phần schema thuần (2026-09-11, verify thật), CHƯA WIRE VÀO ĐƯỜNG JOIN THẬT (thuộc Task 28)
 - **Vì sao làm ngay bây giờ:** PO V2.2 §3 lần đầu tiên đưa ra đủ tên trường + kiểu dữ liệu cho
@@ -454,23 +471,36 @@ Giai đoạn 2 bổ sung các chế độ chơi tương tác nhóm và tập th�
 - **Phụ thuộc:** Không phụ thuộc Task 28/29/30 để code, nhưng Task 32 (cúp thưởng) nên làm SAU task
   này vì `computeTeamScore` giờ phản ánh đúng luật ≥50% mới.
 
-### Task 32: Cúp thưởng (Trophy) cuối trận (PO V2.2 §5.2) — 🔴 MỚI, CHƯA LÀM, CHƯA CÓ Ở ĐÂU TRONG CODE
+### Task 32: Cúp thưởng (Trophy) cuối trận (PO V2.2 §5.2) — ✅ XONG (2026-09-11, verify thật)
 - **PO yêu cầu:** Khi trận kết thúc, số cúp mỗi học sinh nhận = số điểm của Team mình (1 điểm = 1
   cúp), làm tròn LÊN nếu điểm lẻ. Học sinh thoát/mất kết nối giữa chừng vẫn nhận cúp nếu đã trả lời
   ≥1 câu (§6 luật biên 4, PO V2.2).
-- **Đã audit: grep toàn bộ `uni-game-engine` + `uni-protocol` cho "trophy"/"cup"/"cúp" — 0 kết quả.
-  Đây là tính năng hoàn toàn CHƯA tồn tại, không phải sửa logic có sẵn.**
-- **AC:**
-  - [ ] Thêm field mới vào protobuf (`GameOver` hoặc `PlayerState`, additive theo ADR-1 — 1 schema
-        dùng chung cả 2 hop, không tạo schema riêng) mang số cúp mỗi học sinh.
-  - [ ] `RoomState`/`buildGameOver()` tính cúp = `computeTeamScore(roster)` làm tròn lên, gán cho
-        mọi thành viên của team đó — kể cả người đã thoát/mất kết nối, miễn đã trả lời ≥1 câu (nối
-        với luật biên 4 §6 PO V2.2 — cần xác nhận field nào trong `PlayerRecord` hiện tại đánh dấu
-        "đã trả lời ≥1 câu" chưa, hay phải thêm mới).
-- **Verification:** Test mới trong `RoomStateWinConditionTest`/`RoomActorTest` (cúp tính đúng, học
-  sinh thoát giữa chừng nhưng đã trả lời 1 câu vẫn nhận cúp).
-- **Phụ thuộc:** Nên làm sau Task 31 (cần `computeTeamScore` phản ánh đúng luật ≥50% mới trước khi
-  quy đổi cúp từ điểm đó).
+- **Đã code thật:**
+  - `common.proto`: thêm `uint32 trophies = 8;` vào `PlayerState` (additive, đúng ADR-1 — 1 schema
+    dùng chung, `final_standings` trong `GameOver` là `repeated PlayerState` sẵn có). Đã regenerate
+    thật bằng `mvn -pl :uni-protocol install` (có Maven+JDK25 rồi nên làm được, khác Task 29 lúc
+    chưa tìm ra Maven).
+  - `PlayerRecord` thêm `hasEverAnswered` (khác `answeredCurrent`/`correctCurrent` — KHÔNG bao giờ
+    reset qua các câu, set `true` một lần trong `submitAnswer` khi có submit hợp lệ) — đúng cơ chế
+    cần cho luật biên 4 §6 ("đã tham gia trả lời ít nhất 1 câu hỏi").
+  - `RoomStateProtobufMapper.computeTrophies()`: trả 0 nếu không phải `GAME_MODE_TEAM` hoặc
+    `!hasEverAnswered`; ngược lại trả đúng `computeTeamScore(roster)` của đội học sinh đó — CHỦ Ý
+    dùng đúng số đã hiển thị cho học sinh (không tính lại riêng có làm tròn khác), tránh lệch giữa
+    "điểm team hiển thị" và "số cúp nhận" (2 con số khác nhau cho cùng 1 khái niệm sẽ gây khó hiểu
+    hơn PO). Chỉ áp dụng trong `buildGameOver()` (không lẫn vào snapshot khi đang chơi — đã audit
+    xác nhận `RoomStateProtobufMapper.buildPlayerState` chỉ được gọi từ `buildGameOver`, snapshot
+    sống dùng bản `buildPlayerState(String)` riêng của `RoomState` không đụng tới cúp).
+  - **Chưa làm — cần PO/BA quyết định trước khi mở rộng, không tự đoán:** làm tròn LÊN chỉ có ý
+    nghĩa khi điểm team có phần lẻ, nhưng `computeTeamScore()` hiện luôn trả `int` (kể cả
+    `AVERAGE` đã tự floor bằng phép chia nguyên) — nếu sau này có công thức tính điểm cho ra số
+    lẻ thật, cần quay lại xác nhận "làm tròn lên" áp dụng NGAY LÚC tính team score hay chỉ lúc quy
+    đổi cúp (2 cách cho kết quả khác nhau).
+- **Test mới:** `RoomStateWinConditionTest` (+2 case: cúp = điểm team cho người đã trả lời, 0 cúp
+  cho người chưa từng trả lời dù cùng team thắng; 0 cúp cho mode COOPERATIVE).
+- **Verify thật:** `mvn -pl :uni-game-engine test -Dtest=RoomStateWinConditionTest`: 10/10 pass.
+  `mvn clean install` toàn reactor thật: **289/289 test pass, 0 lỗi** (287 trước Task 32 + 2 case
+  mới), exit code 0.
+- **Phụ thuộc:** Làm sau Task 31 như dự tính — `computeTeamScore` đã phản ánh đúng luật ≥50%.
 
 ### Câu hỏi PO còn treo — chưa trả lời, không tự đoán (cập nhật 2026-09-11 sau khi đọc hết V2.2)
 - **Luật biên 5 "Cấm hủy giữa ván" (§6 PO V2.2, dòng 158) — VẪN CHƯA GIẢI QUYẾT**, dù V2.2 lặp lại

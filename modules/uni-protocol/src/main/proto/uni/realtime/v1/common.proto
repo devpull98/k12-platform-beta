@@ -59,6 +59,9 @@ message PlayerState {
   bool answered_current = 5;
   bool connected = 6;
   string team_id = 7;
+  // PO V2.2 SS5.2 (P2 Task 32): only meaningful on GameOver.final_standings for GAME_MODE_TEAM --
+  // team_score (1 point = 1 trophy) if this student answered >=1 question during the game, else 0.
+  uint32 trophies = 8;
 }
 
 message TeamAssignment {

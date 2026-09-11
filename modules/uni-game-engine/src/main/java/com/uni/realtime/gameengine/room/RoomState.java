@@ -344,6 +344,7 @@ public final class RoomState implements GameRuleContext {
         if (record != null) {
             record.answeredCurrent = true;
             record.correctCurrent = correct;
+            record.hasEverAnswered = true;
             dirtyStudentIds.add(studentId);
         }
 

@@ -2,6 +2,7 @@ package com.uni.realtime.gameengine.room;
 
 import com.uni.realtime.protocol.AnswerAck;
 import com.uni.realtime.protocol.GameMessage;
+import com.uni.realtime.protocol.GameMode;
 import com.uni.realtime.protocol.GameOver;
 import com.uni.realtime.protocol.MessageType;
 import com.uni.realtime.protocol.PlayerState;
@@ -20,7 +21,29 @@ public final class RoomStateProtobufMapper {
                 .setAnsweredCurrent(record.answeredCurrent)
                 .setConnected(record.connected)
                 .setTeamId(state.teamIdOf(studentId))
+                .setTrophies(computeTrophies(state, studentId, record))
                 .build();
+    }
+
+    /**
+     * PO V2.2 SS5.2 (P2 Task 32): trophies = the student's TEAM score (1 point = 1 trophy), only
+     * for GAME_MODE_TEAM, and only if the student answered >=1 question anywhere in the game (SS6
+     * rule 4 -- a student who quit/disconnected without ever answering gets none, but one who did
+     * still gets the team's full trophy count even after quitting). This method is only reachable
+     * via {@link #buildPlayerState}, which only {@link #buildGameOver} calls -- {@code trophies}
+     * has no meaning mid-game, so it is never computed for the live snapshot path
+     * ({@code RoomState}'s own private {@code buildPlayerState(String)}).
+     */
+    private static int computeTrophies(RoomState state, String studentId, PlayerRecord record) {
+        if (state.gameMode() != GameMode.GAME_MODE_TEAM || !record.hasEverAnswered) {
+            return 0;
+        }
+        String teamId = state.teamIdOf(studentId);
+        return state.teamRosters().stream()
+                .filter(roster -> roster.getTeamId().equals(teamId))
+                .findFirst()
+                .map(state::computeTeamScore)
+                .orElse(0);
     }
 
     public static GameMessage buildAck(String roomId, String studentId, long sequence, String questionId,

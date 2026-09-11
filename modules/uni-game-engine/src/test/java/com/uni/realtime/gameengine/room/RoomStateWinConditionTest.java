@@ -136,6 +136,49 @@ class RoomStateWinConditionTest {
     }
 
     @Test
+    void should_awardTrophiesEqualToTeamScore_toEveryMemberWhoAnsweredAtLeastOnce() {
+        // P2 Task 32 (PO V2.2 SS5.2): trophies = team score, 1 point = 1 trophy, for every member
+        // of that team who answered >=1 question -- including student-02, who never answered but
+        // is still counted for the >=50% participation threshold via student-01 alone (1/2 = 50%).
+        RoomState room = teamRoom(TWO_TEAMS, 100, WinCondition.MOST_POINTS_WHEN_TIME_UP);
+        room.joinRoom("student-01", "S1"); // Team A
+        room.joinRoom("student-02", "S2"); // Team A, never answers
+        room.joinRoom("student-03", "S3"); // Team B
+        room.startGame();
+        room.startQuestion("q-1", 25_000, List.of("a"));
+        room.submitAnswer("student-01", 1L, "q-1", List.of("a")); // Team A: +100
+        room.submitAnswer("student-03", 1L, "q-1", List.of("wrong")); // Team B: +0
+
+        room.endGame();
+
+        GameMessage gameOver = room.buildGameOver();
+        assertThat(playerOf(gameOver, "student-01").getTrophies()).isEqualTo(100);
+        assertThat(playerOf(gameOver, "student-02").getTrophies())
+                .as("never answered any question -- gets none even though Team A won").isZero();
+        assertThat(playerOf(gameOver, "student-03").getTrophies())
+                .as("Team B scored 0, but did answer -- 0 trophies is the correct team score, not a missing-participation zero")
+                .isZero();
+    }
+
+    @Test
+    void should_notAwardTrophies_forNonTeamModes() {
+        RoomState room = new RoomState("room-1", CLOCK, FormulaScoreCalculator.binaryChoice(), MissedStepPolicy.ZERO,
+                GameMode.GAME_MODE_COOPERATIVE, 1, List.<ProgressStage>of(), SharedResourceType.NONE, 0);
+        room.joinRoom("student-01", "S1");
+        room.startGame();
+        room.startQuestion("q-1", 25_000, List.of("a"));
+        room.submitAnswer("student-01", 1L, "q-1", List.of("a"));
+
+        assertThat(playerOf(room.buildGameOver(), "student-01").getTrophies()).isZero();
+    }
+
+    private static com.uni.realtime.protocol.PlayerState playerOf(GameMessage gameOver, String studentId) {
+        return gameOver.getGameOver().getFinalStandingsList().stream()
+                .filter(p -> p.getStudentId().equals(studentId))
+                .findFirst().orElseThrow();
+    }
+
+    @Test
     void should_useTeacherEndedReason_forASoloRoomEndedManually() {
         RoomState room = new RoomState("room-1", CLOCK, FormulaScoreCalculator.binaryChoice());
         room.joinRoom("student-01", "S1");

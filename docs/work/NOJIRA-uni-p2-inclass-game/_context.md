@@ -96,6 +96,16 @@
   184 engine + 4 e2e, gồm cả `InclassGroupGameE2ETest` team-speed-race sau khi sửa kịch bản cho
   đúng ngưỡng 50%). Task 29/30/31 nay đã có thể coi là ✅ XONG thật, không còn "chưa verify". Chi
   tiết đầy đủ: `plan.md` Task 29/30/31.
+- **2026-09-11 (tiếp): Task 32 (cúp thưởng) code xong + verify thật.** Thêm `uint32 trophies = 8`
+  vào `PlayerState` proto (đã regenerate thật, không còn bị chặn bởi thiếu Maven như Task 29 nữa),
+  `PlayerRecord.hasEverAnswered` (không reset qua câu, khác `answeredCurrent`), tính cúp =
+  `computeTeamScore` của team đó cho ai đã từng trả lời ≥1 câu, chỉ áp dụng `GAME_MODE_TEAM`. Chủ ý
+  dùng đúng số điểm team đã hiển thị (không tính lại có làm tròn khác) để tránh 2 con số lệch nhau.
+  `mvn clean install` toàn reactor thật: **289/289 test pass, 0 lỗi.** Toàn bộ P2 Task 29, 30, 31,
+  32 giờ đã ✅ XONG thật. Còn Task 28 (wiring FSM `RULES_DISPLAY` + tự động bắn câu hỏi 1) chưa
+  làm — lúc bắt đầu code phát hiện thêm 1 câu hỏi thiết kế mới (thời lượng/cơ chế kích hoạt màn
+  hình `RULES_DISPLAY` PO không nói rõ, ảnh hưởng tới việc có cần xây timer server-side mới hay
+  không — repo này chưa từng có timer tự động nào). Chi tiết: `plan.md` Task 32 và Task 28.
 - **2026-09-09 (phiên khác, sau refactor DDD lớn trên P1's `RoomActor`/`RoomState`): Task 27 (đối chiếu Product Brief V2.1) mở, một phần xong.** Review phát hiện `RoomStateProtobufMapper.buildFullSnapshot()` là dead code lệch `Math.floor` (bug tưởng là thật lúc đầu, xác nhận lại là code thừa 0 người gọi, không phải hành vi production) — đã xoá. Luật biên §5.6 rule 5 ("GV không hủy giữa ván") **không sửa được bằng code** — mâu thuẫn trực tiếp với thiết kế đã chốt ở Task 23 (`END_GAME` lúc `PLAYING` là trigger duy nhất cho `MOST_POINTS_WHEN_TIME_UP`, chưa có auto-trigger) — cần PO quyết định ranh giới "hủy" vs "báo hết giờ", giống style G1a/G1c. Khoảng trống schema Group A/B (`max_players`, `team_count`, `team_assignment`, `late_join_policy`, `scoring_rule=speed_based`, `progress_display_mode`, `score_aggregation` đủ giá trị) vẫn treo, cần task CMS riêng. Chi tiết: `plan.md` Task 27.
 
 ## State (machine-readable)
