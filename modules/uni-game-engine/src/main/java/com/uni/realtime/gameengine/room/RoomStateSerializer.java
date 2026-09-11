@@ -48,6 +48,7 @@ public final class RoomStateSerializer {
                 out.writeBoolean(player.answeredCurrent);
                 out.writeBoolean(player.connected);
                 out.writeInt(player.missedStepsAtJoin);
+                out.writeBoolean(player.correctCurrent);
             }
 
             Map<String, Integer> scores = state.scoresMap();
@@ -71,6 +72,13 @@ public final class RoomStateSerializer {
             for (Map.Entry<String, Integer> entry : teamProgress.entrySet()) {
                 out.writeUTF(entry.getKey());
                 out.writeInt(entry.getValue());
+            }
+
+            Map<String, Long> teamResponseTimeMs = state.teamResponseTimeMsMap();
+            out.writeInt(teamResponseTimeMs.size());
+            for (Map.Entry<String, Long> entry : teamResponseTimeMs.entrySet()) {
+                out.writeUTF(entry.getKey());
+                out.writeLong(entry.getValue());
             }
         } catch (IOException e) {
             throw new UncheckedIOException(e);
@@ -109,9 +117,11 @@ public final class RoomStateSerializer {
                 boolean answeredCurrent = in.readBoolean();
                 boolean connected = in.readBoolean();
                 int missedStepsAtJoin = in.readInt();
+                boolean correctCurrent = in.readBoolean();
                 PlayerRecord record = new PlayerRecord(index, displayName, missedStepsAtJoin);
                 record.answeredCurrent = answeredCurrent;
                 record.connected = connected;
+                record.correctCurrent = correctCurrent;
                 state.playersMap().put(studentId, record);
             }
 
@@ -130,6 +140,11 @@ public final class RoomStateSerializer {
             int teamProgressCount = in.readInt();
             for (int i = 0; i < teamProgressCount; i++) {
                 state.teamProgressMap().put(in.readUTF(), in.readInt());
+            }
+
+            int teamResponseTimeCount = in.readInt();
+            for (int i = 0; i < teamResponseTimeCount; i++) {
+                state.teamResponseTimeMsMap().put(in.readUTF(), in.readLong());
             }
         } catch (IOException e) {
             throw new UncheckedIOException(e);

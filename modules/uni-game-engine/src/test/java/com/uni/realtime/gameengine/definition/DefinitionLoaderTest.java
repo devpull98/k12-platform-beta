@@ -192,6 +192,67 @@ class DefinitionLoaderTest {
     }
 
     @Test
+    void should_returnDefinition_when_maxPlayersIsUnspecified() throws DefinitionRejectedException {
+        // P2 Task 29: 0 is the "not specified" sentinel -- must not be rejected as out of [1, 12].
+        GameDefinition definition = linearQuiz();
+
+        assertThat(loader.load(definition)).isEqualTo(definition);
+    }
+
+    @Test
+    void should_rejectAtLoadTime_when_maxPlayersIsAboveTwelve() {
+        GameDefinition definition = withMaxPlayers(cooperativeQuiz(10, SharedResourceType.NONE, 0), 13);
+
+        assertThatThrownBy(() -> loader.load(definition))
+                .isInstanceOf(DefinitionRejectedException.class)
+                .hasMessageContaining("max_players");
+    }
+
+    @Test
+    void should_rejectAtLoadTime_when_maxPlayersIsNegative() {
+        GameDefinition definition = withMaxPlayers(cooperativeQuiz(10, SharedResourceType.NONE, 0), -1);
+
+        assertThatThrownBy(() -> loader.load(definition))
+                .isInstanceOf(DefinitionRejectedException.class)
+                .hasMessageContaining("max_players");
+    }
+
+    @Test
+    void should_returnDefinition_when_maxPlayersIsWithinRange() throws DefinitionRejectedException {
+        GameDefinition definition = withMaxPlayers(cooperativeQuiz(10, SharedResourceType.NONE, 0), 12);
+
+        assertThat(loader.load(definition)).isEqualTo(definition);
+    }
+
+    @Test
+    void should_rejectAtLoadTime_when_questionHasFewerThanTwoOptions() {
+        GameDefinition definition = withQuestions(cooperativeQuiz(10, SharedResourceType.NONE, 0),
+                List.of(new Question("2+2=?", List.of("4"), 0)));
+
+        assertThatThrownBy(() -> loader.load(definition))
+                .isInstanceOf(DefinitionRejectedException.class)
+                .hasMessageContaining("at least 2 options");
+    }
+
+    @Test
+    void should_rejectAtLoadTime_when_questionCorrectOptionIndexOutOfRange() {
+        GameDefinition definition = withQuestions(cooperativeQuiz(10, SharedResourceType.NONE, 0),
+                List.of(new Question("2+2=?", List.of("3", "4"), 2)));
+
+        assertThatThrownBy(() -> loader.load(definition))
+                .isInstanceOf(DefinitionRejectedException.class)
+                .hasMessageContaining("correct_option_index");
+    }
+
+    @Test
+    void should_returnDefinition_when_questionsAreWellFormed() throws DefinitionRejectedException {
+        GameDefinition definition = withQuestions(cooperativeQuiz(10, SharedResourceType.NONE, 0),
+                List.of(new Question("2+2=?", List.of("3", "4"), 1)));
+
+        assertThat(loader.load(definition)).isEqualTo(definition);
+    }
+
+    @Test
     void should_rejectAtLoadTime_when_sharedResourceTimeHasNonPositivePenalty() {
         GameDefinition definition = cooperativeQuiz(10, SharedResourceType.TIME, 0);
 
@@ -379,6 +440,24 @@ class DefinitionLoaderTest {
         return new GameDefinition(base.steps(), base.startStepId(), base.tickMode(), base.scoringFormula(),
                 base.missedStepPolicy(), base.maxTransitions(), base.gameMode(), base.progressTarget(), stages,
                 base.sharedResourceType(), base.sharedResourcePenalty());
+    }
+
+    private static GameDefinition withMaxPlayers(GameDefinition base, int maxPlayers) {
+        return new GameDefinition(base.steps(), base.startStepId(), base.tickMode(), base.scoringFormula(),
+                base.missedStepPolicy(), base.maxTransitions(), base.gameMode(), base.progressTarget(),
+                base.progressStages(), base.sharedResourceType(), base.sharedResourcePenalty(), base.teamRosters(),
+                base.scoreAggregation(), base.winCondition(), maxPlayers, base.questions(),
+                base.roundTimeLimitSeconds(), base.lateJoinPolicy(), base.teamAssignmentMode(),
+                base.introNarrative(), base.progressDisplayMode());
+    }
+
+    private static GameDefinition withQuestions(GameDefinition base, List<Question> questions) {
+        return new GameDefinition(base.steps(), base.startStepId(), base.tickMode(), base.scoringFormula(),
+                base.missedStepPolicy(), base.maxTransitions(), base.gameMode(), base.progressTarget(),
+                base.progressStages(), base.sharedResourceType(), base.sharedResourcePenalty(), base.teamRosters(),
+                base.scoreAggregation(), base.winCondition(), base.maxPlayers(), questions,
+                base.roundTimeLimitSeconds(), base.lateJoinPolicy(), base.teamAssignmentMode(),
+                base.introNarrative(), base.progressDisplayMode());
     }
 
     private static GameDefinition linearQuiz() {

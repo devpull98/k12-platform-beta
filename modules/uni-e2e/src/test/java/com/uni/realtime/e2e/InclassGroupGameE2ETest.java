@@ -169,15 +169,28 @@ class InclassGroupGameE2ETest {
 
         // Scenario "First to finish": Team A answers progress_target=2 questions correctly first.
         // Each submit is confirmed accepted before moving on, so a slow ANSWER_ACK round trip
-        // never races ahead of the GameOver wait below.
+        // never races ahead of the GameOver wait below. P2 Task 31 (PO V2.2 §5.2): a question only
+        // credits team progress once it CLOSES (the next question starting), and only if >=50% of
+        // the roster answered it -- so both A1 and A2 (2 of Team A's 3 members) answer each
+        // question here; student-03 deliberately never answers, to keep proving GameOver still
+        // reaches a team member who never personally answered.
         startQuestion(roomId, "q-1", List.of("a"));
         studentA1.submitTrackedAnswer(roomId, "q-1", List.of("a"));
-        assertThat(studentA1.takeMatching("ack for q-1", m -> m.getType() == MessageType.ANSWER_ACK)
+        assertThat(studentA1.takeMatching("ack for q-1 from A1", m -> m.getType() == MessageType.ANSWER_ACK)
                 .getAnswerAck().getAccepted()).isTrue();
-        startQuestion(roomId, "q-2", List.of("a"));
+        studentA2.submitTrackedAnswer(roomId, "q-1", List.of("a"));
+        assertThat(studentA2.takeMatching("ack for q-1 from A2", m -> m.getType() == MessageType.ANSWER_ACK)
+                .getAnswerAck().getAccepted()).isTrue();
+
+        startQuestion(roomId, "q-2", List.of("a")); // closes q-1 -> Team A: 2/3 participated, progress=1
+        studentA1.submitTrackedAnswer(roomId, "q-2", List.of("a"));
+        assertThat(studentA1.takeMatching("ack for q-2 from A1", m -> m.getType() == MessageType.ANSWER_ACK)
+                .getAnswerAck().getAccepted()).isTrue();
         studentA2.submitTrackedAnswer(roomId, "q-2", List.of("a"));
-        assertThat(studentA2.takeMatching("ack for q-2", m -> m.getType() == MessageType.ANSWER_ACK)
+        assertThat(studentA2.takeMatching("ack for q-2 from A2", m -> m.getType() == MessageType.ANSWER_ACK)
                 .getAnswerAck().getAccepted()).isTrue();
+
+        startQuestion(roomId, "q-3", List.of("a")); // closes q-2 -> Team A: 2/3 participated, progress=2 -> first_to_finish
 
         GameMessage gameOverOnA = studentA3.takeMatching("GameOver on a Team A member who never answered",
                 m -> m.getType() == MessageType.GAME_OVER);

@@ -41,6 +41,61 @@
   (rơi vào `default -> log.warn` ở `RoomSupervisor`), `RoomActor.StartQuestion` chỉ được gọi từ
   test. Còn 1 câu hỏi PO chưa trả lời (câu 2 trở đi có tự động theo `round_time_limit` hay vẫn cần
   GV bấm `NEXT_STEP` thủ công) — không tự đoán. Chi tiết đầy đủ: `plan.md` Task 28.**
+- **2026-09-11 (tiếp, đọc hết PO V2.2): thêm Task 29-32 (đều 🔴 MỚI, CHƯA LÀM) sau khi đối chiếu
+  toàn bộ V2.2 §3/§5 với code thật.** Task 29 (Input Schema Group A/B — `GameDefinition` hiện
+  thiếu hẳn `max_players`/`late_join_policy`/`team_assignment`/`questions`/`round_time_limit`,
+  đây cũng là gap nguồn dữ liệu câu hỏi ghi từ Task 11); Task 30 (tie-break theo tổng thời gian
+  trả lời — đóng luôn "luật Hoà chưa chốt" ghi từ Task 27); Task 31 (ngưỡng tham gia ≥50% mới
+  cộng tiến trình Phe — đổi hành vi chấm điểm thật, `TeamModeRules` hiện chưa check tỉ lệ tham
+  gia); Task 32 (cúp thưởng cuối trận — tính năng hoàn toàn chưa tồn tại, đã grep xác nhận 0 kết
+  quả "trophy/cup/cúp" trong code). Còn 4 câu hỏi PO vẫn treo (không tự đoán): luật biên 5 "cấm
+  hủy giữa ván" mâu thuẫn với `END_GAME` là trigger duy nhất (V2.2 KHÔNG giải quyết, lặp nguyên
+  văn V2.1); điểm sàn `speed_based` chỉ là "ví dụ" chưa chốt số; số lives ban đầu vẫn chưa có;
+  câu 2 trở đi tự động hay cần `NEXT_STEP` thủ công (Task 28). `streak_bonus` (gap cũ Task 27)
+  không còn xuất hiện trong V2.2 — coi như PO đã rút yêu cầu, không cần task riêng nữa. Chi tiết
+  đầy đủ từng task: `plan.md` Task 29-32 + mục "Câu hỏi PO còn treo".**
+- **2026-09-11 (tiếp): Task 30 (tie-break theo tổng thời gian trả lời) code xong** —
+  `RoomState`/`GameRuleContext`/`TeamModeRules`/`WinConditionEvaluator` + test mới. **Chưa tự chạy
+  được `mvn` trong phiên này (không có trên PATH sandbox)** — cần người dùng chạy
+  `mvn -pl :uni-game-engine test -Dtest=WinConditionEvaluatorTest,RoomStateWinConditionTest` và
+  xác nhận trước khi coi task này là XONG thật. Phát hiện phụ: `IndividualModeRules` chưa hề
+  implement `MOST_POINTS_WHEN_TIME_UP` — gap riêng, chưa sửa trong task này.
+- **2026-09-11 (tiếp): Task 31 (ngưỡng ≥50% tham gia mới cộng tiến trình Phe) code xong**, sau khi
+  hỏi rõ và người dùng xác nhận 2 quyết định: (1) chốt kiểm tra ngưỡng LÚC CÂU HỎI KẾT THÚC (không
+  phải real-time); (2) chấp nhận hệ quả lớn đi kèm — tiến trình Phe không còn cập nhật tức thời,
+  phải sửa lại ~10 test cũ đang giả định hiệu ứng tức thời (`RoomStateWinConditionTest` x3,
+  `TeamRoomActorTest` x1, `InclassGroupGameE2ETest` team-speed-race). Thiết kế: `PlayerRecord`
+  thêm `correctCurrent`; `GameModeRules` thêm `finalizeQuestionOutcome` (default no-op, chỉ
+  `TeamModeRules` override); `RoomState.startQuestion()`/`endGame()` gọi finalize để "đóng" câu hỏi
+  trước đó trước khi mở câu mới/kết thúc game. Phát hiện phụ tốt: sửa luôn 1 bug cũ (progress cộng
+  2 lần nếu 2 người cùng team cùng đúng 1 câu). Đã đồng bộ Hot Snapshot (Task 14) cho
+  `correctCurrent` + `teamResponseTimeMs` (Task 30) — còn 1 giới hạn nhỏ chưa sửa
+  (`teamsRespondedToCurrentQuestion` chưa serialize, ảnh hưởng tie-break rất nhỏ nếu crash đúng
+  giữa 1 câu). **Chưa tự chạy được `mvn`** — cần người dùng xác nhận trước khi coi XONG thật. Chi
+  tiết đầy đủ: `plan.md` Task 31.
+- **2026-09-11 (tiếp): Task 29 (Input Schema Group A/B) code xong phần schema thuần**, sau khi
+  người dùng đồng ý hướng thêm `questions` làm field RIÊNG trong `GameDefinition` (không map vào
+  `steps`/DAG cũ — audit xác nhận `steps` gần như chết với P2, mọi test COOPERATIVE/TEAM chỉ
+  truyền 1 Step giả để qua validation, không đọc `nextStepIds()` ở đâu cả). Thêm 4 file mới
+  (`Question`, `TeamAssignmentMode`, `LateJoinPolicy`, `ProgressDisplayMode`) +
+  `ScoreAggregation.FIRST_CORRECT_ONLY` + 7 field mới vào `GameDefinition` (additive, không đổi
+  chữ ký constructor cũ nào) + 1 constructor mới tự tính `progress_target = questions.size()` +
+  validate trong `DefinitionLoader`. Cố ý CHƯA làm: wiring `RoomSupervisor.spawnRoom()` đọc
+  `questions` thật (thuộc Task 28); `team_colors` (cần sửa `.proto` + regenerate, không làm được
+  trong sandbox không có Maven); `FIRST_CORRECT_ONLY`/`BLOCK_AFTER_START`/`ProgressDisplayMode`
+  mới là enum, chưa có logic tiêu thụ. Chi tiết đầy đủ: `plan.md` Task 29.
+- **2026-09-11 (tiếp): TÌM RA được `mvn` thật trên máy người dùng (Maven bundled trong IntelliJ
+  IDEA, `~/.jdks/ms-25.0.4.1` do IntelliJ tự tải sẵn đúng Java 25) — verify thật Task 29/30/31
+  thay vì chỉ rà soát thủ công như 2 entry trước. Phát hiện + sửa 2 bug thật qua chạy test thật:
+  (1) thêm field vào `GameDefinition` làm mất constructor 14-tham-số cũ (`steps→winCondition`) vì
+  constructor Group A/B mới cũng vô tình 14-tham-số — `javac` báo lỗi kiểu, đã thêm lại overload cũ;
+  (2) `RoomActor.onStartQuestion()` thiếu nhánh broadcast `GameOver`+dừng actor khi đóng câu hỏi
+  cũng làm game kết thúc (Task 31 chuyển việc này từ `onSubmitAnswer` sang cả `onStartQuestion`) —
+  `TeamRoomActorTest` Red đúng chỗ, đã thêm nhánh giống `onSubmitAnswer`. **Kết quả cuối: `mvn clean
+  install` toàn reactor thật, exit code 0, 287/287 test pass, 0 lỗi** (7 protocol + 92 gateway +
+  184 engine + 4 e2e, gồm cả `InclassGroupGameE2ETest` team-speed-race sau khi sửa kịch bản cho
+  đúng ngưỡng 50%). Task 29/30/31 nay đã có thể coi là ✅ XONG thật, không còn "chưa verify". Chi
+  tiết đầy đủ: `plan.md` Task 29/30/31.
 - **2026-09-09 (phiên khác, sau refactor DDD lớn trên P1's `RoomActor`/`RoomState`): Task 27 (đối chiếu Product Brief V2.1) mở, một phần xong.** Review phát hiện `RoomStateProtobufMapper.buildFullSnapshot()` là dead code lệch `Math.floor` (bug tưởng là thật lúc đầu, xác nhận lại là code thừa 0 người gọi, không phải hành vi production) — đã xoá. Luật biên §5.6 rule 5 ("GV không hủy giữa ván") **không sửa được bằng code** — mâu thuẫn trực tiếp với thiết kế đã chốt ở Task 23 (`END_GAME` lúc `PLAYING` là trigger duy nhất cho `MOST_POINTS_WHEN_TIME_UP`, chưa có auto-trigger) — cần PO quyết định ranh giới "hủy" vs "báo hết giờ", giống style G1a/G1c. Khoảng trống schema Group A/B (`max_players`, `team_count`, `team_assignment`, `late_join_policy`, `scoring_rule=speed_based`, `progress_display_mode`, `score_aggregation` đủ giá trị) vẫn treo, cần task CMS riêng. Chi tiết: `plan.md` Task 27.
 
 ## State (machine-readable)
@@ -239,7 +294,29 @@ progress: "2026-09-09: Task 20+21 xong (xem entry truoc). Task 22 (Team mode + S
   build+broadcast QUESTION_STARTED) chi duoc goi tu test code (grep xac nhan 8 file test, 0 noi
   goi tu duong dispatch production that). Cau hoi PO CHUA tra loi (khong tu doan): tu cau hoi 2 tro
   di co tu dong chuyen theo round_time_limit het han hay van can GV bam NEXT_STEP thu cong - PO V2.2
-  §4 khong noi ro. Chi tiet day du + phan viec can lam: plan.md Task 28."
+  §4 khong noi ro. Chi tiet day du + phan viec can lam: plan.md Task 28.
+  2026-09-11 (tiep, cung phien - doc het V2.2): them Task 29-32 (deu MOI, CHUA lam) sau khi doi
+  chieu toan bo PO V2.2 SS3/SS5 voi code that (audit that, khong suy doan). Task 29: Input Schema
+  Group A/B - GameDefinition hien KHONG co max_players/late_join_policy/team_assignment/
+  team_names/team_colors/questions/round_time_limit/intro_narrative/progress_display_mode/
+  progress_stages; ScoreAggregation enum chi co SUM_ALL/AVERAGE, thieu FIRST_CORRECT_ONLY; gap
+  'questions' chinh la gap nguon du lieu cau hoi ghi tu Task 11 (P1), PO V2.2 da tra loi PHAN
+  'cau hoi o dau ra' (Group A, hoc thuat tu nhap), chi con thieu code doc field do. Task 30:
+  tie-break theo tong thoi gian tra loi (nguoi tra loi DAU TIEN neu cau co >=2 nguoi tra loi) -
+  dong luon gap 'luat Hoa chua chot' da ghi tu Task 27; WinConditionEvaluator hien chua track
+  response_time nao theo team. Task 31: nguong tham gia >=50% moi duoc cong tien trinh/diem Phe
+  (khac V2.1 chi can 1 nguoi dung) - TeamModeRules.applyAnswerOutcome hien KHONG check ti le tham
+  gia; can PO/BA xac nhan thoi diem CHECK nguong (de xuat: chot luc cau hoi ket thuc, khong tinh
+  real-time giua chung) truoc khi code. Task 32: cup thuong cuoi tran (1 diem = 1 cup, lam tron
+  LEN) - grep toan bo uni-game-engine + uni-protocol xac nhan 0 ket qua 'trophy/cup/cup' - tinh
+  nang HOAN TOAN chua ton tai, can them field protobuf moi (additive, dung ADR-1). Con 4 cau hoi
+  PO van treo, khong tu doan: (1) luat bien 5 'cam huy giua van' V2.2 KHONG giai quyet, lap
+  nguyen van V2.1, van mau thuan voi END_GAME la trigger duy nhat cho most_points_when_time_up;
+  (2) diem san toi thieu cong thuc speed_based chi la 'vi du: 2 diem' chua chot so that; (3) so
+  luong lives ban dau van chua co (gap cu Task 23); (4) cau hoi 2 tro di tu dong hay can GV bam
+  NEXT_STEP thu cong (Task 28). streak_bonus (gap cu Task 27) KHONG con xuat hien trong V2.2 -
+  coi nhu PO da rut yeu cau, khong can task rieng nua. Chi tiet day du: plan.md Task 29-32 + muc
+  'Cau hoi PO con treo'."
 dev_selftest: pending
 qc_status: pending
 trace: pending

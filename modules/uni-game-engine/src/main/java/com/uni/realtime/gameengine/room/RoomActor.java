@@ -210,6 +210,13 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
     private Behavior<Command> onStartQuestion(StartQuestion command) {
         state.startQuestion(command.questionId(), command.durationMs(), command.correctAnswerIds());
         scheduleFlushIfDirty();
+        // P2 Task 31: closing the previous question can itself finish the game now (deferred team
+        // progress crediting in RoomState.startQuestion()'s finalizeQuestionOutcome call) -- same
+        // check-after-mutation pattern as onSubmitAnswer/onResync.
+        if (state.phase() == GamePhase.FINISHED) {
+            broadcastTarget.tell(state.buildGameOver());
+            return Behaviors.stopped();
+        }
         return this;
     }
 

@@ -49,4 +49,29 @@ public final class WinConditionEvaluator {
         List<String> winners = highestScorers(scoreByKey);
         return winners.size() == 1 ? Optional.of(winners.get(0)) : Optional.empty();
     }
+
+    /**
+     * {@link #singleHighestScorer}, with a tie broken by total response time (PO V2.2 §5.1): among
+     * keys tied for the highest score, the one with the LOWEST total response time wins. Still
+     * empty if the tie survives the tie-break too (an honest "no single winner", same spirit as
+     * {@link #singleHighestScorer} -- PO does not say what to do at that point, so this does not
+     * invent a further rule). {@code responseTimeMsByKey} is looked up only for keys already tied
+     * on score; a key missing from it is treated as 0ms (fastest possible), matching a team that
+     * never got a chance to answer needing no further penalty here.
+     */
+    public static Optional<String> singleHighestScorerByResponseTime(
+            Map<String, Integer> scoreByKey, Map<String, Long> responseTimeMsByKey) {
+        List<String> tiedOnScore = highestScorers(scoreByKey);
+        if (tiedOnScore.size() <= 1) {
+            return tiedOnScore.stream().findFirst();
+        }
+        long fastest = tiedOnScore.stream()
+                .mapToLong(key -> responseTimeMsByKey.getOrDefault(key, 0L))
+                .min().orElseThrow();
+        List<String> winners = tiedOnScore.stream()
+                .filter(key -> responseTimeMsByKey.getOrDefault(key, 0L) == fastest)
+                .sorted()
+                .toList();
+        return winners.size() == 1 ? Optional.of(winners.get(0)) : Optional.empty();
+    }
 }

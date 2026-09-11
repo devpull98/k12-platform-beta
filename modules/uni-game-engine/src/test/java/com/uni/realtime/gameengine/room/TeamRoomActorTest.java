@@ -52,16 +52,22 @@ class TeamRoomActorTest {
 
     @Test
     void should_broadcastGameOverWithWinningTeamId_when_firstToFinish() {
+        // P2 Task 31 (PO V2.2 §5.2): team progress is judged when the question CLOSES (here, when
+        // q-2 starts), not the instant a correct answer comes in. Needs an explicit JoinRoom first
+        // (unlike before Task 31) because participation is now tracked per-PlayerRecord.
         TestInbox<GameMessage> broadcastInbox = TestInbox.create();
         BehaviorTestKit<RoomActor.Command> kit = teamRoomActor(broadcastInbox, 1, WinCondition.FIRST_TO_FINISH);
+        kit.run(new RoomActor.JoinRoom("student-01", "S1", TestInbox.<GameMessage>create().getRef()));
         kit.run(new RoomActor.StartGame());
         kit.run(new RoomActor.StartQuestion("q-1", 25_000, List.of("a")));
         TestInbox<GameMessage> ackInbox = TestInbox.create();
-
         kit.run(new RoomActor.SubmitAnswer("student-01", 1L, "q-1", List.of("a"), 0L, ackInbox.getRef()));
 
-        GameMessage gameOver = broadcastInbox.receiveMessage();
-        assertThat(gameOver.getType()).isEqualTo(MessageType.GAME_OVER);
+        kit.run(new RoomActor.StartQuestion("q-2", 25_000, List.of("a"))); // closes q-1 -> Team A wins
+
+        GameMessage gameOver = broadcastInbox.getAllReceived().stream()
+                .filter(message -> message.getType() == MessageType.GAME_OVER)
+                .findFirst().orElseThrow();
         assertThat(gameOver.getGameOver().getReason()).isEqualTo("first_to_finish");
         assertThat(gameOver.getGameOver().getWinnerId()).isEqualTo("A");
         assertThat(kit.isAlive()).isFalse();

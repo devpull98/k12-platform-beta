@@ -26,6 +26,7 @@ public final class DefinitionLoader {
                     "missed_step_policy " + definition.missedStepPolicy()
                             + " has no Phase 1 implementation (only ZERO is honored -- plan.md Task 17)");
         }
+        checkPoV22Schema(definition);
 
         checkCooperativeMode(definition);
 
@@ -50,6 +51,30 @@ public final class DefinitionLoader {
         rejectCycles(stepsById);
 
         return definition;
+    }
+
+    /**
+     * PO V2.2 §3 (Group A/B, plan.md P2 Task 29) fields. {@code late_join_policy}/
+     * {@code team_assignment} have no "must be one of N values" check here because they are
+     * already plain Java enums (unlike e.g. {@code shared_resource}) -- the type system already
+     * makes an invalid value unrepresentable, a redundant runtime check would just be dead code.
+     */
+    private void checkPoV22Schema(GameDefinition definition) throws DefinitionRejectedException {
+        if (definition.maxPlayers() != 0 && (definition.maxPlayers() < 1 || definition.maxPlayers() > 12)) {
+            throw new DefinitionRejectedException(
+                    "max_players must be within [1, 12] when specified, got " + definition.maxPlayers());
+        }
+        for (Question question : definition.questions()) {
+            if (question.options().size() < 2) {
+                throw new DefinitionRejectedException(
+                        "question '" + question.questionText() + "' must have at least 2 options");
+            }
+            if (question.correctOptionIndex() < 0 || question.correctOptionIndex() >= question.options().size()) {
+                throw new DefinitionRejectedException(
+                        "question '" + question.questionText() + "' correct_option_index "
+                                + question.correctOptionIndex() + " is out of range for " + question.options().size() + " options");
+            }
+        }
     }
 
     private void checkCooperativeMode(GameDefinition definition) throws DefinitionRejectedException {

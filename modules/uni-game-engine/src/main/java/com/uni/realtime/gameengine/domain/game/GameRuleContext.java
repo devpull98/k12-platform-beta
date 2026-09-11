@@ -19,6 +19,9 @@ public interface GameRuleContext {
     String teamIdOf(String studentId);
     int totalScoreOf(String studentId);
     int computeTeamScore(TeamAssignment roster);
+    long teamResponseTimeMs(String teamId);
+    boolean hasAnsweredCurrentQuestion(String studentId);
+    boolean hasAnsweredCurrentQuestionCorrectly(String studentId);
 
     int incrementRoomProgress();
     int incrementTeamProgress(String teamId);

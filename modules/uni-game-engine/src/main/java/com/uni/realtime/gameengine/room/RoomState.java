@@ -25,6 +25,7 @@ import com.uni.realtime.protocol.TeamAssignment;
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -59,6 +60,9 @@ public final class RoomState implements GameRuleContext {
     private final Map<String, Integer> teamProgress = new HashMap<>();
     private String gameOverReason = "";
     private String winnerId = "";
+
+    private final Map<String, Long> teamResponseTimeMs = new HashMap<>();
+    private final Set<String> teamsRespondedToCurrentQuestion = new HashSet<>();
 
     private final Map<String, Long> lastSeenSequence = new HashMap<>();
     private final Map<String, GameMessage> lastAckByStudent = new HashMap<>();
@@ -197,6 +201,7 @@ public final class RoomState implements GameRuleContext {
     public Map<String, Integer> scoresMap() { return totalScoreByStudent; }
     public Map<String, Long> lastSeenSequenceMap() { return lastSeenSequence; }
     public Map<String, Integer> teamProgressMap() { return teamProgress; }
+    public Map<String, Long> teamResponseTimeMsMap() { return teamResponseTimeMs; }
 
     public void restorePhase(GamePhase phase) { this.phase = phase; }
     public void restoreCurrentQuestionId(String questionId) { this.currentQuestionId = questionId; }
@@ -261,13 +266,19 @@ public final class RoomState implements GameRuleContext {
     }
 
     public void startQuestion(String questionId, long durationMs, List<String> correctAnswerIds) {
+        if (currentQuestionId != null) {
+            modeRules.finalizeQuestionOutcome(this);
+        }
+
         this.currentQuestionId = questionId;
         this.currentCorrectAnswerIds = correctAnswerIds;
         this.serverQuestionStartedAtMs = clock.millis();
         this.deadlineMs = serverQuestionStartedAtMs + durationMs;
         this.questionsStartedCount++;
+        this.teamsRespondedToCurrentQuestion.clear();
 
         for (Map.Entry<String, PlayerRecord> entry : players.entrySet()) {
+            entry.getValue().correctCurrent = false;
             if (entry.getValue().answeredCurrent) {
                 entry.getValue().answeredCurrent = false;
                 dirtyStudentIds.add(entry.getKey());
@@ -276,6 +287,9 @@ public final class RoomState implements GameRuleContext {
     }
 
     public void endGame() {
+        if (phase != GamePhase.FINISHED) {
+            modeRules.finalizeQuestionOutcome(this);
+        }
         if (phase != GamePhase.FINISHED) {
             modeRules.evaluateTimeUp(this);
         }
@@ -315,16 +329,24 @@ public final class RoomState implements GameRuleContext {
         }
 
         long responseTimeMs = serverReceivedAtMs - serverQuestionStartedAtMs;
+
+        String respondingTeamId = teamIdOf(studentId);
+        if (!respondingTeamId.isEmpty() && teamsRespondedToCurrentQuestion.add(respondingTeamId)) {
+            teamResponseTimeMs.merge(respondingTeamId, responseTimeMs, Long::sum);
+        }
+
         int awarded = scoreCalculator.award(answerIds, currentCorrectAnswerIds, responseTimeMs);
         int newTotal = totalScoreByStudent.merge(studentId, awarded, Integer::sum);
+
+        boolean correct = isCorrectAnswer(answerIds, currentCorrectAnswerIds);
 
         PlayerRecord record = players.get(studentId);
         if (record != null) {
             record.answeredCurrent = true;
+            record.correctCurrent = correct;
             dirtyStudentIds.add(studentId);
         }
 
-        boolean correct = isCorrectAnswer(answerIds, currentCorrectAnswerIds);
         modeRules.applyAnswerOutcome(this, studentId, correct);
 
         GameMessage ack = buildAck(studentId, sequence, questionId, true, RejectReason.NONE,
@@ -424,6 +446,20 @@ public final class RoomState implements GameRuleContext {
         int sum = roster.getStudentIdsList().stream().mapToInt(this::totalScoreOf).sum();
         int memberCount = roster.getStudentIdsList().size();
         return scoreAggregation == ScoreAggregation.AVERAGE && memberCount > 0 ? sum / memberCount : sum;
+    }
+
+    public long teamResponseTimeMs(String teamId) {
+        return teamResponseTimeMs.getOrDefault(teamId, 0L);
+    }
+
+    public boolean hasAnsweredCurrentQuestion(String studentId) {
+        PlayerRecord record = players.get(studentId);
+        return record != null && record.answeredCurrent;
+    }
+
+    public boolean hasAnsweredCurrentQuestionCorrectly(String studentId) {
+        PlayerRecord record = players.get(studentId);
+        return record != null && record.correctCurrent;
     }
 
     public String teamIdOf(String studentId) {

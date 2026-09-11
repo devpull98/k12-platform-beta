@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
 
@@ -45,13 +46,16 @@ class RoomStateWinConditionTest {
 
     @Test
     void should_setFirstToFinishReasonAndWinnerTeamId_whenATeamFinishesFirst() {
+        // P2 Task 31 (PO V2.2 §5.2): team progress is judged when the question CLOSES (here,
+        // when q-2 starts), not the instant a correct answer comes in -- see finalizeQuestionOutcome.
         RoomState room = teamRoom(TWO_TEAMS, 1, WinCondition.FIRST_TO_FINISH);
         room.joinRoom("student-01", "S1");
         room.joinRoom("student-03", "S3");
         room.startGame();
         room.startQuestion("q-1", 25_000, List.of("a"));
+        room.submitAnswer("student-01", 1L, "q-1", List.of("a")); // Team A: 1/2 roster answered, correct
 
-        room.submitAnswer("student-01", 1L, "q-1", List.of("a")); // Team A reaches target=1 first
+        room.startQuestion("q-2", 25_000, List.of("a")); // closes q-1 -> Team A credited, reaches target=1
 
         assertThat(room.phase()).isEqualTo(GamePhase.FINISHED);
         GameMessage gameOver = room.buildGameOver();
@@ -68,9 +72,10 @@ class RoomStateWinConditionTest {
         room.joinRoom("student-03", "S3");
         room.startGame();
         room.startQuestion("q-1", 25_000, List.of("a"));
-        room.submitAnswer("student-01", 1L, "q-1", List.of("a")); // Team A wins
+        room.submitAnswer("student-01", 1L, "q-1", List.of("a")); // Team A: 1/2 roster answered, correct
+        room.startQuestion("q-2", 25_000, List.of("a")); // closes q-1 -> Team A wins, room FINISHED
 
-        GameMessage lateAnswer = room.submitAnswer("student-03", 1L, "q-1", List.of("a"));
+        GameMessage lateAnswer = room.submitAnswer("student-03", 1L, "q-2", List.of("a"));
 
         assertThat(lateAnswer.getAnswerAck().getAccepted())
                 .as("room is FINISHED, WRONG_PHASE must reject this before it reaches team logic").isFalse();
@@ -88,6 +93,27 @@ class RoomStateWinConditionTest {
         room.submitAnswer("student-03", 1L, "q-1", List.of("wrong")); // Team B: +0
 
         room.endGame(); // simulates a teacher/timer ending the round before progress_target is hit
+
+        GameMessage gameOver = room.buildGameOver();
+        assertThat(gameOver.getGameOver().getReason()).isEqualTo("most_points_when_time_up");
+        assertThat(gameOver.getGameOver().getWinnerId()).isEqualTo("A");
+    }
+
+    @Test
+    void should_breakTieByResponseTime_whenMostPointsWhenTimeUpScoresAreEqual() {
+        // P2 Task 30 (PO V2.2 §5.1): equal score at time-up, Team A answered faster -> A wins.
+        MutableClock clock = new MutableClock(Instant.parse("2026-09-09T09:00:00Z"));
+        RoomState room = teamRoom(clock, TWO_TEAMS, 100, WinCondition.MOST_POINTS_WHEN_TIME_UP);
+        room.joinRoom("student-01", "S1"); // Team A
+        room.joinRoom("student-03", "S3"); // Team B
+        room.startGame();
+        room.startQuestion("q-1", 25_000, List.of("a"));
+
+        room.submitAnswer("student-01", 1L, "q-1", List.of("a")); // Team A: +100, 0ms response
+        clock.advanceMillis(5_000);
+        room.submitAnswer("student-03", 1L, "q-1", List.of("a")); // Team B: +100, 5000ms response
+
+        room.endGame();
 
         GameMessage gameOver = room.buildGameOver();
         assertThat(gameOver.getGameOver().getReason()).isEqualTo("most_points_when_time_up");
@@ -128,7 +154,8 @@ class RoomStateWinConditionTest {
         room.joinRoom("student-01", "S1");
         room.startGame();
         room.startQuestion("q-1", 25_000, List.of("a"));
-        room.submitAnswer("student-01", 1L, "q-1", List.of("a")); // auto-finish via first_to_finish
+        room.submitAnswer("student-01", 1L, "q-1", List.of("a")); // Team A: 1/2 roster answered, correct
+        room.startQuestion("q-2", 25_000, List.of("a")); // closes q-1 -> auto-finish via first_to_finish
 
         room.endGame(); // e.g. RoomActor still forwards a stray/late TeacherCommand.END_GAME
 
@@ -146,8 +173,39 @@ class RoomStateWinConditionTest {
     }
 
     private static RoomState teamRoom(List<TeamAssignment> teamRosters, int progressTarget, WinCondition winCondition) {
-        return new RoomState("room-1", CLOCK, FormulaScoreCalculator.binaryChoice(), MissedStepPolicy.ZERO,
+        return teamRoom(CLOCK, teamRosters, progressTarget, winCondition);
+    }
+
+    private static RoomState teamRoom(Clock clock, List<TeamAssignment> teamRosters, int progressTarget, WinCondition winCondition) {
+        return new RoomState("room-1", clock, FormulaScoreCalculator.binaryChoice(), MissedStepPolicy.ZERO,
                 GameMode.GAME_MODE_TEAM, progressTarget, List.<ProgressStage>of(), SharedResourceType.NONE, 0,
                 teamRosters, ScoreAggregation.SUM_ALL, winCondition);
+    }
+
+    private static final class MutableClock extends Clock {
+        private Instant instant;
+
+        MutableClock(Instant initial) {
+            this.instant = initial;
+        }
+
+        void advanceMillis(long millis) {
+            instant = instant.plusMillis(millis);
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return ZoneOffset.UTC;
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            throw new UnsupportedOperationException("not needed by this test double");
+        }
+
+        @Override
+        public Instant instant() {
+            return instant;
+        }
     }
 }

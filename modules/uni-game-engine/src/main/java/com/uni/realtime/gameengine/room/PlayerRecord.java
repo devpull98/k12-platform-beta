@@ -5,6 +5,7 @@ final class PlayerRecord {
     final String displayName;
     final int missedStepsAtJoin;
     boolean answeredCurrent;
+    boolean correctCurrent;
     boolean connected;
 
     PlayerRecord(int index, String displayName, int missedStepsAtJoin) {

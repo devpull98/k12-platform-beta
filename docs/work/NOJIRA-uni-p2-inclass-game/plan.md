@@ -216,6 +216,280 @@ Giai đoạn 2 bổ sung các chế độ chơi tương tác nhóm và tập th�
      game nhóm §5.5) hay bỏ hẳn.
 - **Verification:** Chưa có — task này mới dừng ở bước ghi nhận phát hiện + phạm vi, đúng yêu cầu
   người dùng, chưa viết code/test nào.
+- **Phụ thuộc:** Task 29 (bên dưới) — Engine cần `questions` tồn tại trong `GameDefinition` trước
+  khi có nội dung thật để tự bắn câu hỏi 1; nếu làm Task 28 trước, chỉ nối dây được `RULES_DISPLAY`
+  → `IN_PROGRESS`, còn "câu hỏi 1" vẫn phải hard-code tạm.
+
+### Task 29: Input Schema Group A/B theo PO V2.2 (§3) — ✅ XONG phần schema thuần (2026-09-11, verify thật), CHƯA WIRE VÀO ĐƯỜNG JOIN THẬT (thuộc Task 28)
+- **Vì sao làm ngay bây giờ:** PO V2.2 §3 lần đầu tiên đưa ra đủ tên trường + kiểu dữ liệu cho
+  Group A/B — đóng phần lớn "backlog schema Group A/B" đã ghi từ Task 27 (`max_players`,
+  `team_assignment`, `late_join_policy`, `scoring_rule=speed_based`, giá trị `score_aggregation`).
+  Không còn phải đoán CMS sẽ gửi field nào nữa.
+- **Đã audit code thật trong phiên này (không suy đoán):** `GameDefinition` hiện **không có bất kỳ
+  field nào** trong số: `max_players`, `late_join_policy`, `team_assignment`, `team_names`,
+  `team_colors`, `questions` (danh sách câu hỏi), `round_time_limit`, `intro_narrative`,
+  `progress_display_mode`, `progress_stages`. `ScoreAggregation` (enum riêng,
+  `definition/ScoreAggregation.java`) hiện chỉ có `SUM_ALL`/`AVERAGE` — thiếu `FIRST_CORRECT_ONLY`;
+  ngược lại PO V2.2 §3.1 liệt kê đúng `sum_all | first_correct_only`, không nhắc `AVERAGE` (cần hỏi
+  PO có giữ `AVERAGE` không, không tự xoá field đang có test cover).
+- **Gap lớn nhất trong nhóm này:** hiện tại **không có khái niệm "danh sách câu hỏi" nào trong
+  `GameDefinition` cả** — mọi câu hỏi trước giờ chỉ tồn tại qua tham số truyền trực tiếp vào
+  `RoomActor.StartQuestion` (test-only, xem Task 28). Đây chính là gap nguồn dữ liệu câu hỏi đã ghi
+  từ Task 11 (P1) và nhắc lại xuyên suốt Task 21/25/26 (P2) dưới tên "`RoomSupervisor.spawnRoom()`
+  chưa có nguồn `GameDefinition` thật" — PO V2.2 giờ đã trả lời PHẦN "câu hỏi ở đâu ra" (Group A,
+  Học thuật tự nhập `question_text`/`options` A-D/`correct_option_index`), chỉ còn thiếu phần code
+  đọc field đó vào `GameDefinition`.
+- **AC:**
+  - [ ] Thêm các field ở bảng Group A/B (PO V2.2 §3.1/§3.2) vào `GameDefinition` — additive
+        constructor overload, đúng convention đã dùng từ Task 14/17/18/25 (không phá call site cũ).
+  - [ ] `DefinitionLoader` validate: `max_players` trong khoảng 1-12; `late_join_policy` chỉ 2 giá
+        trị (`allow_with_zero_score`/`block_after_start`); `team_assignment` chỉ `random`/`manual`.
+  - [ ] `ScoreAggregation` thêm `FIRST_CORRECT_ONLY`; giữ nguyên `AVERAGE` cho tới khi có xác nhận
+        PO (không tự xoá).
+  - [ ] `questions`/`round_time_limit` đưa vào `GameDefinition` dạng cấu trúc mới (Group A) —
+        `RoomSupervisor.spawnRoom()` đọc từ đây để tự tạo phòng với câu hỏi thật, thay vì chỉ qua
+        hook test-only (`SpawnConfiguredRoom`/`GetRoomActor`).
+  - [ ] `progress_target` bỏ đọc từ Group B — Engine tự gán `= questions.size()` (PO V2.2 §3.2 note
+        cuối bảng).
+- **Quyết định người dùng (2026-09-11):** đồng ý thêm `questions` làm field RIÊNG trong
+  `GameDefinition`, song song `steps` (không map vào DAG `steps` sẵn có) — lý do đã thống nhất:
+  `GameDefinition` trong code hiện tại đã là "cấu hình đầy đủ của 1 phòng cụ thể" (có sẵn tiền lệ
+  `teamRosters` — danh sách học sinh cụ thể của đúng 1 phòng), không phải template trừu tượng dùng
+  chung nhiều lớp; PO V2.2 §6 cũng gộp `questions` chung 1 form với `team_count`/`max_players`,
+  khớp đúng mô hình "1 Game = 1 cấu hình trọn gói" đã có trong code. Audit thêm xác nhận `steps`
+  gần như chỉ còn phục vụ P1 SOLO — mọi test P2 (COOPERATIVE/TEAM) đều truyền 1 `Step` giả
+  (`List.of(new Step("q1", 25_000, List.of()))`) chỉ để qua được check `DefinitionLoader.load()`
+  bắt buộc `steps` không rỗng, không hề đọc `step.nextStepIds()` ở bất kỳ đâu trong luồng
+  COOPERATIVE/TEAM thật — càng củng cố `questions` phải là field mới, không phải tái dùng `steps`.
+- **Đã code thật (file mới):** `Question` (record: `questionText`/`options`/`correctOptionIndex`),
+  `TeamAssignmentMode` (`RANDOM`/`MANUAL`), `LateJoinPolicy` (`ALLOW_WITH_ZERO_SCORE`/`BLOCK_AFTER_START`),
+  `ProgressDisplayMode` (`SIMPLE_BAR`/`STAGED_VISUAL`). `ScoreAggregation` thêm `FIRST_CORRECT_ONLY`
+  (giữ `AVERAGE` — chưa có xác nhận PO để xoá).
+- **`GameDefinition`:** thêm 7 field mới ở CUỐI record (`maxPlayers`, `questions`,
+  `roundTimeLimitSeconds`, `lateJoinPolicy`, `teamAssignmentMode`, `introNarrative`,
+  `progressDisplayMode`) — additive đúng convention đã dùng xuyên suốt Task 14/17/18/25/28: cả 4
+  constructor cũ (6/8/11/13-arg) chỉ thêm giá trị mặc định (`0`/`List.of()`/`ALLOW_WITH_ZERO_SCORE`/
+  `MANUAL`/`""`/`SIMPLE_BAR`) vào lời gọi `this(...)` sẵn có — **không đổi chữ ký public nào**, đã
+  grep xác nhận `RoomState.java`/`RoomActor.java` (2 nơi construct `GameDefinition` thật duy nhất
+  trong `main/`) vẫn dùng đúng constructor 8-arg cũ, không bị ảnh hưởng. Thêm 1 constructor MỚI
+  (Group A/B, 14-arg, nhận `questions` thay vì `progressTarget`) — tự tính `progressTarget =
+  questions.size()` ngay trong constructor (không qua field riêng để "tin" giá trị từ ngoài, đúng
+  tinh thần server-authoritative xuyên suốt repo này).
+- **`DefinitionLoader`:** thêm `checkPoV22Schema()` (gọi cho MỌI definition, không riêng mode nào)
+  — `max_players` phải trong [1,12] khi có set (0 = sentinel "chưa set", không phải giá trị hợp
+  lệ để so [1,12] nên bỏ qua check); mỗi `Question` phải ≥2 `options` và `correct_option_index`
+  hợp lệ. `late_join_policy`/`team_assignment` KHÔNG cần check runtime "chỉ 1 trong N giá trị" vì
+  đã là Java enum thật (khác `shared_resource` — kiểu cũ hơn cũng enum nhưng có thêm rule theo
+  mode) — kiểu dữ liệu tự đảm bảo, viết thêm check sẽ là dead code không bao giờ chạy tới.
+- **Test mới:** `GameDefinitionTest` (mới, 2 case: `progress_target` tự tính đúng =
+  `questions.size()` qua constructor Group A/B; mọi field V2.2 mới đều có default đúng qua
+  constructor cũ) + `DefinitionLoaderTest` (+7 case: max_players hợp lệ/biên trên/biên dưới/chưa
+  set, question thiếu option/sai index/hợp lệ).
+- **CỐ Ý CHƯA LÀM trong task này (ghi rõ ranh giới, không phải bỏ sót):**
+  - **`RoomSupervisor.spawnRoom()` (đường join thật) CHƯA đọc `questions` để tự tạo phòng** —
+    đúng như đã nói trước khi code: việc này thuộc Task 28 (nối `RULES_DISPLAY`/tự động bắn câu hỏi
+    1), Task 29 chỉ mở khoá (cung cấp NGUỒN DỮ LIỆU `questions`), không tự làm luôn phần dùng nó.
+  - **`team_colors`** (PO V2.2 §3.1) — cần thêm field mới vào `TeamAssignment` proto
+    (`modules/uni-protocol/.../common.proto`), nhưng **không thể regenerate code Protobuf trong
+    sandbox này** (không có `mvn`/`protoc` khả dụng) — sửa `.proto` mà không chạy được
+    `generate-sources` sẽ để lại repo ở trạng thái nguồn/code sinh ra lệch nhau, rủi ro hơn là
+    không sửa. Chưa đụng vào file `.proto` nào. Cần làm ở máy có Maven đầy đủ.
+  - **`ScoreAggregation.FIRST_CORRECT_ONLY`** mới chỉ là giá trị enum — `RoomState.computeTeamScore()`
+    chưa có nhánh xử lý cho giá trị này (hiện chỉ biết `AVERAGE` vs "mọi giá trị khác thì SUM").
+  - **`LateJoinPolicy.BLOCK_AFTER_START`** mới chỉ là giá trị enum — `RoomState.joinRoom()` chưa
+    đọc field này, vẫn luôn cho vào muộn (áp `missedStepPolicy` để chấm điểm, không có nhánh chặn).
+  - **`ProgressDisplayMode`/`introNarrative`** chưa có đường dây broadcast ra client (cần 1 field
+    protobuf mới ở `RoomStateSnapshot` hoặc message `RULES_DISPLAY` mới của Task 28) — cùng lý do
+    protobuf ở trên, để dành cho Task 28.
+- **Bug thật phát hiện qua chạy test thật, đã sửa trước khi Green:** thêm 7 field mới làm record
+  canonical constructor thành 21-tham-số đã VÔ TÌNH xoá mất khả năng gọi trực tiếp constructor
+  14-tham-số CŨ (`steps→winCondition`, dùng bởi ~10 test có sẵn trong `DefinitionLoaderTest`) —
+  constructor Group A/B MỚI cũng đúng 14 tham số nhưng khác kiểu (`GameMode` ở vị trí 1 thay vì
+  `List<Step>`), nên `javac` báo lỗi kiểu không khớp thay vì âm thầm gọi nhầm constructor (an toàn
+  hơn silent-wrong-binding, nhưng vẫn phải sửa). **Sửa:** thêm lại đúng constructor 14-tham-số cũ
+  làm overload riêng (delegate sang canonical 21-tham-số với default cho 7 field mới) — khôi phục
+  100% khả năng gọi cũ, không sửa test nào khác ngoài việc thêm test mới.
+- **Đã tự chạy `mvn` thật (2026-09-11)** — `mvn -pl :uni-game-engine test -Dtest=GameDefinitionTest,DefinitionLoaderTest`:
+  **2/2 + 33/33 pass thật** (33 vì `DefinitionLoaderTest` đã có sẵn 26 case cũ + 7 case mới của
+  task này, không phải chỉ case mới). Xem thêm mục "Đã tự chạy `mvn` thật" ở cuối Task 31 — 1 lượt
+  `mvn clean install` toàn reactor thật đo được **287/287 test pass, 0 lỗi**, trong đó có cả 2 file
+  test của task này.
+- **Phụ thuộc:** Không phụ thuộc task nào ở trên; Task 28 phụ thuộc NGƯỢC vào task này (nay đã có
+  `questions` để đọc, nhưng phần WIRING thật vẫn ở Task 28, chưa làm).
+
+### Task 30: Tie-break theo tổng thời gian trả lời (PO V2.2 §5.1) — ✅ XONG (2026-09-11, verify thật)
+- **PO yêu cầu:** Khi 2+ phe/cá nhân bằng % tiến trình lúc hết giờ (`most_points_when_time_up`),
+  phe nào có **tổng thời gian trả lời ngắn hơn** thắng. Thời gian trả lời 1 câu = thời gian của
+  người trả lời **đầu tiên** trong phe nếu câu đó có ≥2 người trả lời. Đây là câu trả lời PO cho
+  đúng phần "luật Hoà chưa chốt" đã ghi từ Task 27 (2026-09-10) — **phần đó nay đã đóng**.
+- **Đã audit code:** `WinConditionEvaluator.singleHighestScorer()` hiện chỉ so điểm, trả rỗng khi
+  hoà tuyệt đối — chưa có bất kỳ tracking `response_time` nào theo team.
+- **AC:**
+  - [ ] Track tổng thời gian trả lời từng team (cộng dồn thời gian của người trả lời đầu tiên mỗi
+        câu — không cộng thời gian của người trả lời thứ 2 trở đi cùng câu).
+  - [ ] `WinConditionEvaluator` thêm bước tie-break: khi ≥2 phe cùng điểm cao nhất, so tổng thời
+        gian trả lời, phe nào ít hơn thắng.
+  - [ ] Nếu vẫn hoà tuyệt đối sau tie-break (PO không đề cập trường hợp này) — giữ nguyên hành vi
+        hiện tại (trả rỗng, không tự bịa người thắng), không tự đoán thêm luật phụ.
+- **Verification:** `WinConditionEvaluatorTest` (+4 case: thắng theo điểm bất kể response time,
+  tie-break có tác dụng, tie-break vẫn hoà thì trả rỗng, key thiếu response time coi là 0ms) +
+  `RoomStateWinConditionTest` (+1 case tích hợp qua `RoomState.submitAnswer`/`endGame` thật, dùng
+  `MutableClock` để tạo 2 team cùng điểm nhưng khác thời gian trả lời).
+  **Đã tự chạy `mvn` thật (2026-09-11)** — tìm được Maven bundled trong IntelliJ IDEA của người
+  dùng (`.../plugins/maven/lib/maven3/bin/mvn`) + JDK 25 do IntelliJ tự tải (`~/.jdks/ms-25.0.4.1`,
+  đúng yêu cầu `maven.compiler.release=25`), không cần cài thêm gì ngoài máy sẵn có.
+  `mvn -pl :uni-game-engine test -Dtest=WinConditionEvaluatorTest,RoomStateWinConditionTest`:
+  **13/13 + 8/8 pass thật**, không phải giả định.
+- **Thiết kế:** `RoomState` track `Map<teamId, tổng response time>` + `Set<teamId đã trả lời câu
+  hiện tại>` (reset ở `startQuestion`), cộng dồn thời gian của người trả lời ĐẦU TIÊN mỗi team cho
+  mỗi câu — tính ngay sau khi qua được check `PAST_DEADLINE` (chỉ tính submit hợp lệ, không tính
+  submit bị từ chối). `GameRuleContext` thêm `teamResponseTimeMs(String teamId)`.
+  `WinConditionEvaluator` thêm `singleHighestScorerByResponseTime(...)` (giữ nguyên
+  `singleHighestScorer` cũ, không sửa hành vi cũ — các test khác dùng hàm cũ không bị ảnh hưởng).
+- **Phát hiện phụ (ngoài phạm vi task này, không tự sửa):** `IndividualModeRules.evaluateTimeUp()`
+  hiện LUÔN trả `"teacher_ended"`, chưa hề implement `MOST_POINTS_WHEN_TIME_UP` cho chế độ
+  `individual` (chỉ `TeamModeRules` có) — PO V2.2 §5.1 áp dụng tie-break cho cả "team" lẫn
+  "individual", nên gap này cũng cần đóng, nhưng là 1 task riêng (thêm logic tie-break cho cá nhân,
+  không phải sửa nhỏ trong Task 30) — chưa ghi task riêng, nêu ở đây để không quên.
+- **Phụ thuộc:** Không phụ thuộc Task 28/29.
+
+### Task 31: Ngưỡng tham gia ≥50% mới cộng tiến trình/điểm Phe (PO V2.2 §5.2) — ✅ XONG (2026-09-11, verify thật)
+- **PO yêu cầu:** Phe chỉ được cộng tiến trình/điểm câu đó khi **có 1 học sinh trả lời đúng VÀ ≥50%
+  số học sinh trong phe có tham gia trả lời câu hỏi đó** — khác V2.1 (chỉ cần 1 người đúng là tính).
+- **Quyết định người dùng (2026-09-11):** thời điểm CHECK ngưỡng 50% chốt **khi câu hỏi KẾT THÚC**
+  (không phải real-time mỗi lần nộp bài).
+- **Hệ quả lớn đã xác nhận với người dùng trước khi code (không phải chỉ 1 chỗ sửa nhỏ):** hành vi
+  cộng tiến trình Phe đổi từ "tức thời, biết ngay khi có người trả lời đúng" (như V2.1/code cũ)
+  sang "chỉ biết khi câu hỏi đóng lại" — đổi cả UX cạnh tranh thời gian thực của `first_to_finish`.
+  Người dùng xác nhận chấp nhận đánh đổi này và chấp nhận sửa lại các test cũ đang giả định hiệu
+  ứng tức thời.
+- **Thiết kế thật đã code:**
+  - `PlayerRecord` thêm `correctCurrent` (song song `answeredCurrent` có sẵn) — đúng câu trả lời
+    của học sinh CHO CÂU HIỆN TẠI, reset ở `startQuestion()` giống `answeredCurrent`.
+  - `GameRuleContext` thêm `hasAnsweredCurrentQuestion(String)` / `hasAnsweredCurrentQuestionCorrectly(String)`.
+  - `GameModeRules` thêm `default void finalizeQuestionOutcome(GameRuleContext context) {}` (no-op
+    mặc định — chỉ `TeamModeRules` override, Solo/Individual/Cooperative không đổi gì).
+  - `TeamModeRules.applyAnswerOutcome` giờ KHÔNG làm gì nữa (progress không còn cộng tức thời).
+    `TeamModeRules.finalizeQuestionOutcome` (mới) duyệt từng roster: `participatedRatio =
+    (số đã trả lời trong roster) / (tổng số thành viên roster)`; nếu có ≥1 đúng VÀ
+    `participatedRatio >= 0.5` thì mới `incrementTeamProgress` + check `first_to_finish`.
+  - `RoomState.startQuestion()` gọi `modeRules.finalizeQuestionOutcome(this)` NGAY ĐẦU HÀM (đóng
+    câu hỏi TRƯỚC đó) trước khi ghi đè `currentQuestionId`/reset `answeredCurrent`/`correctCurrent`
+    cho câu mới — chỉ gọi nếu `currentQuestionId != null` (không có câu nào trước đó thì bỏ qua).
+    `RoomState.endGame()` cũng gọi `finalizeQuestionOutcome` trước `evaluateTimeUp`, có guard kép
+    (`if phase != FINISHED`) 2 lần để tránh `evaluateTimeUp` ghi đè `gameOverReason` nếu chính
+    `finalizeQuestionOutcome` đã kết thúc game (vd. `first_to_finish` đạt đúng lúc câu cuối đóng).
+  - Đếm "đã tham gia trả lời" dùng ĐÚNG roster **tĩnh** (số lượng cấu hình trong `TeamAssignment`,
+    không phải số học sinh ĐÃ join) — 1 học sinh chưa từng join không thể "trả lời" nên tự động bị
+    tính là chưa tham gia, khớp đúng tinh thần PO (không cần field riêng đếm "online").
+- **Phát hiện phụ tốt (side-effect đúng của refactor, không phải bug mới):** code CŨ tăng tiến
+  trình Phe MỖI LẦN có 1 người trả lời đúng — nếu 2 người cùng team cùng trả lời đúng 1 câu, tiến
+  trình bị cộng 2 LẦN cho đúng 1 câu (không khớp PO "1 học sinh đúng là tính điểm CHO ĐỘI", ý là
+  tính 1 lần/câu). Thiết kế mới (đánh giá 1 lần lúc đóng câu) tự nhiên sửa luôn lỗi này, không cần
+  sửa thêm.
+- **Test đã cập nhật (không né tránh việc phải sửa, đúng như đã báo trước):**
+  - `RoomStateWinConditionTest`: 3 test `first_to_finish` (`should_setFirstToFinishReasonAndWinnerTeamId_whenATeamFinishesFirst`,
+    `should_stopTheActorFromDoubleFinishing_whenTheLosingTeamAnswersAfterward`,
+    `should_notOverwriteWinConditionReason_when_endGameIsCalledAfterAnAutomaticFinish`) thêm bước
+    `room.startQuestion("q-2", ...)` sau submit để ĐÓNG câu 1 trước khi assert — 2 test còn lại
+    (`most_points_when_time_up`) đã gọi `endGame()` sẵn từ trước, không cần sửa (dựa vào
+    `computeTeamScore`/điểm cá nhân, không phụ thuộc tiến trình Phe).
+  - `TeamRoomActorTest.should_broadcastGameOverWithWinningTeamId_when_firstToFinish`: thêm
+    `JoinRoom` (bắt buộc phải join thật để có `PlayerRecord` — trước đây test bỏ qua bước join vì
+    chấm điểm không cần, giờ đếm tham gia thì cần) + `StartQuestion("q-2",...)` để đóng câu 1;
+    đổi `broadcastInbox.receiveMessage()` (giả định GameOver là tin NHẤT) sang lọc
+    `getAllReceived()` theo `MessageType.GAME_OVER` (vì giờ có thêm broadcast từ `JoinRoom`/`StartQuestion` xen giữa).
+  - `InclassGroupGameE2ETest`'s kịch bản "team-speed-race": Team A có 3 thành viên
+    (student-01/02/03) — kịch bản CŨ chỉ 1 người/câu trả lời (33% < 50%, sẽ KHÔNG còn đạt ngưỡng
+    theo luật mới) — sửa thành **2 người** (student-01 VÀ student-02) trả lời mỗi câu (2/3 ≈ 67% ≥
+    50%), thêm bước đóng câu (`startQuestion` câu kế) trước khi chờ `GameOver`. `student-03` cố ý
+    tiếp tục KHÔNG bao giờ trả lời, giữ nguyên đúng ý nghĩa gốc của test "GameOver vẫn tới cả thành
+    viên chưa từng trả lời".
+  - `RoomStateTeamModeTest`: không cần sửa gì — 2 test aggregate-score dùng `computeTeamScore`/điểm
+    cá nhân (không đổi); test "ghost student not on any roster" không gọi bước đóng câu nào nên
+    hành vi giữ nguyên (không advance progress, đúng cả trước và sau thay đổi).
+- **Hot Snapshot (Task 14) — cập nhật đồng bộ để không mất dữ liệu khi Engine pod crash giữa
+  chừng:** `RoomStateSerializer` thêm ghi/đọc `PlayerRecord.correctCurrent` (cạnh `answeredCurrent`
+  đã có) và map `teamResponseTimeMs` (Task 30, additive ở cuối format, cùng vị trí logic với
+  `teamProgress`). **Giới hạn còn sót lại (nhỏ, đã biết, chưa sửa):** `teamsRespondedToCurrentQuestion`
+  (Set nội bộ dùng riêng cho tie-break "người trả lời ĐẦU TIÊN mỗi câu", Task 30) chưa được
+  serialize — nếu Engine crash+restore ĐÚNG GIỮA 1 câu hỏi đang mở, đội đã có người trả lời trước
+  khi crash có thể bị tính lại là "chưa ai trả lời" sau restore, cộng thêm 1 lần response-time nữa
+  cho người trả lời tiếp theo sau restore. Ảnh hưởng: sai lệch NHỎ trong số liệu tie-break ở đúng
+  tình huống hiếm (crash giữa câu), không ảnh hưởng điểm số/tiến trình chính. Chưa sửa vì tỉ lệ xảy
+  ra rất thấp và không có test nào cho crash-giữa-câu hiện tại — ghi lại để không quên, không phải
+  bỏ sót không biết.
+- **Phát hiện phụ khác (ngoài phạm vi, không tự sửa):** logic `startQuestion()` gọi
+  `finalizeQuestionOutcome` NGAY CẢ KHI phase đã `FINISHED` (không có guard) — nếu ai đó gọi
+  `startQuestion` cho câu tiếp theo SAU KHI game đã kết thúc (hiện chưa ai làm vậy trong code thật,
+  đây chính là gap Task 28: chưa có luồng "next question" thật), phương thức vẫn tiếp tục ghi đè
+  `currentQuestionId`/`deadlineMs` dù đã FINISHED. Không sửa ở đây vì thuộc phạm vi thiết kế "ai
+  gọi startQuestion khi nào" của Task 28, chưa phải bug thấy được trong hành vi thật hiện tại.
+- **Bug thật phát hiện qua chạy test thật (không phải giả định, đúng tinh thần "prove-it" của repo
+  này) — đã sửa trước khi Green:** `RoomActor.onStartQuestion()` gọi `state.startQuestion(...)`
+  nhưng KHÔNG kiểm tra `phase == FINISHED` sau đó để broadcast `GameOver` + dừng actor — khác hẳn
+  `onSubmitAnswer`/`onResync` vốn đã có đúng nhánh này từ trước. Trước Task 31, mọi lượt "kết thúc
+  game" luôn xảy ra bên trong `onSubmitAnswer` (chấm điểm tức thời) nên nhánh đó đủ dùng; sau Task
+  31, việc đóng câu hỏi (`startQuestion` cho câu kế) cũng có thể tự kết thúc game (Team đạt
+  `progress_target` lúc `finalizeQuestionOutcome`), nhưng `onStartQuestion` chưa từng có nhánh
+  broadcast tương ứng — `TeamRoomActorTest.should_broadcastGameOverWithWinningTeamId_when_firstToFinish`
+  Red đúng chỗ (`NoSuchElementException` vì không tìm thấy `GameOver` nào được broadcast) đã bắt
+  đúng lỗi này. Sửa: thêm đúng nhánh `if (state.phase() == GamePhase.FINISHED) { broadcast + stop
+  }` vào `onStartQuestion`, giống hệt pattern đã có ở `onSubmitAnswer`.
+- **Đã tự chạy `mvn` thật (2026-09-11)** — dùng Maven bundled trong IntelliJ IDEA của người dùng +
+  JDK 25 do IntelliJ tự tải (`~/.jdks/ms-25.0.4.1`) như đã tìm ở Task 30. Kết quả thật:
+  - `mvn -pl :uni-game-engine test` (toàn bộ module, không chỉ các file liên quan Task 29-31):
+    **184/184 pass, 0 lỗi.**
+  - `mvn install -DskipTests` cho `uni-protocol`/`uni-observability`/`uni-game-engine`/
+    `uni-websocket-gateway` (để `.m2` có bản mới nhất trước khi `uni-e2e` build — lần chạy đầu
+    `uni-e2e` dùng nhầm jar `uni-game-engine` CŨ trong `.m2` từ trước phiên này, khiến
+    `InclassGroupGameE2ETest` Red sai chỗ do version lệch, không phải do code Task 31 sai — xác
+    nhận lại bằng cách install rồi chạy lại, Green ngay).
+  - `mvn -pl :uni-e2e test -Dtest=InclassGroupGameE2ETest`: **2/2 pass** (cooperative-boss +
+    team-speed-race, sau khi sửa kịch bản team-speed-race cho đúng ngưỡng 50% mới — xem trên).
+  - `mvn clean install` **toàn reactor thật (không `-q` che lỗi, exit code 0)**: **287/287 test
+    pass, 0 lỗi** — 7 protocol + 92 gateway (bao gồm cả `IpAdmissionControllerTest` sau khi giảm
+    ngưỡng L1 xuống 2000) + 184 engine + 4 e2e. Đây là số liệu thật đo được trong phiên này, không
+    phải số liệu lịch sử copy lại.
+- **Phụ thuộc:** Không phụ thuộc Task 28/29/30 để code, nhưng Task 32 (cúp thưởng) nên làm SAU task
+  này vì `computeTeamScore` giờ phản ánh đúng luật ≥50% mới.
+
+### Task 32: Cúp thưởng (Trophy) cuối trận (PO V2.2 §5.2) — 🔴 MỚI, CHƯA LÀM, CHƯA CÓ Ở ĐÂU TRONG CODE
+- **PO yêu cầu:** Khi trận kết thúc, số cúp mỗi học sinh nhận = số điểm của Team mình (1 điểm = 1
+  cúp), làm tròn LÊN nếu điểm lẻ. Học sinh thoát/mất kết nối giữa chừng vẫn nhận cúp nếu đã trả lời
+  ≥1 câu (§6 luật biên 4, PO V2.2).
+- **Đã audit: grep toàn bộ `uni-game-engine` + `uni-protocol` cho "trophy"/"cup"/"cúp" — 0 kết quả.
+  Đây là tính năng hoàn toàn CHƯA tồn tại, không phải sửa logic có sẵn.**
+- **AC:**
+  - [ ] Thêm field mới vào protobuf (`GameOver` hoặc `PlayerState`, additive theo ADR-1 — 1 schema
+        dùng chung cả 2 hop, không tạo schema riêng) mang số cúp mỗi học sinh.
+  - [ ] `RoomState`/`buildGameOver()` tính cúp = `computeTeamScore(roster)` làm tròn lên, gán cho
+        mọi thành viên của team đó — kể cả người đã thoát/mất kết nối, miễn đã trả lời ≥1 câu (nối
+        với luật biên 4 §6 PO V2.2 — cần xác nhận field nào trong `PlayerRecord` hiện tại đánh dấu
+        "đã trả lời ≥1 câu" chưa, hay phải thêm mới).
+- **Verification:** Test mới trong `RoomStateWinConditionTest`/`RoomActorTest` (cúp tính đúng, học
+  sinh thoát giữa chừng nhưng đã trả lời 1 câu vẫn nhận cúp).
+- **Phụ thuộc:** Nên làm sau Task 31 (cần `computeTeamScore` phản ánh đúng luật ≥50% mới trước khi
+  quy đổi cúp từ điểm đó).
+
+### Câu hỏi PO còn treo — chưa trả lời, không tự đoán (cập nhật 2026-09-11 sau khi đọc hết V2.2)
+- **Luật biên 5 "Cấm hủy giữa ván" (§6 PO V2.2, dòng 158) — VẪN CHƯA GIẢI QUYẾT**, dù V2.2 lặp lại
+  nguyên văn câu này từ V2.1. Mâu thuẫn đã ghi ở Task 27 vẫn còn nguyên: `TeacherCommand.END_GAME`
+  lúc `PLAYING` vẫn là cơ chế trigger DUY NHẤT cho `most_points_when_time_up` (chưa có
+  timer/deadline tự động toàn ván) — 1 guard chặn `EndGame` giữa ván sẽ vô hiệu hoá luôn con đường
+  đó. PO V2.2 không thêm field "tổng thời gian ván" hay định nghĩa "hết giờ" nào mới — câu hỏi này
+  KHÔNG được V2.2 trả lời, dù đã đọc lại toàn bộ tài liệu.
+- **Điểm sàn tối thiểu của công thức `speed_based` (§5.4)** — PO chỉ ghi "*ví dụ: 2 điểm*", chưa
+  chốt số thật. Không tự chọn số khi implement Task cần công thức này.
+- **`shared_resource = lives`: số lives ban đầu** — V2.2 vẫn chỉ liệt kê `lives` là 1 giá trị hợp
+  lệ của `shared_resource` (§3.1), không nói số lượng ban đầu là bao nhiêu. Gap cũ từ Task 23 vẫn
+  còn nguyên.
+- **`streak_bonus`** — gap ghi ở Task 27 (PO tự mâu thuẫn V2.1 §5.4 vs bảng schema §7) **không còn
+  xuất hiện ở đâu trong V2.2** (đã grep xác nhận). Coi như PO đã tự rút yêu cầu này khỏi scope —
+  không cần task riêng nữa, chỉ ghi lại để không ai thắc mắc "sao gap cũ biến mất".
+- **Câu hỏi thứ 2 trở đi có tự động chuyển theo `round_time_limit` hết hạn hay vẫn cần GV bấm
+  `NEXT_STEP` thủ công** — đã ghi ở Task 28, nhắc lại ở đây vì liên quan trực tiếp Task 31 (thời
+  điểm chốt tỉ lệ tham gia 50% phụ thuộc vào việc chuyển câu là tự động hay thủ công).
 
 ---
 
