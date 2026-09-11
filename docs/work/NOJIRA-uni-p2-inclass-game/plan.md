@@ -165,6 +165,58 @@ Giai đoạn 2 bổ sung các chế độ chơi tương tác nhóm và tập th�
     nên danh sách backlog schema Group A ở trên (từ review 2026-09-09) vẫn đầy đủ và chính xác.
 - **Verification:** `mvn -pl :uni-game-engine test`: 175/175 pass (dead-code cleanup only, không đổi hành vi runtime).
 
+### Task 28: Đối chiếu PO Spec V2.2 — gap FSM `RULES_DISPLAY` + tự động bắn câu hỏi 1 — 🔴 MỚI PHÁT HIỆN (2026-09-11), CHƯA LÀM
+- **Nguồn gốc:** PO gửi `INCLASS-GAME-001-inclass-group-cooperative-games-v2.2.md` +
+  `PO_Require_Game+nhóm_+tập+thể+Inclass V2.2.doc` ngày 2026-09-11 (2 file này mới chỉ `git add`,
+  chưa từng được đối chiếu với V2.1 hay với code trước phiên này). Phát hiện dưới đây là kết quả
+  đối chiếu trực tiếp §4 "Luồng Vận Hành Server FSM" (Mục 5.2 PO V2.2) của file `.md` đó với code
+  `RoomActor`/`RoomState`/`RoomSupervisor` thật — không phải suy đoán.
+- **PO V2.2 yêu cầu (nguyên văn rút gọn từ §4):**
+  ```
+  [WAITING_FOR_PLAYERS] → [RULES_DISPLAY] (MỚI ở V2.2) → [IN_PROGRESS] (START Tự Động)
+  ```
+  "Engine tự động chuyển IN_PROGRESS & phát câu hỏi 1 (không chờ GV bấm thêm)." Bảng so sánh
+  V2.1-vs-V2.2 trong cùng file xác nhận đây là thay đổi CHỦ Ý, không phải câu chữ mơ hồ: V2.1 chỉ
+  ghi "Bắt đầu game do GV bấm" (im lặng về việc có tự bắn câu hỏi 1 hay không — đây chính là gốc
+  gap "Task 11" đã ghi nhiều lần trong file này); V2.2 chốt rõ **GV chỉ bấm "Bắt đầu game" đúng 1
+  lần**, mọi thứ sau đó (hiển thị luật chơi → bắn câu hỏi 1) là Engine tự làm.
+- **Đối chiếu với code thật — 3 lỗ hổng cụ thể, không phải 1:**
+  1. **FSM hiện tại không có state `RULES_DISPLAY`.** `RoomState`/`RoomActor` chỉ có
+     `LOBBY → PLAYING → FINISHED` (khác tên gọi PO dùng `WAITING_FOR_PLAYERS`/`IN_PROGRESS`/`ENDED`
+     — cần map đúng khi implement, đừng nhầm 2 bộ tên là 2 FSM khác nhau).
+  2. **`TeacherCommand.START_GAME` chỉ đổi `phase` (`RoomState.startGame()` — 1 dòng, không làm gì
+     khác), không tự bắn câu hỏi nào.** Xác nhận qua `RoomSupervisor.dispatchTeacherCommand()`
+     (dòng ~186): `START_GAME` gọi đúng `RoomActor.StartGame`, hết.
+  3. **`TeacherCommand.NEXT_STEP` (lệnh đáng lẽ dùng để chuyển câu) hoàn toàn CHƯA nối dây** — rơi
+     vào nhánh `default -> log.warn("TeacherCommand.{} not wired for room {} yet")` cùng hàm trên
+     (dòng ~189). Gửi lệnh này từ client thật hiện tại không có tác dụng gì.
+  4. **`RoomActor.StartQuestion`** (command actor thật sự build+broadcast `QUESTION_STARTED`) **chỉ
+     được gọi từ test code** — grep xác nhận xuất hiện ở `RoomActorTest`, `TickCoalescingTest`,
+     `RoomActorSnapshotTest`, `RoomActorGameEventTest`, `RoomSupervisorTest`,
+     `CooperativeRoomActorTest`, `TeamRoomActorTest`, và 3 file `uni-e2e` (qua hook test-only
+     `GetRoomActor`/`SpawnConfiguredRoom`) — **0 nơi gọi nó từ đường dispatch production thật**.
+- **Không phải bug mới — là tiếp nối gap Task 11 (P1)/Task 23/27 (P2) đã ghi nhiều lần** ("chưa có
+  định dạng authoring câu hỏi nào được chốt", "chưa có cơ chế timer/deadline tự động chuyển FSM") —
+  nhưng đây là lần ĐẦU TIÊN có 1 câu trả lời PO chính thức, rõ ràng cho ĐÚNG 1 phần của gap đó (bắn
+  câu hỏi 1 lúc bắt đầu game là tự động), thay vì PO im lặng như V2.1.
+- **Câu hỏi PO CHƯA trả lời (không tự đoán, đúng tinh thần G1a/G1c/LIVES):** PO V2.2 §4 chỉ nói rõ
+  câu hỏi 1 là tự động. Từ câu 2 trở đi, đoạn "Đếm ngược `round_time_limit` từng câu... Kiểm tra
+  `win_condition` hoặc hết câu hỏi -> chuyển `ENDED`" **không nói rõ** việc chuyển sang câu kế tiếp
+  là Engine tự làm theo `round_time_limit` hết hạn, hay vẫn cần GV bấm `NEXT_STEP` thủ công cho
+  từng câu sau câu 1. Cần hỏi PO xác nhận trước khi code — không suy đoán.
+- **Việc cần làm (chưa làm, ghi phạm vi để task sau không phải điều tra lại từ đầu):**
+  1. Thêm state `RULES_DISPLAY` vào FSM `RoomState`/`RoomActor` (giữa lobby và playing).
+  2. Nối `TeacherCommand.START_GAME` → tự động chuyển `RULES_DISPLAY` → `IN_PROGRESS` → tự gọi
+     `RoomActor.StartQuestion` cho câu hỏi đầu tiên — không chờ thêm tín hiệu nào từ GV.
+  3. Phụ thuộc gap CHƯA đóng từ Task 11/21: `RoomSupervisor.spawnRoom()` (đường join thật) vẫn
+     không có nguồn `GameDefinition` thật để lấy danh sách câu hỏi — task này không tự giải quyết
+     được nếu gap nguồn dữ liệu câu hỏi chưa đóng trước.
+  4. Sau khi có câu trả lời PO cho câu hỏi "câu 2 trở đi" ở trên, quyết định có cần giữ
+     `TeacherCommand.NEXT_STEP` (override thủ công, đúng như PO V2.2 mô tả GV vẫn có nút override ở
+     game nhóm §5.5) hay bỏ hẳn.
+- **Verification:** Chưa có — task này mới dừng ở bước ghi nhận phát hiện + phạm vi, đúng yêu cầu
+  người dùng, chưa viết code/test nào.
+
 ---
 
 ## 3. Verification Plan

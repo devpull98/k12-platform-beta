@@ -35,6 +35,12 @@
 - **2026-09-09: Nén LZ4 (P1 Task 22) kéo lên GĐ1 theo yêu cầu người dùng** — không thuộc Phase 2, xem `docs/work/NOJIRA-uni-p1-realtime-core/plan.md` Task 22.
 - **2026-09-09: Task 24 (`lms-worker`) bị PO chốt HỦY hẳn** — không còn treo trong `plan.md`, tài liệu/BDD liên quan đã xoá.
 - **Toàn bộ Phase 2 (Task 20-23, 25, 26) đã XONG; Task 24 đã hủy.**
+- **2026-09-11: Task 28 (mới, chưa làm) — đối chiếu PO Spec V2.2 phát hiện gap FSM `RULES_DISPLAY`
+  + Engine phải tự động bắn câu hỏi 1 khi GV bấm "Bắt đầu game" (không chờ GV bấm thêm gì), theo
+  §4 PO V2.2. Code hiện tại: `START_GAME` chỉ đổi phase, `TeacherCommand.NEXT_STEP` chưa nối dây
+  (rơi vào `default -> log.warn` ở `RoomSupervisor`), `RoomActor.StartQuestion` chỉ được gọi từ
+  test. Còn 1 câu hỏi PO chưa trả lời (câu 2 trở đi có tự động theo `round_time_limit` hay vẫn cần
+  GV bấm `NEXT_STEP` thủ công) — không tự đoán. Chi tiết đầy đủ: `plan.md` Task 28.**
 - **2026-09-09 (phiên khác, sau refactor DDD lớn trên P1's `RoomActor`/`RoomState`): Task 27 (đối chiếu Product Brief V2.1) mở, một phần xong.** Review phát hiện `RoomStateProtobufMapper.buildFullSnapshot()` là dead code lệch `Math.floor` (bug tưởng là thật lúc đầu, xác nhận lại là code thừa 0 người gọi, không phải hành vi production) — đã xoá. Luật biên §5.6 rule 5 ("GV không hủy giữa ván") **không sửa được bằng code** — mâu thuẫn trực tiếp với thiết kế đã chốt ở Task 23 (`END_GAME` lúc `PLAYING` là trigger duy nhất cho `MOST_POINTS_WHEN_TIME_UP`, chưa có auto-trigger) — cần PO quyết định ranh giới "hủy" vs "báo hết giờ", giống style G1a/G1c. Khoảng trống schema Group A/B (`max_players`, `team_count`, `team_assignment`, `late_join_policy`, `scoring_rule=speed_based`, `progress_display_mode`, `score_aggregation` đủ giá trị) vẫn treo, cần task CMS riêng. Chi tiết: `plan.md` Task 27.
 
 ## State (machine-readable)
@@ -42,7 +48,7 @@
 phase: dev
 track: feature
 last_skill: tdd
-next_skill: tdd
+next_skill: writing-plans
 progress: "2026-09-09: Task 20+21 xong (xem entry truoc). Task 22 (Team mode + Scoped Draft Sync)
   xong cung ngay: GameDefinition.teamRosters (List<TeamAssignment> proto, tinh, quyet dinh
   upstream/CMS - KHONG round-robin tu dong, vi BDD can nhom 3 nguoi LIEN TIEP ma khong field nao
@@ -218,9 +224,24 @@ progress: "2026-09-09: Task 20+21 xong (xem entry truoc). Task 22 (Team mode + S
   tai lieu), SS5.5 luat tuong tac, SS5.6 6 luat bien (dung nhu bang cu da ghi), SS9 'Chi so do
   luong' moi nhung de trong. Xac nhan SS7 Input Schema giong het 100% giua 2 ban - khong co gap
   schema moi nao ngoai backlog da ghi tu truoc. Da ghi 2 gap moi (streak_bonus, luat Hoa) vao
-  plan.md Task 27."
+  plan.md Task 27.
+  2026-09-11: Task 28 (moi, CHUA lam - chi moi ghi nhan phat hien + pham vi). Doi chieu truc tiep
+  PO_Require V2.2 (§4 - Luong Van Hanh Server FSM, file da git-add tu truoc nhung chua tung duoc
+  diff/doi chieu code) voi RoomActor/RoomState/RoomSupervisor that: PO V2.2 chot FSM moi
+  WAITING_FOR_PLAYERS -> RULES_DISPLAY (state MOI) -> IN_PROGRESS (tu dong, khong cho GV bam them)
+  -> ENDED, va noi ro 'Engine tu dong chuyen IN_PROGRESS & phat cau hoi 1 (khong cho GV bam
+  them)' - khac V2.1 chi ghi 'Bat dau game do GV bam' (im lang ve viec co tu ban cau hoi 1 hay
+  khong, la goc gap Task 11 cu). Doi chieu code xac nhan 3 lo hong: (1) FSM hien tai khong co
+  RULES_DISPLAY (chi LOBBY/PLAYING/FINISHED, khac ten PO dung); (2) TeacherCommand.START_GAME chi
+  doi phase (RoomState.startGame(), 1 dong), khong tu ban cau hoi nao; (3) TeacherCommand.NEXT_STEP
+  hoan toan CHUA noi day - roi vao nhanh default -> log.warn trong
+  RoomSupervisor.dispatchTeacherCommand(); (4) RoomActor.StartQuestion (command that su
+  build+broadcast QUESTION_STARTED) chi duoc goi tu test code (grep xac nhan 8 file test, 0 noi
+  goi tu duong dispatch production that). Cau hoi PO CHUA tra loi (khong tu doan): tu cau hoi 2 tro
+  di co tu dong chuyen theo round_time_limit het han hay van can GV bam NEXT_STEP thu cong - PO V2.2
+  §4 khong noi ro. Chi tiet day du + phan viec can lam: plan.md Task 28."
 dev_selftest: pending
 qc_status: pending
 trace: pending
-updated: "2026-09-09"
+updated: "2026-09-11"
 ```
