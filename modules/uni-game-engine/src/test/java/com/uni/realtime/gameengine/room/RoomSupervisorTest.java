@@ -1,5 +1,11 @@
 package com.uni.realtime.gameengine.room;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.uni.realtime.gameengine.definition.DefinitionLoader;
+import com.uni.realtime.gameengine.definition.GameSessionDefinitionMapper;
+import com.uni.realtime.gameengine.definition.GameSessionDefinitionRequest;
+import com.uni.realtime.gameengine.definition.QuestionRequest;
+import com.uni.realtime.gameengine.definition.TeamRequest;
 import com.uni.realtime.gameengine.metrics.EngineMetrics;
 import com.uni.realtime.gameengine.scoring.FormulaScoreCalculator;
 import com.uni.realtime.protocol.GameMessage;
@@ -242,6 +248,72 @@ class RoomSupervisorTest {
                 .as("a genuinely NEW room would have no roster to restore from")
                 .extracting(p -> p.getStudentId())
                 .contains("student-veteran");
+    }
+
+    @Test
+    void should_useProvisionedGameDefinition_when_oneWasStoredBeforeFirstJoin() throws Exception {
+        // Closes "gap Task 11" for real: a CMS (or here, a fake standing in for one) provisions a
+        // GameDefinition BEFORE any student joins -- the real join path must actually use it,
+        // not silently spawn the SOLO default it always spawned before this existed.
+        RoomOwnership ownsEverything = new AlwaysOwnRoomOwnership("engine-1");
+        GameSessionDefinitionMapper mapper = new GameSessionDefinitionMapper(new ObjectMapper(), new DefinitionLoader());
+        GameSessionDefinitionRequest request = new GameSessionDefinitionRequest(
+                "TEAM",
+                List.of(new QuestionRequest("2+2=?", List.of("3", "4"), 1)),
+                12, List.of(), null, 0,
+                List.of(new TeamRequest("A", "Team A", List.of("student-1")),
+                        new TeamRequest("B", "Team B", List.of("student-2"))),
+                "SUM_ALL", "FIRST_TO_FINISH", 30, null, null, "", null);
+        byte[] provisionedJsonBytes = mapper.toJsonBytes(request);
+        GameSessionDefinitionStore definitionStore = new FixedGameSessionDefinitionStore(provisionedJsonBytes);
+
+        ActorRef<RoomSupervisor.Command> supervisor = testKit.spawn(RoomSupervisor.create(
+                ownsEverything, FormulaScoreCalculator.binaryChoice(), new EngineMetrics(new SimpleMeterRegistry()),
+                Clock.systemUTC(), NoopRoomSnapshotStore.INSTANCE, null, definitionStore));
+        FakeConnection connection = new FakeConnection();
+
+        supervisor.tell(new RoomSupervisor.Dispatch(joinRoom("room-provisioned", "student-1", "Alice"), connection.channel));
+
+        GameMessage reply = connection.takeMatching("a full snapshot reflecting the provisioned TEAM config",
+                m -> m.getType() == MessageType.ROOM_STATE_SNAPSHOT && m.getRoomStateSnapshot().getFull());
+        assertThat(reply.getRoomStateSnapshot().getPlayers(0).getTeamId()).isEqualTo("A");
+        assertThat(reply.getRoomStateSnapshot().getTeamsList()).extracting(t -> t.getTeamId())
+                .containsExactlyInAnyOrder("A", "B");
+    }
+
+    @Test
+    void should_fallBackToSolo_when_nothingWasProvisionedForTheRoom() throws Exception {
+        RoomOwnership ownsEverything = new AlwaysOwnRoomOwnership("engine-1");
+        ActorRef<RoomSupervisor.Command> supervisor = testKit.spawn(RoomSupervisor.create(
+                ownsEverything, FormulaScoreCalculator.binaryChoice(), new EngineMetrics(new SimpleMeterRegistry()),
+                Clock.systemUTC(), NoopRoomSnapshotStore.INSTANCE, null, NoopGameSessionDefinitionStore.INSTANCE));
+        FakeConnection connection = new FakeConnection();
+
+        supervisor.tell(new RoomSupervisor.Dispatch(joinRoom("room-unprovisioned", "student-1", "Alice"), connection.channel));
+
+        GameMessage reply = connection.takeMatching("a full snapshot",
+                m -> m.getType() == MessageType.ROOM_STATE_SNAPSHOT && m.getRoomStateSnapshot().getFull());
+        assertThat(reply.getRoomStateSnapshot().getPlayers(0).getTeamId())
+                .as("no provisioning stored -- must fall back to SOLO exactly like before this feature existed")
+                .isEmpty();
+    }
+
+    private static final class FixedGameSessionDefinitionStore implements GameSessionDefinitionStore {
+        private final byte[] jsonBytes;
+
+        FixedGameSessionDefinitionStore(byte[] jsonBytes) {
+            this.jsonBytes = jsonBytes;
+        }
+
+        @Override
+        public CompletableFuture<Void> save(String roomId, byte[] definitionJsonBytes) {
+            return CompletableFuture.completedFuture(null);
+        }
+
+        @Override
+        public CompletableFuture<Optional<byte[]>> load(String roomId) {
+            return CompletableFuture.completedFuture(Optional.of(jsonBytes));
+        }
     }
 
     private static void awaitLoadCallsAtLeast(ControllableSnapshotStore store, int expected) throws InterruptedException {

@@ -121,6 +121,29 @@
   `RoomSupervisor.spawnRoom()` đường join thật (gap CMS/authoring lớn hơn nhiều, đã ghi từ Task
   11) và câu hỏi PO "câu 2 trở đi tự động hay NEXT_STEP thủ công" vẫn treo. Chi tiết: `plan.md`
   Task 28.
+- **2026-09-11 (tiếp): Task 33 (CMS Game Session Provisioning) — ĐÓNG GAP TASK 11 CHO ĐƯỜNG JOIN
+  THẬT, code xong + verify thật qua Docker thật.** Theo yêu cầu người dùng: thiết kế REST endpoint
+  nội bộ (không phải CMS chạm thẳng Valkey — tách bạch ranh giới hạ tầng, đã thảo luận trước khi
+  code) ghi `GameDefinition` vào Valkey (tái dùng đúng connection có sẵn, không mở connection thứ
+  hai). `RoomSupervisor.handleJoin` giờ load ĐỒNG THỜI Hot Snapshot VÀ definition đã provision (2
+  future async `thenCombine`) — phòng dựng mới HOẶC được khôi phục sau crash đều dùng đúng cấu
+  hình đã provision, không còn mặc định SOLO trừ khi thật sự chưa ai provision gì.
+  **3 bug thật phát hiện qua test + qua `curl` thật vào Docker (không phải giả định):**
+  (1) `DefinitionLoader.load()` bắt buộc `steps` không rỗng VÔ ĐIỀU KIỆN — chặn đứng mọi định
+  nghĩa Group A/B thật (mọi test P2 trước đây né được vì tự nhét 1 Step giả không ai đọc) — sửa
+  thành chấp nhận `steps` HOẶC `questions`; (2) `@PathVariable String roomId` thiếu tên tường minh
+  → 500 lúc chạy thật (project không bật `-parameters`, chỉ lộ qua `curl`, không lộ qua unit test);
+  (3) field JSON optional dùng `int` nguyên thủy → 400 lúc CMS bỏ trống field (Jackson 3 trong
+  Spring Boot 4 không cho null vào `int`, chỉ lộ qua `curl` thật) — đổi sang `Integer` nullable.
+  Phát hiện phụ: Spring Boot 4.1.1 dùng Jackson 3 cho web, KHÔNG tạo bean `ObjectMapper` Jackson 2
+  — tự khởi tạo thay vì nhờ Spring tiêm, giống `RoomSupervisor` đã làm. **Verify thật:**
+  `mvn -pl :uni-game-engine test`: 198/198. `mvn clean install` toàn reactor: **301/301, 0 lỗi**.
+  `docker compose up -d --build` + `curl` thật vào `engine-0:18090` — request hợp lệ trả 200, 2
+  request sai đều trả đúng 400 với message rõ ràng; `valkey-cli GET room:definition:...` xác nhận
+  đúng JSON + TTL ~7 ngày. Tài liệu API cho CMS: `docs/specs/tech-design/cms-game-session-provisioning.md`
+  (mới). Giới hạn còn lại: chỉ áp dụng lần dựng phòng ĐẦU TIÊN của 1 room_id; vẫn phụ thuộc giới
+  hạn Task 28 (chỉ câu 1 tự động); không có auth (chỉ an toàn nhờ NetworkPolicy K8s nội bộ); TTL 7
+  ngày là placeholder. Chi tiết đầy đủ: `plan.md` Task 33.
 - **2026-09-09 (phiên khác, sau refactor DDD lớn trên P1's `RoomActor`/`RoomState`): Task 27 (đối chiếu Product Brief V2.1) mở, một phần xong.** Review phát hiện `RoomStateProtobufMapper.buildFullSnapshot()` là dead code lệch `Math.floor` (bug tưởng là thật lúc đầu, xác nhận lại là code thừa 0 người gọi, không phải hành vi production) — đã xoá. Luật biên §5.6 rule 5 ("GV không hủy giữa ván") **không sửa được bằng code** — mâu thuẫn trực tiếp với thiết kế đã chốt ở Task 23 (`END_GAME` lúc `PLAYING` là trigger duy nhất cho `MOST_POINTS_WHEN_TIME_UP`, chưa có auto-trigger) — cần PO quyết định ranh giới "hủy" vs "báo hết giờ", giống style G1a/G1c. Khoảng trống schema Group A/B (`max_players`, `team_count`, `team_assignment`, `late_join_policy`, `scoring_rule=speed_based`, `progress_display_mode`, `score_aggregation` đủ giá trị) vẫn treo, cần task CMS riêng. Chi tiết: `plan.md` Task 27.
 
 ## State (machine-readable)

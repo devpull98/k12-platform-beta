@@ -10,9 +10,21 @@ import java.util.Set;
 
 public final class DefinitionLoader {
 
+    /**
+     * P2 Task 28/29 real bug found by {@code RoomSupervisorTest.
+     * should_useProvisionedGameDefinition_when_oneWasStoredBeforeFirstJoin} (a genuinely
+     * questions-only, steps-empty definition, not a test's hand-written dummy {@code Step}):
+     * this method REQUIRED non-empty {@code steps} unconditionally, rejecting every real Group
+     * A/B ({@code questions}) definition outright. Every P2 test before this one happened to pass
+     * validation only because it manually included one throwaway {@code Step} nobody ever reads
+     * (see {@code RoomStateTeamModeTest}/{@code RoomStateWinConditionTest} etc.) -- masking this.
+     * Now: a definition needs EITHER at least one {@code step} (P1's DAG mechanism) OR at least
+     * one {@code question} (Task 29's flat-list mechanism); the step-graph checks below only run
+     * when {@code steps} is the one actually being used.
+     */
     public GameDefinition load(GameDefinition definition) throws DefinitionRejectedException {
-        if (definition.steps().isEmpty()) {
-            throw new DefinitionRejectedException("definition must have at least one step");
+        if (definition.steps().isEmpty() && definition.questions().isEmpty()) {
+            throw new DefinitionRejectedException("definition must have at least one step or question");
         }
         if (definition.tickMode() == TickMode.FIXED) {
             throw new DefinitionRejectedException(
@@ -30,6 +42,14 @@ public final class DefinitionLoader {
 
         checkCooperativeMode(definition);
 
+        if (!definition.steps().isEmpty()) {
+            checkStepGraph(definition);
+        }
+
+        return definition;
+    }
+
+    private void checkStepGraph(GameDefinition definition) throws DefinitionRejectedException {
         Map<String, Step> stepsById = new HashMap<>();
         for (Step step : definition.steps()) {
             stepsById.put(step.id(), step);
@@ -49,8 +69,6 @@ public final class DefinitionLoader {
         }
 
         rejectCycles(stepsById);
-
-        return definition;
     }
 
     /**

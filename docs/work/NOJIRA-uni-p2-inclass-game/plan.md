@@ -545,6 +545,80 @@ Giai đoạn 2 bổ sung các chế độ chơi tương tác nhóm và tập th�
   mới), exit code 0.
 - **Phụ thuộc:** Làm sau Task 31 như dự tính — `computeTeamScore` đã phản ánh đúng luật ≥50%.
 
+### Task 33: CMS Game Session Provisioning — đóng gap Task 11 cho đường join thật — ✅ XONG (2026-09-11, verify thật qua Docker thật)
+- **Bối cảnh:** người dùng yêu cầu thiết kế + code thật cách CMS (cùng hạ tầng K8s) đưa
+  `GameDefinition` vào Engine cho 1 phòng cụ thể TRƯỚC khi học sinh join — đóng đúng gap đã nhắc đi
+  nhắc lại từ Task 11 (P1) tới Task 28 (P2): `RoomSupervisor.spawnRoom()` (đường join thật) không
+  có nguồn nào để biết phòng chơi game gì. Quyết định kiến trúc (đã thống nhất qua thảo luận trước
+  khi code): REST endpoint nội bộ (Spring MVC, KHÔNG phải hot path Netty) ghi vào Valkey (đã là
+  hard dependency sẵn có) — không để CMS chạm thẳng Valkey (tách bạch ranh giới hạ tầng), không cần
+  domain/TLS mới (cùng K8s cluster, dùng internal Service DNS + NetworkPolicy).
+- **Đã code thật (9 file mới/sửa):**
+  - `GameSessionDefinitionStore` (interface, `room/`) + `NoopGameSessionDefinitionStore` (test
+    default) + `DistributedGameSessionDefinitionStore` (`persistence/`, tái dùng ĐÚNG connection
+    Valkey của `DistributedRoomSnapshotStore` — không mở connection thứ hai, đúng nguyên tắc đã
+    dùng từ Task 21/`EnginePodPresence`). Key `room:definition:{room_id}`, TTL 7 ngày (placeholder
+    thực dụng, ghi rõ trong javadoc — chưa có lifecycle "session kết thúc thì xoá" thật).
+  - `GameSessionDefinitionRequest`/`QuestionRequest`/`ProgressStageRequest`/`TeamRequest`
+    (`definition/`, DTO JSON cho CMS) + `GameSessionDefinitionMapper` (parse + validate qua
+    `DefinitionLoader` trước khi cho vào Valkey — sai thì chặn ngay tại API, không rơi xuống thành
+    crash actor sau này).
+  - `GameSessionProvisioningController` (`provisioning/`, `POST /internal/game-sessions/{room_id}/definition`)
+    + `GameSessionProvisioningConfig` (Spring `@Bean` wiring) — chạy trên cổng quản trị Spring MVC
+    (8090), không phải cổng Netty hot path, nên không vi phạm luật "không I/O trên Netty EventLoop".
+  - `RoomSupervisor`: `handleJoin` giờ load ĐỒNG THỜI Hot Snapshot (đã có từ Task 14) VÀ definition
+    đã provision (mới) qua `thenCombine` 2 future async — 1 bên lỗi không làm hỏng bên kia. Câu
+    hỏi mới không tồn tại trước đây tự nhiên có luôn câu trả lời đúng: room được RESTORE (crash
+    recovery) của 1 game KHÔNG-SOLO giờ cũng dùng đúng definition đã provision, không chỉ phòng
+    tạo mới — vì cùng 1 lần load, không phân biệt 2 trường hợp.
+- **3 bug thật phát hiện qua test + Docker thật (không phải giả định), đã sửa trước khi coi XONG:**
+  1. **`DefinitionLoader.load()` bắt buộc `steps` không rỗng VÔ ĐIỀU KIỆN** — chặn đứng MỌI định
+     nghĩa Group A/B thật (chỉ có `questions`, không có `steps`). Mọi test P2 trước đây "né" được
+     lỗi này chỉ vì tự tay nhét 1 `Step` giả không ai đọc tới (`RoomStateTeamModeTest` và tương tự)
+     — `RoomSupervisorTest` mới (định nghĩa thật từ mapper, không có `Step` giả) mới lộ ra lỗi
+     này. Sửa: chấp nhận `steps` HOẶC `questions` không rỗng (một trong hai), chỉ chạy validate DAG
+     khi `steps` thật sự được dùng.
+  2. **`@PathVariable String roomId` (thiếu tên tường minh) → 500 lúc runtime thật** — project
+     không bật cờ compiler `-parameters`, nên Spring không suy ra được tên tham số qua reflection.
+     Chỉ lộ ra khi gọi `curl` thật qua Docker, không lộ qua bất kỳ unit test nào (Spring context
+     test dùng `MockMvc`/không thật sự định tuyến HTTP theo cách này trong bộ test hiện có). Sửa:
+     `@PathVariable("roomId")`.
+  3. **`int` nguyên thủy cho field JSON optional → 400 lúc runtime thật** khi CMS bỏ trống field
+     (`Cannot map 'null' into type 'int'`, do Jackson 3 trong Spring Boot 4's web auto-config —
+     cũng chỉ lộ qua `curl` thật, không qua unit test vì test Java luôn truyền giá trị số tường
+     minh). Sửa: đổi `maxPlayers`/`sharedResourcePenalty`/`roundTimeLimitSeconds` sang `Integer`
+     (nullable), mapper tự coi `null` = `0`.
+  4. **Phát hiện phụ (không phải bug, chỉ là hiểu sai ban đầu):** Spring Boot 4.1.1 dùng Jackson 3
+     (`tools.jackson.*`) cho web auto-config, KHÔNG tạo bean `com.fasterxml.jackson.databind.ObjectMapper`
+     (Jackson 2, vẫn có trên classpath dạng thư viện thuần) — `@Autowired ObjectMapper` (Jackson 2)
+     làm context Spring load thất bại (`EngineApplicationTests` đỏ đúng chỗ). Sửa: tự khởi tạo
+     `new ObjectMapper()` (Jackson 2) trực tiếp trong `@Bean`, không nhờ Spring tiêm — giống hệt
+     cách `RoomSupervisor` đã làm cho mapper riêng của nó.
+- **Verify thật (không chỉ unit test):**
+  - `mvn -pl :uni-game-engine test`: 198/198 pass (thêm `GameSessionDefinitionMapperTest` 6/6,
+    `RoomSupervisorTest` +2 case: dùng đúng definition đã provision / fallback SOLO khi chưa
+    provision gì).
+  - `mvn clean install` toàn reactor thật: **301/301 test pass, 0 lỗi**, exit code 0.
+  - **Chạy thật qua `docker compose -f docker-compose.dev.yml up -d --build`** (build lại 2
+    Dockerfile multi-stage) + `curl` thật vào `engine-0` (`localhost:18090`):
+    - Request hợp lệ (TEAM, 2 đội, 1 câu hỏi) → `200 {"roomId":"room-demo-1","status":"provisioned"}`.
+    - Thiếu `gameMode` → `400 {"error":"game_mode is required"}`.
+    - Chỉ 1 đội cho TEAM mode → `400 {"error":"team_count must be within [2, 4] for GAME_MODE_TEAM, got 1"}`.
+    - Xác nhận trực tiếp bằng `valkey-cli GET room:definition:room-demo-1` — đúng JSON đã gửi, TTL
+      ~604788s (khớp 7 ngày như thiết kế).
+- **Tài liệu cho team CMS:** `docs/specs/tech-design/cms-game-session-provisioning.md` (mới) — hợp
+  đồng API đầy đủ (request/response, ví dụ thật, giới hạn đã biết) để team CMS tích hợp trực tiếp,
+  không cần hỏi lại backend.
+- **Giới hạn đã biết, KHÔNG phải "sắp xong" (đã ghi rõ trong tài liệu CMS ở trên, nhắc lại đây):**
+  - Chỉ áp dụng cho LẦN DỰNG PHÒNG ĐẦU TIÊN của 1 `room_id` — provision lại 1 phòng ĐANG chạy
+    không có tác dụng cho tới khi phòng đó bị dựng lại từ đầu.
+  - Chỉ đóng được phần "nguồn dữ liệu" — vẫn phụ thuộc Task 28's giới hạn (chỉ câu hỏi 1 tự động,
+    `NEXT_STEP` chưa nối dây, `introNarrative`/`progressDisplayMode` chưa có đường broadcast).
+  - Không có auth trên endpoint — chỉ an toàn nhờ NetworkPolicy K8s nội bộ.
+  - TTL 7 ngày là placeholder, chưa có lifecycle "session kết thúc thì dọn" thật.
+- **Phụ thuộc:** Cần Task 29 (schema `questions`) đã xong; mở khoá thật cho Task 28 (giờ có nguồn
+  để tự động bắn câu hỏi 1 qua đường join THẬT, không chỉ qua test hook `SpawnConfiguredRoom` nữa).
+
 ### Câu hỏi PO còn treo — chưa trả lời, không tự đoán (cập nhật 2026-09-11 sau khi đọc hết V2.2)
 - **Luật biên 5 "Cấm hủy giữa ván" (§6 PO V2.2, dòng 158) — VẪN CHƯA GIẢI QUYẾT**, dù V2.2 lặp lại
   nguyên văn câu này từ V2.1. Mâu thuẫn đã ghi ở Task 27 vẫn còn nguyên: `TeacherCommand.END_GAME`

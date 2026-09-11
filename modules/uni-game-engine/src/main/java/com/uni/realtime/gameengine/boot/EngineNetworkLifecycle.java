@@ -4,9 +4,11 @@ import com.uni.realtime.gameengine.events.GameEventPublisher;
 import com.uni.realtime.gameengine.metrics.EngineMetrics;
 import com.uni.realtime.gameengine.net.FrameChannelServer;
 import com.uni.realtime.gameengine.persistence.KafkaGameEventSink;
+import com.uni.realtime.gameengine.persistence.DistributedGameSessionDefinitionStore;
 import com.uni.realtime.gameengine.persistence.DistributedRoomLeaseStore;
 import com.uni.realtime.gameengine.persistence.DistributedRoomSnapshotStore;
 import com.uni.realtime.gameengine.persistence.EnginePodPresence;
+import com.uni.realtime.gameengine.room.GameSessionDefinitionStore;
 import com.uni.realtime.gameengine.room.LeaseBasedRoomOwnership;
 import com.uni.realtime.gameengine.room.RoomOwnership;
 import com.uni.realtime.gameengine.room.RoomSnapshotStore;
@@ -52,6 +54,14 @@ public final class EngineNetworkLifecycle implements ApplicationRunner, Disposab
     private StatefulRedisConnection<String, byte[]> snapshotConnection;
     private ScheduledExecutorService leaseRenewalScheduler;
     private GameEventPublisher gameEventPublisher;
+    private volatile GameSessionDefinitionStore gameSessionDefinitionStore;
+
+    /** Null until {@link #run} has wired the room-store connection -- {@code
+     * GameSessionProvisioningController} must treat null as "engine still starting up" (503), not
+     * NPE, since Tomcat can start accepting requests before this {@code ApplicationRunner} completes. */
+    public GameSessionDefinitionStore gameSessionDefinitionStore() {
+        return gameSessionDefinitionStore;
+    }
 
     public EngineNetworkLifecycle(EngineMetrics engineMetrics,
             @Value("${uni.engine.pod-id}") String podId,
@@ -86,6 +96,9 @@ public final class EngineNetworkLifecycle implements ApplicationRunner, Disposab
                 podId, leaseStore, Duration.ofSeconds(leaseTtlSeconds));
         RoomOwnership roomOwnership = leaseRoomOwnership;
         RoomSnapshotStore snapshotStore = new DistributedRoomSnapshotStore(snapshotConnection.async());
+        // Reuses the SAME connection/codec as snapshotStore above -- no second Valkey connection,
+        // same principle as EnginePodPresence reusing the lease connection (Task 21).
+        gameSessionDefinitionStore = new DistributedGameSessionDefinitionStore(snapshotConnection.async());
 
         long renewalIntervalSeconds = Math.max(1, leaseTtlSeconds / 3);
         leaseRenewalScheduler = Executors.newSingleThreadScheduledExecutor(runnable -> {
@@ -121,7 +134,7 @@ public final class EngineNetworkLifecycle implements ApplicationRunner, Disposab
 
         system = ActorSystem.create(
                 RoomSupervisor.create(roomOwnership, FormulaScoreCalculator.binaryChoice(), engineMetrics,
-                        Clock.systemUTC(), snapshotStore, gameEventPublisher),
+                        Clock.systemUTC(), snapshotStore, gameEventPublisher, gameSessionDefinitionStore),
                 "engine");
 
         frameChannelServer = new FrameChannelServer(framePort, roomOwnership,

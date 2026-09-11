@@ -1,5 +1,10 @@
 package com.uni.realtime.gameengine.room;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.uni.realtime.gameengine.definition.DefinitionLoader;
+import com.uni.realtime.gameengine.definition.DefinitionRejectedException;
+import com.uni.realtime.gameengine.definition.GameDefinition;
+import com.uni.realtime.gameengine.definition.GameSessionDefinitionMapper;
 import com.uni.realtime.gameengine.definition.MissedStepPolicy;
 import com.uni.realtime.gameengine.definition.ProgressStage;
 import com.uni.realtime.gameengine.definition.ScoreAggregation;
@@ -27,7 +32,9 @@ import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 
 public final class RoomSupervisor extends AbstractBehavior<RoomSupervisor.Command> {
 
@@ -56,7 +63,7 @@ public final class RoomSupervisor extends AbstractBehavior<RoomSupervisor.Comman
     /** A connection's {@link ChannelReplyActor} stopped, whether by {@link ChannelClosed} or an unexpected crash. */
     private record ReplyActorTerminated(Channel channel) implements Command {}
 
-    private record SnapshotLoaded(String roomId, byte[] snapshotBytes) implements Command {}
+    private record SnapshotLoaded(String roomId, byte[] snapshotBytes, byte[] definitionJsonBytes) implements Command {}
 
     private record PendingJoin(GameMessage message, Channel sourceChannel) {}
 
@@ -73,8 +80,23 @@ public final class RoomSupervisor extends AbstractBehavior<RoomSupervisor.Comman
     public static Behavior<Command> create(RoomOwnership roomOwnership, ScoreCalculator scoreCalculator,
             EngineMetrics engineMetrics, Clock clock, RoomSnapshotStore snapshotStore,
             GameEventPublisher gameEventPublisher) {
-        return Behaviors.setup(context -> new RoomSupervisor(
-                context, roomOwnership, scoreCalculator, engineMetrics, clock, snapshotStore, gameEventPublisher));
+        return create(roomOwnership, scoreCalculator, engineMetrics, clock, snapshotStore, gameEventPublisher,
+                NoopGameSessionDefinitionStore.INSTANCE);
+    }
+
+    /**
+     * Closes "gap Task 11" for the real join path: {@code definitionStore} is checked (async,
+     * alongside the Hot Snapshot load already done for crash recovery) the first time a room_id
+     * needs spawning, so a CMS-provisioned {@code GameDefinition} is actually used instead of
+     * every real room silently defaulting to SOLO. See plan.md Task 11/28 and
+     * docs/specs/tech-design/cms-game-session-provisioning.md.
+     */
+    public static Behavior<Command> create(RoomOwnership roomOwnership, ScoreCalculator scoreCalculator,
+            EngineMetrics engineMetrics, Clock clock, RoomSnapshotStore snapshotStore,
+            GameEventPublisher gameEventPublisher, GameSessionDefinitionStore definitionStore) {
+        return Behaviors.setup(context -> new RoomSupervisor(context, roomOwnership, scoreCalculator, engineMetrics,
+                clock, snapshotStore, gameEventPublisher,
+                definitionStore != null ? definitionStore : NoopGameSessionDefinitionStore.INSTANCE));
     }
 
     private final RoomOwnership roomOwnership;
@@ -83,6 +105,13 @@ public final class RoomSupervisor extends AbstractBehavior<RoomSupervisor.Comman
     private final Clock clock;
     private final RoomSnapshotStore snapshotStore;
     private final GameEventPublisher gameEventPublisher;
+    private final GameSessionDefinitionStore definitionStore;
+    // Plain new ObjectMapper() deliberately, not Spring's configured bean -- RoomSupervisor stays
+    // framework-agnostic (plain Pekko, JUnit-testable without a Spring context), same reasoning as
+    // definitionLoader below. Default Jackson behavior is what GameSessionDefinitionRequest's
+    // record fields need; no custom (de)serializers are registered anywhere for this contract.
+    private final GameSessionDefinitionMapper definitionMapper =
+            new GameSessionDefinitionMapper(new ObjectMapper(), new DefinitionLoader());
 
     private final Map<String, ActorRef<RoomActor.Command>> roomsByRoomId = new HashMap<>();
     private final Map<Channel, ActorRef<GameMessage>> replyActorsByChannel = new HashMap<>();
@@ -91,7 +120,7 @@ public final class RoomSupervisor extends AbstractBehavior<RoomSupervisor.Comman
 
     private RoomSupervisor(ActorContext<Command> context, RoomOwnership roomOwnership,
             ScoreCalculator scoreCalculator, EngineMetrics engineMetrics, Clock clock, RoomSnapshotStore snapshotStore,
-            GameEventPublisher gameEventPublisher) {
+            GameEventPublisher gameEventPublisher, GameSessionDefinitionStore definitionStore) {
         super(context);
         this.roomOwnership = roomOwnership;
         this.scoreCalculator = scoreCalculator;
@@ -99,6 +128,7 @@ public final class RoomSupervisor extends AbstractBehavior<RoomSupervisor.Comman
         this.clock = clock;
         this.snapshotStore = snapshotStore;
         this.gameEventPublisher = gameEventPublisher;
+        this.definitionStore = definitionStore;
     }
 
     @Override
@@ -201,14 +231,27 @@ public final class RoomSupervisor extends AbstractBehavior<RoomSupervisor.Comman
         if (pending.size() > 1) {
             return;
         }
-        getContext().pipeToSelf(snapshotStore.load(roomId), (loaded, failure) ->
-                new SnapshotLoaded(roomId, failure != null ? null : loaded.orElse(null)));
+        // Loaded together (both async, off this actor's thread): the Hot Snapshot (crash
+        // recovery) and any GameDefinition a CMS provisioned ahead of time for this room_id
+        // (Task 11/28 -- the ONLY way a real join ever learns what game this room should run).
+        // A failure in either must not sacrifice the other's result, so each is defanged on its
+        // own before combining.
+        CompletableFuture<Optional<byte[]>> snapshotFuture =
+                snapshotStore.load(roomId).exceptionally(failure -> Optional.empty());
+        CompletableFuture<Optional<byte[]>> definitionFuture =
+                definitionStore.load(roomId).exceptionally(failure -> Optional.empty());
+        CompletableFuture<SnapshotLoaded> combined = snapshotFuture.thenCombine(definitionFuture,
+                (snapshotBytes, definitionBytes) ->
+                        new SnapshotLoaded(roomId, snapshotBytes.orElse(null), definitionBytes.orElse(null)));
+        getContext().pipeToSelf(combined,
+                (loaded, failure) -> failure != null ? new SnapshotLoaded(roomId, null, null) : loaded);
     }
 
     private Behavior<Command> onSnapshotLoaded(SnapshotLoaded command) {
         byte[] payload = command.snapshotBytes() == null ? null
                 : SnapshotEnvelope.unwrap(command.snapshotBytes()).map(SnapshotEnvelope.Unwrapped::payload).orElse(null);
-        ActorRef<RoomActor.Command> room = spawnRoom(command.roomId(), payload);
+        GameDefinition gameDefinition = resolveProvisionedDefinition(command.roomId(), command.definitionJsonBytes());
+        ActorRef<RoomActor.Command> room = spawnRoom(command.roomId(), payload, gameDefinition);
         List<PendingJoin> pending = pendingJoinsByRoom.remove(command.roomId());
         if (pending != null) {
             pending.forEach(join -> deliverJoin(room, join.message(), join.sourceChannel()));
@@ -225,8 +268,42 @@ public final class RoomSupervisor extends AbstractBehavior<RoomSupervisor.Comman
     }
 
     private ActorRef<RoomActor.Command> spawnRoom(String roomId, byte[] snapshotBytes) {
-        return spawnRoom(roomId, snapshotBytes, GameMode.GAME_MODE_SOLO, 0, List.of(),
-                SharedResourceType.NONE, 0, List.of(), ScoreAggregation.SUM_ALL, WinCondition.PROGRESS_COMPLETED);
+        return spawnRoom(roomId, snapshotBytes, GameDefinition.defaultSoloDefinition());
+    }
+
+    /**
+     * The real join path (via {@link #onSnapshotLoaded}) always goes through here now, with
+     * whatever {@link GameDefinition} {@link #resolveProvisionedDefinition} resolved -- either a
+     * CMS-provisioned one, or the same default SOLO definition this always spawned before Task 11
+     * had a real provisioning source.
+     */
+    private ActorRef<RoomActor.Command> spawnRoom(String roomId, byte[] snapshotBytes, GameDefinition gameDefinition) {
+        ActorRef<GameMessage> broadcastTarget =
+                getContext().messageAdapter(GameMessage.class, RoomBroadcast::new);
+        long epoch = roomOwnership.epochOf(roomId);
+        RoomDependencies deps = RoomDependencies.of(
+                clock, scoreCalculator, engineMetrics, broadcastTarget, snapshotStore, gameEventPublisher);
+        ActorRef<RoomActor.Command> room = getContext().spawn(
+                RoomActor.create(roomId, deps, gameDefinition, TickMode.COALESCE, MissedStepPolicy.ZERO, epoch, snapshotBytes),
+                "room-" + roomId);
+        getContext().watchWith(room, new RoomTerminated(roomId));
+        roomsByRoomId.put(roomId, room);
+        return room;
+    }
+
+    /** Empty/unreadable/rejected-by-guardrails all fall back to SOLO -- a CMS bug or a room with
+     * nothing provisioned must never crash a join, only ever produce the same safe default this
+     * path already produced before Task 11 had a provisioning source at all. */
+    private GameDefinition resolveProvisionedDefinition(String roomId, byte[] definitionJsonBytes) {
+        if (definitionJsonBytes == null) {
+            return GameDefinition.defaultSoloDefinition();
+        }
+        try {
+            return definitionMapper.fromJsonBytes(definitionJsonBytes);
+        } catch (DefinitionRejectedException e) {
+            log.warn("room {}: provisioned GameDefinition invalid, falling back to SOLO: {}", roomId, e.getMessage());
+            return GameDefinition.defaultSoloDefinition();
+        }
     }
 
     private ActorRef<RoomActor.Command> spawnRoom(String roomId, byte[] snapshotBytes, GameMode gameMode,
