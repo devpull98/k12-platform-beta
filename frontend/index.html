@@ -33,7 +33,7 @@
             <div class="grid-form">
                 <div class="form-group">
                     <label for="wsUrl">WebSocket Gateway URL:</label>
-                    <input type="text" id="wsUrl" value="ws://localhost:9000">
+                    <input type="text" id="wsUrl" value="ws://localhost:9000/ws">
                 </div>
                 <div class="form-group">
                     <label for="hmacSecret">Dev Join Token HMAC Secret:</label>
@@ -46,8 +46,8 @@
                 <div class="form-group">
                     <label for="modeSelect">Chế độ Thử nghiệm:</label>
                     <select id="modeSelect">
-                        <option value="real">Real BE (WebSocket ws://localhost:9000)</option>
-                        <option value="mock">Mock Server Mode (FE Standalone Test)</option>
+                        <option value="mock" selected>Mock Server Mode (FE Standalone Test)</option>
+                        <option value="real">Real BE (WebSocket ws://localhost:9000/ws)</option>
                     </select>
                 </div>
             </div>
@@ -111,6 +111,14 @@
                         <ul class="roster-grid" id="rosterGrid">
                             <!-- Player pills rendered dynamically -->
                         </ul>
+                    </div>
+                    <div class="lobby-actions mt-4">
+                        <button id="btnLobbyStartGame" class="btn btn-accent btn-block btn-lg">
+                            🎮 Bắt đầu Game ngay
+                        </button>
+                        <p class="text-muted text-center mt-2" style="font-size: 13px; color: #6b7280;">
+                            (Mock Mode: Khởi chạy game quiz 10 câu trực tiếp | Real BE: Gửi lệnh Teacher START_GAME)
+                        </p>
                     </div>
                 </section>
 

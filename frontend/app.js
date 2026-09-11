@@ -323,7 +323,7 @@ const state = {
     timerInterval: null,
     players: [],
     myScore: 0,
-    mode: 'real', // 'real' or 'mock'
+    mode: 'mock', // 'real' or 'mock'
     connected: false
 };
 
@@ -387,17 +387,28 @@ const elements = {
     consoleBody: document.getElementById('consoleBody'),
     btnClearLogs: document.getElementById('btnClearLogs'),
 
+    // GameOver
+    gameOverReason: document.getElementById('gameOverReason'),
+    podiumContainer: document.getElementById('podiumContainer'),
+
     // Dev buttons
     btnSendTeacherStart: document.getElementById('btnSendTeacherStart'),
     btnSendTeacherEnd: document.getElementById('btnSendTeacherEnd'),
     btnTriggerMockQ: document.getElementById('btnTriggerMockQ'),
-    btnPlayAgain: document.getElementById('btnPlayAgain')
+    btnPlayAgain: document.getElementById('btnPlayAgain'),
+    btnLobbyStartGame: document.getElementById('btnLobbyStartGame')
 };
+
+// Application State Timeout
+let autoAdvanceTimeout = null;
 
 // Initialize Application
 document.addEventListener('DOMContentLoaded', async () => {
     initProtobuf();
     bindEvents();
+    if (elements.appModeBadge) {
+        elements.appModeBadge.textContent = state.mode === 'mock' ? 'MOCK MODE (STANDALONE)' : 'REAL BE INTEGRATION';
+    }
 });
 
 // Parse Protobuf Schema
@@ -448,11 +459,33 @@ function bindEvents() {
         });
     });
 
+    // Lobby Start Game button
+    if (elements.btnLobbyStartGame) {
+        elements.btnLobbyStartGame.addEventListener('click', () => {
+            if (state.mode === 'mock') {
+                triggerMockQuestion();
+            } else {
+                sendTeacherCommand(1); // START_GAME to Java Engine FSM
+                triggerMockQuestion();  // Launch question UI so student plays seamlessly
+            }
+        });
+    }
+
     // Dev action buttons
     elements.btnSendTeacherStart.addEventListener('click', () => sendTeacherCommand(1)); // START_GAME
     elements.btnSendTeacherEnd.addEventListener('click', () => sendTeacherCommand(4));   // END_GAME
     elements.btnTriggerMockQ.addEventListener('click', triggerMockQuestion);
-    elements.btnPlayAgain.addEventListener('click', () => showView(elements.viewLobby));
+    elements.btnPlayAgain.addEventListener('click', () => {
+        if (state.timerInterval) clearInterval(state.timerInterval);
+        if (autoAdvanceTimeout) clearTimeout(autoAdvanceTimeout);
+        mockStepIndex = 0;
+        state.myScore = 0;
+        elements.myScoreBadge.textContent = 'Điểm của bạn: 0';
+        state.players.forEach(p => p.score = 0);
+        updateRoster(state.players);
+        updateLeaderboard(state.players);
+        showView(elements.viewLobby);
+    });
 }
 
 // Helper: Logger
@@ -527,7 +560,10 @@ async function connectAndJoin() {
     }
 
     // Real Mode - WebSocket to Netty Gateway
-    const wsUrl = elements.wsUrl.value.trim();
+    let wsUrl = elements.wsUrl.value.trim();
+    if (!wsUrl.includes('/ws')) {
+        wsUrl = wsUrl.replace(/\/+$/, '') + '/ws';
+    }
     const secret = elements.hmacSecret.value.trim();
 
     try {
@@ -647,6 +683,18 @@ function submitAnswer(choiceId) {
 }
 
 function sendTeacherCommand(cmdEnum) {
+    if (state.mode === 'mock') {
+        if (cmdEnum === 1) { // START_GAME
+            triggerMockQuestion();
+        } else if (cmdEnum === 4) { // END_GAME
+            handleGameOver({
+                reason: 'Giáo viên đã kết thúc trò chơi!',
+                finalStandings: state.players
+            });
+        }
+        return;
+    }
+
     state.sequence++;
     const payload = {
         type: 4, // TEACHER_COMMAND
@@ -677,10 +725,65 @@ function sendProtobuf(msgObj, label) {
     logConsole(`[SEND] ${label} (${buffer.length} bytes)`, 'sent');
 }
 
+// LZ4 Framing Decoder (matches Gateway WireCompression.java)
+function decompressLZ4Block(compressed, uncompressedSize) {
+    const out = new Uint8Array(uncompressedSize);
+    let i = 0, o = 0;
+    while (i < compressed.length && o < uncompressedSize) {
+        const token = compressed[i++];
+        let literalLen = token >> 4;
+        if (literalLen === 15) {
+            let b;
+            while (i < compressed.length && (b = compressed[i++]) === 255) {
+                literalLen += 255;
+            }
+            literalLen += b;
+        }
+        for (let l = 0; l < literalLen; l++) {
+            out[o++] = compressed[i++];
+        }
+        if (i >= compressed.length || o >= uncompressedSize) break;
+
+        const offset = compressed[i] | (compressed[i + 1] << 8);
+        i += 2;
+
+        let matchLen = token & 0x0F;
+        if (matchLen === 15) {
+            let b;
+            while (i < compressed.length && (b = compressed[i++]) === 255) {
+                matchLen += 255;
+            }
+            matchLen += b;
+        }
+        matchLen += 4;
+
+        let matchPos = o - offset;
+        for (let m = 0; m < matchLen; m++) {
+            out[o++] = out[matchPos++];
+        }
+    }
+    return out;
+}
+
+function decodeWireBytes(bytes) {
+    if (!bytes || bytes.length === 0) return bytes;
+    const flag = bytes[0];
+    if (flag === 0x00) { // FLAG_RAW (uncompressed protobuf bytes follow)
+        return bytes.subarray(1);
+    } else if (flag === 0x01) { // FLAG_LZ4 (4-byte BE length + LZ4 compressed block)
+        if (bytes.length < 5) return bytes;
+        const originalLength = ((bytes[1] << 24) >>> 0) + (bytes[2] << 16) + (bytes[3] << 8) + bytes[4];
+        const compressed = bytes.subarray(5);
+        return decompressLZ4Block(compressed, originalLength);
+    }
+    return bytes; // Fallback if unflagged
+}
+
 // Receive Protobuf Messages
 function handleBinaryMessage(bytes) {
     try {
-        const decoded = state.GameMessage.decode(bytes);
+        const payloadBytes = decodeWireBytes(bytes);
+        const decoded = state.GameMessage.decode(payloadBytes);
         const type = decoded.type;
 
         logConsole(`[RECV] ${getTypeName(type)} (${bytes.length} bytes)`, 'recv');
@@ -712,6 +815,7 @@ function handleSnapshot(snapshot) {
 }
 
 function handleQuestionStarted(qs) {
+    if (autoAdvanceTimeout) clearTimeout(autoAdvanceTimeout);
     state.currentQuestionId = qs.questionId;
     showView(elements.viewQuestion);
 
@@ -741,7 +845,7 @@ function handleQuestionStarted(qs) {
     elements.answerFeedback.classList.add('hidden');
 
     // Timer countdown
-    startTimer(qs.durationMs || 25000);
+    startTimer(qs.durationMs || 15000);
 }
 
 function showAnswerAck(ack) {
@@ -758,38 +862,51 @@ function showAnswerAck(ack) {
             elements.feedbackIcon.textContent = '❌';
             elements.feedbackTitle.textContent = 'CHƯA CHÍNH XÁC (0 ĐIỂM)';
         }
-        elements.feedbackDetail.textContent = `Thời gian phản hồi: ${ack.responseTimeMs || 0}ms | Tổng điểm: ${ack.totalScore || state.myScore}`;
+        elements.feedbackDetail.textContent = `Thời gian phản hồi: ${ack.responseTimeMs || 0}ms | Tổng điểm: ${ack.totalScore || state.myScore} | ⏳ Tự động chuyển câu tiếp theo...`;
         
         if (ack.totalScore !== undefined) {
             state.myScore = ack.totalScore;
             elements.myScoreBadge.textContent = `Điểm của bạn: ${state.myScore}`;
         }
     } else {
+        const reasonText = getRejectReasonName(ack.rejectReason);
         elements.feedbackCard.className = 'feedback-card incorrect';
         elements.feedbackIcon.textContent = '⚠️';
-        elements.feedbackTitle.textContent = 'ĐÁP ÁN BỊ TỪ CHỐI';
-        elements.feedbackDetail.textContent = `Lý do: ${ack.rejectReason || 'Không hợp lệ'}`;
+        elements.feedbackTitle.textContent = 'PHẢN HỒI TỪ JAVA ENGINE';
+        elements.feedbackDetail.textContent = `Lý do BE từ chối: ${reasonText} | ⏳ Tự động chuyển câu tiếp theo...`;
     }
+
+    if (autoAdvanceTimeout) clearTimeout(autoAdvanceTimeout);
+    autoAdvanceTimeout = setTimeout(() => {
+        triggerMockQuestion();
+    }, 3000);
 }
 
 function handleGameOver(go) {
+    if (autoAdvanceTimeout) clearTimeout(autoAdvanceTimeout);
     showView(elements.viewGameOver);
-    elements.gameOverReason.textContent = go.reason || 'Trò chơi đã kết thúc!';
+    if (elements.gameOverReason) {
+        elements.gameOverReason.textContent = go.reason || 'Trò chơi đã kết thúc!';
+    }
 
     const standings = go.finalStandings || state.players;
-    const podiumContainer = document.getElementById('podiumContainer');
-    podiumContainer.innerHTML = '';
+    const podiumContainer = elements.podiumContainer || document.getElementById('podiumContainer');
+    if (podiumContainer) {
+        podiumContainer.innerHTML = '';
 
-    standings.slice(0, 3).forEach((p, idx) => {
-        const div = document.createElement('div');
-        div.className = `podium-step step-${idx + 1}`;
-        div.innerHTML = `
-            <div>${idx === 0 ? '🥇' : idx === 1 ? '🥈' : '🥉'}</div>
-            <div>${p.displayName || p.studentId}</div>
-            <div style="font-size:12px;opacity:0.8">${p.score || 0} điểm</div>
-        `;
-        podiumContainer.appendChild(div);
-    });
+        const sortedStandings = [...standings].sort((a, b) => (b.score || 0) - (a.score || 0));
+
+        sortedStandings.slice(0, 3).forEach((p, idx) => {
+            const div = document.createElement('div');
+            div.className = `podium-step step-${idx + 1}`;
+            div.innerHTML = `
+                <div>${idx === 0 ? '🥇' : idx === 1 ? '🥈' : '🥉'}</div>
+                <div>${p.displayName || p.display_name || p.studentId}</div>
+                <div style="font-size:12px;opacity:0.8">${p.score || 0} điểm</div>
+            `;
+            podiumContainer.appendChild(div);
+        });
+    }
 }
 
 function handleConnectionDegraded(cd) {
@@ -866,11 +983,21 @@ function startTimer(durationMs) {
 
         if (remaining <= 0) {
             clearInterval(state.timerInterval);
+            if (!elements.btnChoiceA.disabled) {
+                // Time's up
+                [elements.btnChoiceA, elements.btnChoiceB, elements.btnChoiceC, elements.btnChoiceD].forEach(btn => {
+                    btn.disabled = true;
+                });
+                showAnswerAck({
+                    accepted: true,
+                    awardedPoints: 0,
+                    totalScore: state.myScore,
+                    responseTimeMs: durationMs
+                });
+            }
         }
     }, 100);
 }
-
-
 
 let mockStepIndex = 0;
 
@@ -898,4 +1025,17 @@ function getTypeName(typeInt) {
         23: 'STUDENT_JOINED', 24: 'GAME_OVER', 25: 'CONNECTION_DEGRADED'
     };
     return types[typeInt] || `TYPE_${typeInt}`;
+}
+
+function getRejectReasonName(reasonInt) {
+    const reasons = {
+        0: 'Chưa xác định (UNSPECIFIED)',
+        1: 'Không có lỗi (NONE)',
+        2: 'Quá thời gian quy định (PAST_DEADLINE)',
+        3: 'Trùng lặp sequence (DUPLICATE_SEQUENCE)',
+        4: 'Câu hỏi chưa được đăng ký trên Java Engine (UNKNOWN_QUESTION)',
+        5: 'Sai giai đoạn trò chơi (WRONG_PHASE)',
+        6: 'Vượt quá giới hạn tần suất (RATE_LIMIT_EXCEEDED)'
+    };
+    return reasons[reasonInt] || `Mã lỗi ${reasonInt}`;
 }
