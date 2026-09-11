@@ -450,16 +450,17 @@ Mỗi bản ghi snapshot gồm `{ schema_version, epoch, crc32, payload }`:
 
 ### 6.1 Phân Tích Tài Nguyên Hệ Thống Cũ (`k12-socketio`) vs Dự Toán Hệ Thống Mới (`uni-realtime`)
 
-#### 6.1.1 Phân Tích Hiện Trạng Thực Tế Hệ Thống Cũ (`Netty-SocketIO + Node.js/Spring`)
-Dựa trên số liệu đo đạc thực tế tại ca cao điểm (19:00 – 21:30):
-* **Tổng CPU tiêu thụ toàn cụm:** Chỉ khoảng **2.5 – 3.0 cores CPU** cho toàn bộ 7 Pods (gồm 4 pod `k12-socketio` và 3 pod `k12-socketio-worker`).
-* **Chi tiết Tầng Socket (`k12-socketio` - 4 Pods):**
+#### 6.1.1 Phân Tích Hiện Trạng Thực Tế Hệ Thống Cũ (`Netty-SocketIO + Spring`) At 10k–15k CCU
+Dựa trên số liệu đo đạc hạ tầng thực tế tại ca cao điểm (10.000 – 15.000 CCU) (Xem báo cáo đầy đủ cho PO tại [legacy-vs-new-system-justification.md](file:///d:/project-be/java/k12-platform-beta/docs/architecture/legacy-vs-new-system-justification.md)):
+* **Tầng Socket (`k12-socketio` - 4 Pods):**
   * **K8s Config:** Request `1Gi RAM / 0.5 CPU`, Limit `6Gi RAM / 4 CPUs`.
-  * **Thực tế sử dụng TỔNG (4 Pods):** CPU tiêu thụ **0.196 core** (trung bình **~0.049 core/pod**); Memory ngốn **~5.48 GiB** (trung bình **~1.37 GiB RAM/pod**).
-  * **Đánh giá:** Đặt `Limit 4 CPUs/pod` (tổng 16 CPUs cho 4 pod) là mức lãng phí Quota K8s nghiêm trọng (>98% CPU requested/limited bị thừa). Bộ nhớ phồng chủ yếu ở tầng Native Memory do phảnh mảnh `glibc malloc` và đệm Socket.IO JSON.
-* **Chi tiết Tầng Worker (`k12-socketio-worker` - 3 Pods):**
+  * **Thực tế sử dụng:** 2 Pods cao điểm **chạm trần 4.0 CPU Usage (100% Limit)**, 2 Pods còn lại 1.0 CPU. Memory: 2 Pods chạm 2.5 GiB, 2 Pods 1.5 GiB.
+  * **Dropped Packets:** **80 mp/s (Transmit)** và **100 mp/s (Receive)**. CPU Throttling làm tràn đệm Linux Kernel socket.
+* **Tầng Worker (`k12-socketio-worker` - 3 Pods):**
   * **K8s Config:** Request `1Gi RAM / 0.5 CPU`, Limit `8Gi RAM / 4 CPUs`.
-  * **Thực tế sử dụng TỔNG (3 Pods):** CPU tiêu thụ **0.241 core** (trung bình **~0.08 core/pod**); Memory ngốn **~2.44 GiB** (trung bình **~0.81 GiB RAM/pod**).
+  * **Thực tế sử dụng:** 2 Pods chạm 1.25 CPU, 1 Pod 0.6 CPU. Memory: 2 Pods ngốn 900 MiB, 1 Pod 800 MiB.
+* **Cụm Redis Cluster Pub/Sub:**
+  * **Network I/O:** **24 MiB/s**, **6.000 – 10.000 command calls/sec**. RAM ngốn **6 GB / 8 GB (75% dung lượng mỗi node)**.
 
 ---
 
@@ -471,7 +472,7 @@ Dựa trên số liệu đo đạc thực tế tại ca cao điểm (19:00 – 2
 | **Giao thức nội bộ** | Valkey Pub/Sub Cluster | **Raw Netty TCP Direct** (Lazy-Learned) | **Triệt tiêu 100% nghẽn Valkey Pub/Sub** |
 | **Mô hình Fan-out** | Parse & Serialize JSON từng client | **Zero-Copy `retainedDuplicate()`** | Không tốn CPU/RAM khi broadcast 12 HS |
 | **Quản lý State** | Valkey Buffer + Thread Pool | **Pekko Typed Actors (`RoomActor`) RAM** | Đơn luồng, 0 Lock, 0 Race Condition |
-| **Hiệu quả CPU** | 2.5-3.0 cores toàn cụm (Lãng phí >95%) | **Tối ưu 100% Multi-threading Java 25** | Tiết kiệm >40% CPU Quota trên K8s |
+| **Hiệu quả CPU & Dropped Pkts** | 2 Pod chạm 4 CPU Limit (Rớt 100 mp/s) | **Tối ưu 100% Multi-threading Java 25** (0 mp/s) | Tiết kiệm >40% CPU Quota, 0 rớt gói |
 
 ---
 
