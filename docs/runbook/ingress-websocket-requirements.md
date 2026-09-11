@@ -8,9 +8,11 @@ văn bản" có một chỗ đứng thật thay vì chỉ nằm trong trí nhớ
 [system-architecture.md ADR-008](../architecture/system-architecture.md#adr-008)
 đã ghi: *"phải nằm trong manifest chứ không phải trí nhớ"*.
 
-Đây **không phải** manifest triển khai thật (chưa chọn ingress controller/LB cụ thể — Nginx
-Ingress, Traefik, cloud LB (ALB/GCLB)... đều chưa quyết định, và ngân sách hạ tầng vẫn còn treo ở
-`_context.md` §7.5). Đây là **danh sách yêu cầu** mà manifest thật, khi được viết, phải thoả mãn.
+Đây **không phải** manifest triển khai thật — chưa chọn ingress controller/LB cụ thể (Nginx
+Ingress, Traefik, cloud LB (ALB/GCLB)... đều chưa quyết định). Ngân sách hạ tầng hàng tháng đã
+được Business xác nhận đáp ứng được (2026-09-11, xem `system-architecture.md` §9.2 row 3) — việc
+còn treo ở đây chỉ là chọn controller/LB cụ thể, không còn là giới hạn ngân sách. Đây là **danh
+sách yêu cầu** mà manifest thật, khi được viết, phải thoả mãn.
 
 ## Vì sao 2 ràng buộc này bắt buộc
 

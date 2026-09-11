@@ -7,15 +7,15 @@ Tài liệu này là hand-off giữa Backend và DevOps cho K12 Platform realtim
 | Thành phần | Cổng | Phơi ra ngoài | Mục đích |
 | --- | ---: | --- | --- |
 | Gateway WebSocket | `9000` | Có, chỉ qua Ingress/LB TLS | Kết nối realtime của client |
-| Gateway management | `8080` | Không | Actuator, metrics, health check |
+| Gateway management | `8080` | Không | Actuator, metrics, health check, relay webhook Alertmanager (`POST /internal/alertmanager-webhook`, xem mục 6) |
 | Engine frame server | `9100` | Không | Gateway gửi frame vào game engine |
-| Engine management | `8090` | Không | Actuator, metrics, health check |
+| Engine management | `8090` | Không | Actuator, metrics, health check, relay webhook Alertmanager (`POST /internal/alertmanager-webhook`, xem mục 6) |
 | Valkey | `6379` | Không | Room ownership (bắt buộc, `LeaseBasedRoomOwnership` luôn chạy) + discovery khi được bật |
 | Kafka | `9092` | Không | Event bất đồng bộ khi được bật |
 
 Luồng bắt buộc: `Client -> TLS Ingress/LB -> Gateway:9000 -> Engine:9100`.
 
-Chỉ Gateway được phép gọi `Engine:9100`. Actuator, Valkey, Kafka và OTLP collector phải nằm trên private network / NetworkPolicy phù hợp. Không expose trực tiếp cổng 9000 hoặc 9100 ra Internet ngoài lớp Ingress/LB.
+Chỉ Gateway được phép gọi `Engine:9100`. Actuator, Valkey, Kafka và OTLP collector phải nằm trên private network / NetworkPolicy phù hợp. Không expose trực tiếp cổng 9000 hoặc 9100 ra Internet ngoài lớp Ingress/LB. `/internal/alertmanager-webhook` (module `uni-observability`, chạy trên cả 2 service vì cùng scan `com.uni.realtime`) cũng phải ở private network như actuator — không phải endpoint cho client.
 
 ## 2. Cấu hình Gateway
 
@@ -30,9 +30,13 @@ Chỉ Gateway được phép gọi `Engine:9100`. Actuator, Valkey, Kafka và OT
 | `GATEWAY_DEV_JOIN_TOKEN_ENABLED` | **`false`** |
 | `GATEWAY_ALWAYS_ACCEPT_JOIN_TOKEN_ENABLED` | **`false`** |
 | `GATEWAY_DEV_JOIN_TOKEN_SECRET` | Không cấp cho production; chỉ phục vụ dev token verifier |
+| `GATEWAY_DEV_JOIN_TOKEN_TTL_SECONDS` | Mặc định `300`; chỉ có ý nghĩa khi `GATEWAY_DEV_JOIN_TOKEN_ENABLED=true` — không cấp cho production |
+| `GATEWAY_DEV_JOIN_TOKEN_REPLAY_GUARD_ENABLED` | Mặc định `false`; chỉ có ý nghĩa khi `GATEWAY_DEV_JOIN_TOKEN_ENABLED=true` — không cấp cho production |
 | `OTLP_ENDPOINT` | Endpoint OTLP nội bộ, ví dụ collector `:4318` |
 
 `docker-compose.dev.yml` có bật dev join token và discovery để phục vụ local/integration testing. Không dùng các giá trị đó làm baseline production.
+
+Ngoài bảng trên, cả Gateway lẫn Engine còn nhận 3 biến môi trường của module dùng chung `uni-observability` (relay cảnh báo) — xem mục 6.
 
 ## 3. Cấu hình Game Engine
 
@@ -90,6 +94,7 @@ Không coi in-memory rate-limit state là lớp DDoS storage. State trong code �
 - Inject secrets từ secret manager/Kubernetes Secret; không commit vào image, ConfigMap thường, compose file production hoặc log.
 - Tách credential Valkey/Kafka/OTLP khỏi URI public. Chỉ dùng TLS/SASL/auth khi ứng dụng và thư viện đã được Backend xác nhận hỗ trợ end-to-end.
 - Không bật `GATEWAY_DEV_JOIN_TOKEN_ENABLED` hoặc `GATEWAY_ALWAYS_ACCEPT_JOIN_TOKEN_ENABLED` ở bất kỳ môi trường có người dùng thật.
+- `GOOGLE_CHAT_WEBHOOK_URL` (chứa token trong query string), `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` (mục 6) là secret, cùng loại xử lý như credential Valkey/Kafka — không commit giá trị thật (repo chỉ commit `observability/.env.example` với placeholder `REPLACE_ME`; `observability/.env` chứa giá trị thật bị `.gitignore` chặn).
 - Rotate secret và credential theo quy trình nền tảng; rollout phải tránh log giá trị biến môi trường.
 
 ## 6. Probes, observability và resource
@@ -106,6 +111,20 @@ Dockerfile hiện kiểm tra TCP (`9000` cho Gateway, `9100` cho Engine). Trong 
 Image đã chạy non-root và dùng `-XX:MaxRAMPercentage=75.0`; do đó memory limit của container phải được đặt rõ ràng. CPU/memory request, limit, replica count và HPA target phải xuất phát từ load test đại diện cho số connection, số room, submit rate và message size thực tế — không dùng con số mặc định trong tài liệu này.
 
 Thu thập JSON logs, Prometheus metrics và traces qua `OTLP_ENDPOINT`. Alert tối thiểu: restart/OOM, readiness failure, active connection spike, rate-limit rejection spike, engine unavailable, room-store/lease failure, Kafka queue saturation/drop và p95/p99 latency tăng.
+
+### 6.1 Relay cảnh báo Alertmanager → Google Chat/Telegram
+
+Cả 2 service đều expose `POST /internal/alertmanager-webhook` (từ `uni-observability`, cùng `management`/`server` port ở bảng mục 1 — không có `management.server.port` riêng). Endpoint này nhận đúng payload `webhook_configs` gốc của Alertmanager rồi relay sang Google Chat/Telegram, vì Alertmanager không thể POST thẳng tới webhook của Google Chat (khác schema payload).
+
+| Biến môi trường | Giá trị/ý nghĩa production |
+| --- | --- |
+| `GOOGLE_CHAT_WEBHOOK_URL` | URL webhook thật của Google Chat space nhận cảnh báo (rỗng = kênh này tắt) |
+| `TELEGRAM_BOT_TOKEN` | Token bot Telegram (rỗng = kênh này tắt) |
+| `TELEGRAM_CHAT_ID` | Chat/group ID Telegram nhận cảnh báo |
+
+**Giới hạn đã biết (ghi rõ trong javadoc `AlertmanagerWebhookController`, không phải thiếu sót):** relay này chạy trong **cùng JVM** với service đang được giám sát — nếu chính instance đó down thì cảnh báo "AppDown" của instance đó không relay được qua chính nó. Chấp nhận được cho dev/demo, **không phải relay ngoài tiến trình (out-of-process)** cho một triển khai production thật; production nên trỏ Alertmanager `webhook_configs` tới một relay độc lập, không phụ thuộc vào service đang được giám sát còn sống hay không.
+
+`observability/alertmanager/alertmanager.yml` (dùng cho stack Docker Compose observability cục bộ) hiện trỏ webhook tới `http://host.docker.internal:8080` — chỉ đúng khi Alertmanager và service chạy trên cùng máy Docker Desktop; production phải trỏ tới địa chỉ nội bộ thật của Gateway/Engine.
 
 ## 7. Trình tự triển khai và rollback
 
@@ -130,5 +149,7 @@ Rollback theo artifact đã biết tốt. Khi rollback Engine, phải tính sess
 ## 9. Release gate Backend ↔ DevOps
 
 DevOps có thể triển khai hạ tầng; Backend vẫn chịu trách nhiệm về correctness của WebSocket protocol, auth, room ownership và game state. Trước prod, cần có xác nhận chung rằng bản release đã qua integration test WebSocket end-to-end (đặc biệt đường rate-limit), auth production, và test scale/failover theo topology được chọn.
+
+**Chính sách join-token theo môi trường (chốt 2026-09-11):** môi trường **dev được phép** deploy/pass với `AlwaysAcceptJoinTokenVerifier` hiện tại (không cần chờ JWT verifier thật). **Production tuyệt đối bắt buộc** phải có JWT verifier thật (RS256/ES256 + `aud`/`iss` + phân phối public key qua JWKS/GitOps, xem `NOJIRA-uni-p1-tech-design.md` mục G1) trước khi mở traffic — `GATEWAY_ALWAYS_ACCEPT_JOIN_TOKEN_ENABLED`/`GATEWAY_DEV_JOIN_TOKEN_ENABLED` phải là `false` (đã ghi ở mục 2/5). Đây là gate cứng, không phải khuyến nghị.
 
 Nếu các điều kiện trên chưa được xác nhận, có thể deploy môi trường staging nhưng chưa nên mở production traffic cho game realtime.

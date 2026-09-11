@@ -17,13 +17,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Task 7 verification (plan.md, §5.6 L1): the IP-keyed admission budget itself, independent of
- * Netty. {@code capacity}/{@code refillPeriod} are private constants (4.000/min, the Business
- * decision superseding plan.md's original 300) -- exercised here through the real public API,
- * not injected, so this test also acts as a change-detector on the threshold value itself.
+ * Netty. {@code capacity}/{@code refillPeriod} are private constants (2.000/min, the 2026-09-11
+ * Business decision superseding the original 4.000/min from 2026-09-06) -- exercised here
+ * through the real public API, not injected, so this test also acts as a change-detector on the
+ * threshold value itself.
  */
 class IpAdmissionControllerTest {
 
-    private static final int CAPACITY = 4_000;
+    private static final int CAPACITY = 2_000;
 
     private MutableClock clock;
     private IpAdmissionController controller;
@@ -74,7 +75,7 @@ class IpAdmissionControllerTest {
         // admit must come from the same fixed window -- any count over CAPACITY means
         // tryConsume()'s available-- raced instead of being properly serialized.
         int threadCount = 50;
-        int attemptsPerThread = 200; // 10,000 total attempts against a 4,000 budget
+        int attemptsPerThread = 200; // 10,000 total attempts against a 2,000 budget
         ExecutorService pool = Executors.newFixedThreadPool(threadCount);
         CountDownLatch start = new CountDownLatch(1);
         AtomicInteger admitted = new AtomicInteger();

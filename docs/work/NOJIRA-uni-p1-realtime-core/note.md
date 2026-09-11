@@ -35,7 +35,7 @@
 - **Resilience & Storage (T10, T14, T15, T16, T18):** `RoomOwnership` interface (`ModuloRoomOwnership` & `LeaseBasedRoomOwnership`). Hot Snapshot Valkey nén < 5KB với Fencing Epoch. Broadcast `COMMITTED_SEQ` và `broadcast_seq` tăng đơn điệu. `GameEventPublisher` đẩy sự kiện Kafka async (`max.block.ms=0`, worker thread riêng).
 
 ### 2. WebSocket Gateway Edge (`uni-websocket-gateway`)
-- **Pipeline & Security (T6, T7):** Netty WS Pipeline (`HttpServerCodec → HttpObjectAggregator(50KB) → WebSocketServerProtocolHandler → JoinTokenAuthHandler → RateLimitHandler → GameMessageDecoder → RoomRouteHandler`). Ràng buộc `room_id` theo `ChannelAttributes`. Rate limiting L1 (IP: 4000/phút), L2 (`student_id`: 10/phút), Per-message (`SUBMIT` 3/1s, `DRAFT` 10/10s, `HEARTBEAT` 2/30s).
+- **Pipeline & Security (T6, T7):** Netty WS Pipeline (`HttpServerCodec → HttpObjectAggregator(50KB) → WebSocketServerProtocolHandler → JoinTokenAuthHandler → RateLimitHandler → GameMessageDecoder → RoomRouteHandler`). Ràng buộc `room_id` theo `ChannelAttributes`. Rate limiting L1 (IP: 2000/phút, giảm từ 4000/phút ngày 2026-09-11), L2 (`student_id`: 10/phút), Per-message (`SUBMIT` 3/1s, `DRAFT` 10/10s, `HEARTBEAT` 2/30s).
 - **Routing & Fan-out (T5, T8, T9):** Lazy-learned `RouteCache` (`room_id -> pod_id`). Zero-copy fan-out dùng `retainedDuplicate()` và release trong `finally`. Backpressure 1 tầng theo socket writability (`WRITE_BUFFER_WATER_MARK` 32KB/64KB).
 
 ### 3. Integration & E2E Test (`uni-e2e`)

@@ -8,7 +8,7 @@ import java.time.Duration;
 
 public final class IpAdmissionController {
 
-    private static final int CAPACITY = 4_000;
+    private static final int CAPACITY = 2_000;
     private static final Duration REFILL_PERIOD = Duration.ofMinutes(1);
 
     private final Clock clock;

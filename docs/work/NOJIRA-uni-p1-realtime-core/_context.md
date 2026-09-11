@@ -42,8 +42,8 @@ progress: "Code Giai doan 1 (T1-T23) da xong, mvn clean install toan reactor xan
   (so test chinh xac chua re-verify trong phien nay - dung so o lan chay gan nhat, khong tu bia).
   Con GAP CHUA dong truoc khi ship that (khong phai '100% hoan thanh'): staging Valkey Cluster
   chua verify (moi Docker 1 may); PH-3 client contract (ring buffer/RESYNC) chua co doi nhan;
-  JoinTokenVerifier that con chan boi G1a/G1c; nguong L1 IP 4000/phut chua do tai that (PH-1);
-  ngan sach ha tang van cho Business tra loi. Chi tiet day
+  JoinTokenVerifier that con chan boi G1a/G1c; nguong L1 IP 2000/phut (giam tu 4000, xem entry
+  2026-09-11) chua do tai that (PH-1). Chi tiet day
   du (B1-B5, lich su tung task) xem git history cua file nay truoc ban rut gon 2026-09-10.
   2026-09-10 (tiep): missed_step_policy mac dinh DA CHOT - quyet dinh NOI BO dev/eng, PO khong
   tham gia cau nay (khac G1a o duoi, PO co tham gia). Giu ZERO la gia tri DUY NHAT cho GD1, khong
@@ -60,11 +60,26 @@ progress: "Code Giai doan 1 (T1-T23) da xong, mvn clean install toan reactor xan
   uniclass-product-api (dich vu nen tang) xac nhan gia dinh cu 'POST /session/{id}/join da co' LA
   SAI - dich vu do hien chi co JWT dang nhap thuong (AuthService.checkToken, HS256, secret dung
   chung config.jwtSecretKey, khong co jti), khong ton tai endpoint mint join-token nao. G1c (dung
-  sai dong ho check exp) van con treo, de xuat +-5s nhung chua duoc doi nen tang xac nhan."
+  sai dong ho check exp) van con treo, de xuat +-5s nhung chua duoc doi nen tang xac nhan.
+  2026-09-11 (nguoi dung tra loi 5 gap chan release dau tien): (1) Join-token: MOI TRUONG DEV
+  duoc phep dong 'pass' voi AlwaysAcceptJoinTokenVerifier hien tai (khong can cho G1a/G1c code
+  xong moi deploy dev) - nhung PRODUCTION BAT BUOC phai co JWT verifier that (RS256/ES256 +
+  JWKS) truoc khi mo traffic that, khong duoc rut gon. Day la release-gate policy, khong phai
+  quyet dinh ha ngưỡng bao mat. (2) Staging Valkey Cluster: se verify SAU KHI da deploy len moi
+  truong dev, ket qua se gui lai sau - chua co so do that luc nay. (3) Nguong L1 IP: giam tu
+  4000 xuong 2000 handshake/phut (Business quyet dinh) - da sua code that
+  (IpAdmissionController.CAPACITY + IpAdmissionControllerTest) + system-architecture.md SS5.6 +
+  SS9.2 rows 3/5 + NOJIRA-uni-p1-tech-design.md + plan.md Task 7 + note.md. (4) Ngan sach ha
+  tang hang thang: Business xac nhan DAP UNG DUOC - khong con la gap treo (system-architecture.md
+  SS9.2 row 3 dong tu 'Con treo' sang 'Da chot'); so luong pod toi uu cu the van cho ket qua load
+  test PH-1 tren moi truong dev, khac voi gioi han ngan sach. (5) PH-3 client-side contract (ring
+  buffer/sequence/RESYNC): se verify SAU KHI da deploy len moi truong dev, ket qua se gui lai sau
+  - chua co client nao lam luc nay. Con lai CHUA doi: G1a/G1c code that, PH-1 do tai that, PH-3
+  client contract that - ca 3 deu dang cho ket qua tu lan deploy moi truong dev sap toi."
 dev_selftest: pending
 qc_status: pending
 trace: pending
-updated: "2026-09-10"
+updated: "2026-09-11"
 ```
 
 **Ship-ready khi:** `dev_selftest: pass` **và** `qc_status ∈ {pass, na}` **và** `trace: pass`.

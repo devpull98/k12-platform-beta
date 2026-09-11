@@ -417,11 +417,12 @@ Mailbox RoomActor đầy → Engine ngừng đọc TCP Frame Channel → TCP Win
 
 ### 5.6 Rate Limiting Phân Tầng (Thân thiện NAT)
 Hệ thống cấm dùng IP làm khoá rate limit chính vì hàng nghìn học sinh cùng trường thường đi qua **1 IP NAT duy nhất**:
-- **L1 (Chống DDoS thô)**: Khoá theo IP, ngưỡng **4.000 handshake/phút** (đã chốt 2026-09-06,
-  Business — ước lượng theo quy mô phiên/lớp lớn nhất thực tế đang vận hành, ~4.000 học sinh;
-  **không phải số đo trực tiếp theo IP**, vì vận hành hiện tại không tách được học sinh nào
-  đứng sau IP nào. Coi đây là trần an toàn giả định xấu nhất — 1 trường có thể chiếm trọn quy
-  mô phiên lớn nhất. PH-1 (load test) cần xác nhận lại bằng số đo thật).
+- **L1 (Chống DDoS thô)**: Khoá theo IP, ngưỡng **2.000 handshake/phút** (đã chốt 2026-09-11,
+  Business — giảm từ mức 4.000 chốt lúc 2026-09-06; vẫn là ước lượng theo quy mô phiên/lớp lớn
+  nhất thực tế đang vận hành, **không phải số đo trực tiếp theo IP**, vì vận hành hiện tại không
+  tách được học sinh nào đứng sau IP nào. Coi đây là trần an toàn giả định xấu nhất — 1 trường có
+  thể chiếm trọn quy mô phiên lớn nhất. Sẽ verify lại bằng số đo thật (PH-1) sau khi đẩy lên môi
+  trường dev).
 - **L2 (Chống lạm dụng)**: Khoá theo `student_id`, ngưỡng **10 handshake/phút**.
 - **L3 (Bảo vệ dung lượng pod)**: Admission control toàn cục (xem [§6.5](#65-connection-storm-đầu-giờ)).
 - **Rate limit thông điệp trong trận (theo `student_id`)**:
@@ -684,9 +685,9 @@ Năm câu hỏi cần cấp thẩm quyền quyết định — **4/5 đã chốt
 |---|---|---|---|---|
 | 1 | Mặc định của `missed_step_policy` | ~~Product~~ → **Dev/Eng (nội bộ, PO không tham gia)** | Quyết định kích thước snapshot < 5 KB ([§4.8](#48-vào-phòng-muộn-late-join-vs-kết-nối-lại)) | ✅ ĐÃ CHỐT (2026-09-10, quyết định nội bộ dev/eng, không qua PO) — **giữ `ZERO` là giá trị DUY NHẤT cho GĐ1, không mở `SKIP`/`ALLOW_LATE`.** `DefinitionLoader` tiếp tục hard-reject 2 giá trị đó (không đổi code) — lý do: `SKIP` cần thêm field `%` vào protocol + ràng buộc chống lạm dụng (người vào muộn lợi thế % nếu lỡ dùng cho phòng thi đấu), không đáng đánh đổi khi GĐ1 chỉ có use-case thi đấu, chưa có use-case tự học nào ship. Không phải quyết định Product — ghi rõ để không hiểu nhầm là PO đã duyệt. |
 | 2 | Công thức tính điểm Quiz GĐ1 | **Product** | Hoàn thiện `ScoreCalculator` (Task 2) | ✅ ĐÃ CHỐT — xem [§2.5](#25-game-definition--guardrails) |
-| 3 | Ngân sách hạ tầng hàng tháng | **Business** | Số lượng pod Gateway & Engine tối ưu | 🔴 Còn treo |
+| 3 | Ngân sách hạ tầng hàng tháng | **Business** | Số lượng pod Gateway & Engine tối ưu | ✅ ĐÃ CHỐT (2026-09-11, Business) — ngân sách đáp ứng được; số lượng pod tối ưu cụ thể vẫn chờ kết quả load test PH-1 trên môi trường dev, không phải giới hạn ngân sách |
 | 4 | Hệ thống chạy bao nhiêu giờ mỗi ngày? | **Business** | Nếu chỉ chạy 4–6 tiếng/ngày có thể buộc phải đảo ngược [ADR-002](#adr-002) do chi phí duy trì quorum Pekko cluster luôn-bật | ✅ ĐÃ CHỐT — chạy cả ngày, ADR-002 **giữ nguyên**, xem [§1.1](#11-bài-toán--đặc-thù-edtech) |
-| 5 | Quy mô trường lớn nhất sau một NAT IP | **Business** | Xác định ngưỡng chặn L1 ở [§5.6](#56-rate-limiting-phân-tầng) | ✅ ƯỚC LƯỢNG — 4.000, xem [§5.6](#56-rate-limiting-phân-tầng) (chưa phải số đo IP thật, chờ PH-1) |
+| 5 | Quy mô trường lớn nhất sau một NAT IP | **Business** | Xác định ngưỡng chặn L1 ở [§5.6](#56-rate-limiting-phân-tầng) | ✅ ƯỚC LƯỢNG — 2.000 (giảm từ 4.000 ngày 2026-09-11), xem [§5.6](#56-rate-limiting-phân-tầng) (chưa phải số đo IP thật, sẽ verify sau khi đẩy lên môi trường dev) |
 
 ### 7.6 Lộ trình nâng cấp lên Giai đoạn 2 (GĐ2)
 Các bước nâng cấp tiếp theo:

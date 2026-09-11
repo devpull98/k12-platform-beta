@@ -75,7 +75,7 @@ parallel_safe: true
 - **Verification:** `mvn -pl :uni-websocket-gateway test -Dtest=GatewayPipelineTest,AlwaysAcceptJoinTokenVerifierTest` (11/11 pass).
 
 ### Task 7: Rate Limiting Phân Tầng — ✅ XONG
-- L1 IP (4000/min), L2 `student_id` (10/min), Per-message (`SUBMIT` 3/1s, `DRAFT` 10/10s + 150ms client debounce, `HEARTBEAT` 2/30s).
+- L1 IP (2000/min, giảm từ 4000/min ngày 2026-09-11 — Business decision), L2 `student_id` (10/min), Per-message (`SUBMIT` 3/1s, `DRAFT` 10/10s + 150ms client debounce, `HEARTBEAT` 2/30s).
 - **Verification:** `mvn -pl :uni-websocket-gateway test -Dtest=RateLimitHandlerTest,IpAdmissionControllerTest,StudentHandshakeAdmissionControllerTest` (11/11 pass).
 
 ### Task 8: Room Registry & Fan-out Zero-copy — ✅ XONG

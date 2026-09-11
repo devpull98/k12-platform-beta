@@ -187,8 +187,9 @@ trên:
   **luôn** từ attribute, không bao giờ từ payload — payload lệch là **security event → đóng
   channel** (§10.6).
 - **Rate limit:** khoá theo `student_id`, không theo IP làm tầng chính (trường học sau NAT dùng
-  chung IP). L1 theo IP = **4.000 handshake/phút** (đã chốt 2026-09-06, xem README §5.6 —
-  ước lượng theo quy mô phiên lớn nhất, chưa phải số đo IP thật).
+  chung IP). L1 theo IP = **2.000 handshake/phút** (giảm từ 4.000 ngày 2026-09-11, xem README
+  §5.6 — ước lượng theo quy mô phiên lớn nhất, chưa phải số đo IP thật, sẽ verify sau khi đẩy
+  lên môi trường dev).
 - **Cache:** chỉ có `RouteCache` (`room_id → pod`), in-memory, **không TTL** — entry sai tự sửa
   ở lần dùng kế tiếp (§8.2). Không có Valkey nào để đặt TTL lên.
 

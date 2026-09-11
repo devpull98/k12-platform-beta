@@ -13,13 +13,14 @@ cấu hình triển khai chung). Tài liệu này giả định staging đã t�
 ra nhiều lần trong repo này (xem `_context.md` B1/B2/B3 và các "bug thật phát hiện qua Docker
 thật" ở Task 14/20/21).
 
-> [!WARNING]
-> **Cảnh báo staleness (2026-09-10):** `production-deployment-and-configuration.md` §3 hiện vẫn
-> nhắc `ENGINE_POD_COUNT`, `ENGINE_ROOM_STORE_ENABLED`, và cụm "fallback modulo" như thể còn tồn
-> tại — các config/khái niệm này đã bị **xoá khỏi code** ở Task 23 (`room_id % N` removal,
-> 2026-09-09, commit `33faa97`). `LeaseBasedRoomOwnership` giờ LUÔN chạy, Valkey là dependency bắt
-> buộc, không còn "bật/tắt". Tài liệu đó là do người dùng tự viết — chưa tự sửa lại, chỉ ghi chú ở
-> đây để người đọc runbook này không bị lẫn giữa 2 tài liệu.
+> [!NOTE]
+> **Cập nhật 2026-09-11 (đối chiếu lại với code):** cảnh báo staleness từng ghi ở đây (2026-09-10,
+> nói `production-deployment-and-configuration.md` §3 "vẫn nhắc `ENGINE_POD_COUNT`,
+> `ENGINE_ROOM_STORE_ENABLED` như thể còn tồn tại") **đã lỗi thời** — §3 của tài liệu đó thực tế đã
+> có block "Cập nhật 2026-09-09 (Task 23)" ghi đúng rằng 2 biến này không còn tồn tại trong code kể
+> từ khi `room_id % N` bị xoá. Nhắc lại để không hiểu nhầm: `LeaseBasedRoomOwnership` LUÔN chạy,
+> Valkey là dependency bắt buộc, không còn "bật/tắt" hay fallback modulo — cả 2 tài liệu (đây và
+> `production-deployment-and-configuration.md`) hiện đã khớp nhau và khớp code.
 
 ---
 
