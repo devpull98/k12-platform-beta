@@ -204,6 +204,10 @@ public final class RoomActor extends AbstractBehavior<RoomActor.Command> {
 
     private Behavior<Command> onStartGame(StartGame command) {
         state.startGame();
+        // P2 Task 28: a room authored with questions now auto-fires question 1 from within
+        // startGame() itself -- needs the same flush attempt onStartQuestion already makes,
+        // which onStartGame never needed before (starting the game alone changed no PlayerRecord).
+        scheduleFlushIfDirty();
         return this;
     }
 

@@ -106,6 +106,21 @@
   làm — lúc bắt đầu code phát hiện thêm 1 câu hỏi thiết kế mới (thời lượng/cơ chế kích hoạt màn
   hình `RULES_DISPLAY` PO không nói rõ, ảnh hưởng tới việc có cần xây timer server-side mới hay
   không — repo này chưa từng có timer tự động nào). Chi tiết: `plan.md` Task 32 và Task 28.
+- **2026-09-11 (tiếp): Task 28 code xong phần lõi engine + verify thật, sau khi người dùng chọn
+  "RULES_DISPLAY chỉ là giá trị hình thức, không giữ, không xây timer mới, không bịa số giây".**
+  Thêm `RULES_DISPLAY` vào `GamePhase` proto (đã regenerate); `RoomState.startGame()` tự bắn câu
+  hỏi 1 (`"q-1"`, đáp án đúng quy ước tạm = chỉ số option dạng chuỗi) khi `questions` (Task 29) có
+  nội dung, giữ nguyên 100% hành vi cũ khi rỗng (mọi phòng dựng trước Task 29 + đường
+  `RoomSupervisor.spawnRoom()` thật hôm nay). Thêm `scheduleFlushIfDirty()` vào `onStartGame`
+  (trước đây thiếu). Phát hiện phụ quan trọng, KHÔNG sửa (ngoài phạm vi): `QUESTION_STARTED`
+  (MessageType 22) chưa từng được build/gửi ở bất kỳ đâu trong engine — chỉ tồn tại trong
+  `DeliveryClassifier`/proto; toàn bộ luồng "câu hỏi bắt đầu" hiện chỉ dựa vào diff
+  `ROOM_STATE_SNAPSHOT`. Test mới: `RoomStateAutoStartFirstQuestionTest` (4/4 pass).
+  `mvn clean install` toàn reactor thật: **293/293 test pass, 0 lỗi.** Toàn bộ P2 Task 28-32 giờ
+  đã ✅ XONG phần lõi engine. Còn lại (KHÔNG thuộc phạm vi "hoàn thiện P2" lần này): wiring
+  `RoomSupervisor.spawnRoom()` đường join thật (gap CMS/authoring lớn hơn nhiều, đã ghi từ Task
+  11) và câu hỏi PO "câu 2 trở đi tự động hay NEXT_STEP thủ công" vẫn treo. Chi tiết: `plan.md`
+  Task 28.
 - **2026-09-09 (phiên khác, sau refactor DDD lớn trên P1's `RoomActor`/`RoomState`): Task 27 (đối chiếu Product Brief V2.1) mở, một phần xong.** Review phát hiện `RoomStateProtobufMapper.buildFullSnapshot()` là dead code lệch `Math.floor` (bug tưởng là thật lúc đầu, xác nhận lại là code thừa 0 người gọi, không phải hành vi production) — đã xoá. Luật biên §5.6 rule 5 ("GV không hủy giữa ván") **không sửa được bằng code** — mâu thuẫn trực tiếp với thiết kế đã chốt ở Task 23 (`END_GAME` lúc `PLAYING` là trigger duy nhất cho `MOST_POINTS_WHEN_TIME_UP`, chưa có auto-trigger) — cần PO quyết định ranh giới "hủy" vs "báo hết giờ", giống style G1a/G1c. Khoảng trống schema Group A/B (`max_players`, `team_count`, `team_assignment`, `late_join_policy`, `scoring_rule=speed_based`, `progress_display_mode`, `score_aggregation` đủ giá trị) vẫn treo, cần task CMS riêng. Chi tiết: `plan.md` Task 27.
 
 ## State (machine-readable)

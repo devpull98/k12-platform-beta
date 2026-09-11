@@ -3,6 +3,7 @@ package com.uni.realtime.gameengine.room;
 import com.uni.realtime.gameengine.definition.GameDefinition;
 import com.uni.realtime.gameengine.definition.MissedStepPolicy;
 import com.uni.realtime.gameengine.definition.ProgressStage;
+import com.uni.realtime.gameengine.definition.Question;
 import com.uni.realtime.gameengine.definition.ScoreAggregation;
 import com.uni.realtime.gameengine.definition.SharedResourceType;
 import com.uni.realtime.gameengine.definition.WinCondition;
@@ -56,6 +57,13 @@ public final class RoomState implements GameRuleContext {
     private final WinCondition winCondition;
     private final GameModeRules modeRules;
 
+    // PO V2.2 SS3/SS4 (P2 Task 28/29) -- questions authored upfront (Group A). Empty for every
+    // room built through a pre-Task-29 constructor (Solo/no GameDefinition, or GameDefinition
+    // without questions), which keeps startGame()'s old PLAYING-only behavior for them unchanged.
+    private final List<Question> questions;
+    private final String introNarrative;
+    private final int roundTimeLimitSeconds;
+
     private int roomProgress = 0;
     private final Map<String, Integer> teamProgress = new HashMap<>();
     private String gameOverReason = "";
@@ -99,7 +107,10 @@ public final class RoomState implements GameRuleContext {
                 gameDefinition != null ? gameDefinition.sharedResourcePenalty() : 0,
                 gameDefinition != null ? gameDefinition.teamRosters() : List.of(),
                 gameDefinition != null ? gameDefinition.scoreAggregation() : ScoreAggregation.SUM_ALL,
-                gameDefinition != null ? gameDefinition.winCondition() : WinCondition.PROGRESS_COMPLETED);
+                gameDefinition != null ? gameDefinition.winCondition() : WinCondition.PROGRESS_COMPLETED,
+                gameDefinition != null ? gameDefinition.questions() : List.of(),
+                gameDefinition != null ? gameDefinition.introNarrative() : "",
+                gameDefinition != null ? gameDefinition.roundTimeLimitSeconds() : 0);
     }
 
     public RoomState(String roomId, Clock clock, ScoreCalculator scoreCalculator, MissedStepPolicy missedStepPolicy,
@@ -122,6 +133,16 @@ public final class RoomState implements GameRuleContext {
                      GameMode gameMode, int progressTarget, List<ProgressStage> progressStages,
                      SharedResourceType sharedResourceType, int sharedResourcePenalty,
                      List<TeamAssignment> teamRosters, ScoreAggregation scoreAggregation, WinCondition winCondition) {
+        this(roomId, clock, scoreCalculator, missedStepPolicy, gameMode, progressTarget, progressStages,
+                sharedResourceType, sharedResourcePenalty, teamRosters, scoreAggregation, winCondition,
+                List.of(), "", 0);
+    }
+
+    public RoomState(String roomId, Clock clock, ScoreCalculator scoreCalculator, MissedStepPolicy missedStepPolicy,
+                     GameMode gameMode, int progressTarget, List<ProgressStage> progressStages,
+                     SharedResourceType sharedResourceType, int sharedResourcePenalty,
+                     List<TeamAssignment> teamRosters, ScoreAggregation scoreAggregation, WinCondition winCondition,
+                     List<Question> questions, String introNarrative, int roundTimeLimitSeconds) {
         this.roomId = roomId;
         this.clock = clock;
         this.scoreCalculator = scoreCalculator;
@@ -133,6 +154,9 @@ public final class RoomState implements GameRuleContext {
         this.sharedResourcePenalty = sharedResourcePenalty;
         this.teamRosters = teamRosters != null ? teamRosters : List.of();
         this.scoreAggregation = scoreAggregation != null ? scoreAggregation : ScoreAggregation.SUM_ALL;
+        this.questions = questions != null ? questions : List.of();
+        this.introNarrative = introNarrative != null ? introNarrative : "";
+        this.roundTimeLimitSeconds = roundTimeLimitSeconds;
         this.winCondition = winCondition != null ? winCondition : WinCondition.PROGRESS_COMPLETED;
         this.modeRules = GameModeRulesFactory.forMode(this.gameMode);
     }
@@ -232,8 +256,35 @@ public final class RoomState implements GameRuleContext {
         this.phase = GamePhase.FINISHED;
     }
 
+    /** Default question duration when {@code round_time_limit} was never set (e.g. no questions
+     * authored at all) -- matches the 25s already used pervasively across this codebase's tests
+     * and E2E scenarios as the de facto standard, not a newly-invented number. */
+    private static final long DEFAULT_QUESTION_DURATION_MS = 25_000L;
+
+    /**
+     * PO V2.2 SS4 (P2 Task 28): a room authored with {@code questions} (Group A) transitions
+     * {@code RULES_DISPLAY -> PLAYING} and fires question 1 automatically, in this same call --
+     * PO gives no duration for {@code RULES_DISPLAY} and no client/timer contract exists yet
+     * (2026-09-11 user decision), so the server does not hold this phase for any measurable time;
+     * {@code RULES_DISPLAY} exists as a wire value for a future contract to build on, not as an
+     * observable pause today. A room with no {@code questions} configured (every room built before
+     * Task 29, and still the ONLY path {@code RoomSupervisor.spawnRoom()}'s real join flow can
+     * reach -- see plan.md Task 11/28) keeps the old PLAYING-only behavior unchanged.
+     */
     public void startGame() {
+        if (questions.isEmpty()) {
+            phase = GamePhase.PLAYING;
+            return;
+        }
+        phase = GamePhase.RULES_DISPLAY;
         phase = GamePhase.PLAYING;
+        startFirstAuthoredQuestion();
+    }
+
+    private void startFirstAuthoredQuestion() {
+        Question question = questions.get(0);
+        long durationMs = roundTimeLimitSeconds > 0 ? roundTimeLimitSeconds * 1000L : DEFAULT_QUESTION_DURATION_MS;
+        startQuestion("q-1", durationMs, List.of(String.valueOf(question.correctOptionIndex())));
     }
 
     public GameMessage joinRoom(String studentId, String displayName) {

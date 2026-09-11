@@ -31,6 +31,10 @@ enum GamePhase {
   PLAYING = 2;
   FINISHED = 3;
   RESYNCING = 4;
+  // PO V2.2 SS4 (P2 Task 28): shown briefly between START_GAME and the first question firing.
+  // The engine does not hold this phase for any server-enforced duration (PO gives none) -- it
+  // exists so a future client/timer contract can build on it without another wire change.
+  RULES_DISPLAY = 5;
 }
 
 enum RejectReason {

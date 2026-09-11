@@ -165,7 +165,7 @@ Giai đoạn 2 bổ sung các chế độ chơi tương tác nhóm và tập th�
     nên danh sách backlog schema Group A ở trên (từ review 2026-09-09) vẫn đầy đủ và chính xác.
 - **Verification:** `mvn -pl :uni-game-engine test`: 175/175 pass (dead-code cleanup only, không đổi hành vi runtime).
 
-### Task 28: Đối chiếu PO Spec V2.2 — gap FSM `RULES_DISPLAY` + tự động bắn câu hỏi 1 — 🔴 MỚI PHÁT HIỆN (2026-09-11), CHƯA LÀM
+### Task 28: Đối chiếu PO Spec V2.2 — gap FSM `RULES_DISPLAY` + tự động bắn câu hỏi 1 — ✅ XONG PHẦN LÕI ENGINE (2026-09-11, verify thật), CHƯA WIRE VÀO ĐƯỜNG JOIN THẬT
 - **Nguồn gốc:** PO gửi `INCLASS-GAME-001-inclass-group-cooperative-games-v2.2.md` +
   `PO_Require_Game+nhóm_+tập+thể+Inclass V2.2.doc` ngày 2026-09-11 (2 file này mới chỉ `git add`,
   chưa từng được đối chiếu với V2.1 hay với code trước phiên này). Phát hiện dưới đây là kết quả
@@ -204,22 +204,19 @@ Giai đoạn 2 bổ sung các chế độ chơi tương tác nhóm và tập th�
   `win_condition` hoặc hết câu hỏi -> chuyển `ENDED`" **không nói rõ** việc chuyển sang câu kế tiếp
   là Engine tự làm theo `round_time_limit` hết hạn, hay vẫn cần GV bấm `NEXT_STEP` thủ công cho
   từng câu sau câu 1. Cần hỏi PO xác nhận trước khi code — không suy đoán.
-- **Việc cần làm (chưa làm, ghi phạm vi để task sau không phải điều tra lại từ đầu):**
-  1. Thêm state `RULES_DISPLAY` vào FSM `RoomState`/`RoomActor` (giữa lobby và playing).
-  2. Nối `TeacherCommand.START_GAME` → tự động chuyển `RULES_DISPLAY` → `IN_PROGRESS` → tự gọi
-     `RoomActor.StartQuestion` cho câu hỏi đầu tiên — không chờ thêm tín hiệu nào từ GV.
-  3. Phụ thuộc gap CHƯA đóng từ Task 11/21: `RoomSupervisor.spawnRoom()` (đường join thật) vẫn
-     không có nguồn `GameDefinition` thật để lấy danh sách câu hỏi — task này không tự giải quyết
-     được nếu gap nguồn dữ liệu câu hỏi chưa đóng trước.
-  4. Sau khi có câu trả lời PO cho câu hỏi "câu 2 trở đi" ở trên, quyết định có cần giữ
-     `TeacherCommand.NEXT_STEP` (override thủ công, đúng như PO V2.2 mô tả GV vẫn có nút override ở
-     game nhóm §5.5) hay bỏ hẳn.
-- **Verification:** Chưa có — task này mới dừng ở bước ghi nhận phát hiện + phạm vi, đúng yêu cầu
-  người dùng, chưa viết code/test nào.
+- **Phạm vi ban đầu (đối chiếu lại sau khi code xong bên dưới):**
+  1. [x] Thêm state `RULES_DISPLAY` vào FSM `RoomState`/`RoomActor` — XONG.
+  2. [x] Nối `TeacherCommand.START_GAME` → tự động chuyển `RULES_DISPLAY` → `IN_PROGRESS` → tự gọi
+     `RoomActor.StartQuestion` cho câu hỏi đầu tiên — XONG (qua `RoomState.startGame()` thật, không
+     qua `TeacherCommand`/`RoomSupervisor` vì đường đó vẫn dùng đúng `RoomActor.StartGame` sẵn có).
+  3. [ ] Gap CHƯA đóng từ Task 11/21, KHÔNG thuộc phạm vi Task 28: `RoomSupervisor.spawnRoom()`
+     (đường join thật) vẫn không có nguồn `GameDefinition` thật để lấy danh sách câu hỏi — xem mục
+     "Việc còn lại" cuối task này.
+  4. [ ] Vẫn chờ câu trả lời PO cho "câu 2 trở đi" — `TeacherCommand.NEXT_STEP` vẫn CHƯA nối dây
+     (không đổi trong task này, không tự đoán).
 - **Phụ thuộc:** Task 29 (bên dưới) — Engine cần `questions` tồn tại trong `GameDefinition` trước
-  khi có nội dung thật để tự bắn câu hỏi 1; nếu làm Task 28 trước, chỉ nối dây được `RULES_DISPLAY`
-  → `IN_PROGRESS`, còn "câu hỏi 1" vẫn phải hard-code tạm. **Task 29 đã XONG (xem bên dưới)** —
-  gap này giờ đã mở, nhưng phát sinh thêm câu hỏi mới khi bắt đầu code thật (xem ngay dưới đây).
+  khi có nội dung thật để tự bắn câu hỏi 1. **Task 29 đã XONG trước, đúng thứ tự dự tính** — gap
+  này mở ra nhưng phát sinh thêm 1 câu hỏi thiết kế mới khi bắt đầu code thật (xem ngay dưới đây).
 - **Câu hỏi thiết kế MỚI phát hiện (2026-09-11, lúc bắt đầu code) — cần quyết định trước khi làm
   tiếp, không tự đoán:** PO V2.2 §4 không nói `RULES_DISPLAY` tồn tại bao lâu hay điều gì kích hoạt
   việc rời khỏi state đó. Đối chiếu kỹ thuật: nếu server chuyển `RULES_DISPLAY → PLAYING` NGAY
@@ -236,6 +233,52 @@ Giai đoạn 2 bổ sung các chế độ chơi tương tác nhóm và tập th�
   client gần như không kịp thấy nó trên thực tế (không đúng tinh thần "màn hình luật chơi" PO mô
   tả, nhưng không cần xây timer mới, không cần bịa con số giây). Chưa chọn phương án — hỏi người
   dùng trước khi code tiếp phần này của Task 28.
+- **Quyết định người dùng (2026-09-11):** chọn phương án (b) — `RULES_DISPLAY` là giá trị hình
+  thức, không giữ, không xây timer mới, không bịa số giây. Chấp nhận client gần như không kịp thấy
+  state này trên thực tế cho tới khi có quyết định khác.
+- **Đã code thật:**
+  - `common.proto`: thêm `RULES_DISPLAY = 5;` vào `GamePhase` (additive) — đã regenerate thật.
+  - `GameDefinition`/`RoomState` thêm field `questions`/`introNarrative`/`roundTimeLimitSeconds`
+    (Task 29 định nghĩa, Task 28 mới thật sự DÙNG) — thread qua constructor nhận `GameDefinition`
+    additive, KHÔNG đổi chữ ký constructor cũ nào (đã grep xác nhận 2 call site thật trong
+    `RoomState.java`/`RoomActor.java` vẫn nguyên).
+  - `RoomState.startGame()`: nếu `questions` rỗng (MỌI phòng dựng trước Task 29, và vẫn là đường
+    DUY NHẤT `RoomSupervisor.spawnRoom()` chạm tới hôm nay) → giữ nguyên hành vi cũ 100% (chỉ đổi
+    `phase = PLAYING`). Nếu có `questions` → set `RULES_DISPLAY` rồi NGAY LẬP TỨC `PLAYING` + tự
+    gọi `startQuestion("q-1", ...)` cho câu đầu tiên trong danh sách, dùng
+    `round_time_limit_seconds * 1000` làm thời lượng (fallback 25000ms — SỐ ĐÃ DÙNG SẴN KHẮP nơi
+    trong test/E2E của repo này làm chuẩn thời lượng câu hỏi, không phải số mới bịa ra).
+  - Đáp án đúng của câu hỏi trắc nghiệm quy ước tạm là **chỉ số đáp án dạng chuỗi** (`"0".."3"`,
+    tức `String.valueOf(question.correctOptionIndex())`) — PO chưa đặc tả option có ID riêng
+    (§3.1 chỉ nói "options A–D"), quy ước này cần xác nhận lại khi có client contract thật.
+  - `RoomActor.onStartGame`: thêm `scheduleFlushIfDirty()` (trước đây KHÔNG có — vì trước Task 28,
+    `startGame()` không bao giờ tự đổi state nào khác ngoài `phase`, giờ có thể tự bắn câu hỏi 1
+    nên cần thử flush giống `onStartQuestion` đã làm).
+  - **Phát hiện phụ quan trọng, KHÔNG sửa trong task này (ngoài phạm vi, ghi lại để không quên):**
+    grep xác nhận `QUESTION_STARTED` (MessageType 22) **chưa từng được build/gửi ở bất kỳ đâu**
+    trong `uni-game-engine` — chỉ tồn tại trong `DeliveryClassifier` (phân loại độ tin cậy phía
+    Gateway) và trong proto. Toàn bộ luồng "câu hỏi bắt đầu" hiện tại (kể cả đường cũ qua
+    `RoomActor.StartQuestion` mà nhiều test P2 trước đây đã dùng) chỉ dựa vào `ROOM_STATE_SNAPSHOT`
+    phản ánh `current_question_id`/`deadline_ms` thay đổi, client tự suy ra câu hỏi mới — không có
+    message `QUESTION_STARTED` rời rạc nào thật sự tồn tại trên wire. Task 28 KHÔNG tạo ra gap này
+    (nó có sẵn từ trước, ảnh hưởng cả đường `StartQuestion` thủ công cũ), chỉ đi qua đúng cơ chế
+    (`isDirty()`/`scheduleFlushIfDirty()`) mà đường cũ đã dùng — không mở rộng thêm phạm vi để sửa.
+- **Test mới:** `RoomStateAutoStartFirstQuestionTest` (4 case: tự bắn câu 1 đúng phase/deadline;
+  chấp nhận đáp án đúng cấu hình; fallback 25s khi không set `round_time_limit`; hành vi CŨ giữ
+  nguyên 100% khi không có `questions`).
+- **Verify thật:** `mvn -pl :uni-game-engine test -Dtest=RoomStateAutoStartFirstQuestionTest`:
+  4/4 pass. `mvn clean install` toàn reactor thật: **293/293 test pass, 0 lỗi**, exit code 0.
+- **Việc còn lại — ngoài phạm vi Task 28, thuộc gap Task 11 lớn hơn nhiều:**
+  `RoomSupervisor.spawnRoom()` (đường join thật, giáo viên/học sinh join qua Gateway thật) vẫn CHỈ
+  spawn được `GAME_MODE_SOLO`, không đọc `GameDefinition`/`questions` từ đâu cả — mọi thứ Task 28
+  vừa code chỉ chứng minh được qua `RoomState` trực tiếp hoặc hook test-only
+  (`SpawnConfiguredRoom`), giống hệt cách toàn bộ P2 (Task 20-27) đã hoạt động từ trước tới giờ.
+  Đóng gap này cần 1 nguồn "game-definition-authoring" thật (CMS/API nào đó tạo `GameDefinition`
+  cho 1 lớp học cụ thể) — vẫn là việc CMS/hạ tầng riêng đã ghi từ Task 11, không phải chỗ sửa nhỏ
+  trong `uni-game-engine`, và KHÔNG có trong yêu cầu "hoàn thiện P2" — chỉ ghi lại ranh giới rõ
+  ràng để không ai hiểu nhầm Task 28 đã làm game nhóm/team chạy được cho học sinh thật.
+- **Câu hỏi PO còn treo (không đổi bởi Task 28):** "câu 2 trở đi tự động hay cần `NEXT_STEP` thủ
+  công" — vẫn chưa có câu trả lời, `TeacherCommand.NEXT_STEP` vẫn chưa nối dây.
 
 ### Task 29: Input Schema Group A/B theo PO V2.2 (§3) — ✅ XONG phần schema thuần (2026-09-11, verify thật), CHƯA WIRE VÀO ĐƯỜNG JOIN THẬT (thuộc Task 28)
 - **Vì sao làm ngay bây giờ:** PO V2.2 §3 lần đầu tiên đưa ra đủ tên trường + kiểu dữ liệu cho
