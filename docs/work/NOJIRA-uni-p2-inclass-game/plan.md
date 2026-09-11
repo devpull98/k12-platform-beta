@@ -268,15 +268,19 @@ Giai đoạn 2 bổ sung các chế độ chơi tương tác nhóm và tập th�
   nguyên 100% khi không có `questions`).
 - **Verify thật:** `mvn -pl :uni-game-engine test -Dtest=RoomStateAutoStartFirstQuestionTest`:
   4/4 pass. `mvn clean install` toàn reactor thật: **293/293 test pass, 0 lỗi**, exit code 0.
-- **Việc còn lại — ngoài phạm vi Task 28, thuộc gap Task 11 lớn hơn nhiều:**
-  `RoomSupervisor.spawnRoom()` (đường join thật, giáo viên/học sinh join qua Gateway thật) vẫn CHỈ
-  spawn được `GAME_MODE_SOLO`, không đọc `GameDefinition`/`questions` từ đâu cả — mọi thứ Task 28
-  vừa code chỉ chứng minh được qua `RoomState` trực tiếp hoặc hook test-only
-  (`SpawnConfiguredRoom`), giống hệt cách toàn bộ P2 (Task 20-27) đã hoạt động từ trước tới giờ.
-  Đóng gap này cần 1 nguồn "game-definition-authoring" thật (CMS/API nào đó tạo `GameDefinition`
-  cho 1 lớp học cụ thể) — vẫn là việc CMS/hạ tầng riêng đã ghi từ Task 11, không phải chỗ sửa nhỏ
-  trong `uni-game-engine`, và KHÔNG có trong yêu cầu "hoàn thiện P2" — chỉ ghi lại ranh giới rõ
-  ràng để không ai hiểu nhầm Task 28 đã làm game nhóm/team chạy được cho học sinh thật.
+- **Việc còn lại lúc viết task này (2026-09-11, TRƯỚC Task 33) — ngoài phạm vi Task 28, thuộc gap
+  Task 11 lớn hơn nhiều:** `RoomSupervisor.spawnRoom()` (đường join thật, giáo viên/học sinh join
+  qua Gateway thật) vẫn CHỈ spawn được `GAME_MODE_SOLO`, không đọc `GameDefinition`/`questions` từ
+  đâu cả — mọi thứ Task 28 vừa code chỉ chứng minh được qua `RoomState` trực tiếp hoặc hook
+  test-only (`SpawnConfiguredRoom`), giống hệt cách toàn bộ P2 (Task 20-27) đã hoạt động từ trước
+  tới giờ. Đóng gap này cần 1 nguồn "game-definition-authoring" thật (CMS/API nào đó tạo
+  `GameDefinition` cho 1 lớp học cụ thể).
+  **✅ ĐÃ ĐÓNG (2026-09-11, cùng phiên, sau task này) — xem `Task 33`:** CMS Game Session
+  Provisioning (REST endpoint nội bộ ghi `GameDefinition` vào Valkey, `RoomSupervisor.handleJoin`
+  đọc lại lúc join thật) đã cung cấp đúng nguồn dữ liệu này. Từ Task 33 trở đi, tự động bắn câu hỏi
+  1 (phần vừa code ở Task 28 này) hoạt động được qua đường join THẬT, không chỉ qua test hook nữa —
+  đoạn này giữ nguyên làm lịch sử (mô tả đúng tình trạng tại THỜI ĐIỂM viết Task 28), không xoá để
+  khỏi mất bối cảnh vì sao Task 33 cần thiết.
 - **Câu hỏi PO còn treo (không đổi bởi Task 28):** "câu 2 trở đi tự động hay cần `NEXT_STEP` thủ
   công" — vẫn chưa có câu trả lời, `TeacherCommand.NEXT_STEP` vẫn chưa nối dây.
 
@@ -637,6 +641,40 @@ Giai đoạn 2 bổ sung các chế độ chơi tương tác nhóm và tập th�
 - **Câu hỏi thứ 2 trở đi có tự động chuyển theo `round_time_limit` hết hạn hay vẫn cần GV bấm
   `NEXT_STEP` thủ công** — đã ghi ở Task 28, nhắc lại ở đây vì liên quan trực tiếp Task 31 (thời
   điểm chốt tỉ lệ tham gia 50% phụ thuộc vào việc chuyển câu là tự động hay thủ công).
+
+### Tổng hợp việc còn tồn đọng (cập nhật 2026-09-11, sau khi Task 33 xong) — không phải task mới, chỉ gom lại cho dễ theo dõi
+
+Toàn bộ Task 20-33 nay đã ✅ XONG hoặc ❌ HỦY (PO quyết định) — không còn task nào "đang code dở".
+Phần còn lại là 3 nhóm việc tồn đọng thật, nằm rải rác trong các task ở trên, gom về đây để không
+phải lục từng task:
+
+1. **Chờ PO trả lời (không tự đoán)** — xem mục "Câu hỏi PO còn treo" ngay phía trên: luật biên 5
+   (cấm hủy giữa ván, mâu thuẫn với `END_GAME` là trigger duy nhất), điểm sàn `speed_based`, số
+   `lives` ban đầu, câu 2 trở đi tự động hay `NEXT_STEP` thủ công.
+2. **Enum/field đã có trong schema (Task 29/30) nhưng CHƯA có logic tiêu thụ** — không chặn ai
+   dùng hệ thống hôm nay (giá trị mặc định vẫn chạy đúng), chỉ là chưa có nhánh xử lý khi CMS gửi
+   giá trị khác mặc định:
+   - `ScoreAggregation.FIRST_CORRECT_ONLY` — `RoomState.computeTeamScore()` chưa có nhánh riêng.
+   - `LateJoinPolicy.BLOCK_AFTER_START` — `RoomState.joinRoom()` chưa đọc field này, luôn cho vào
+     muộn.
+   - `ProgressDisplayMode`/`introNarrative` — chưa có đường broadcast ra client (cần field proto
+     mới ở `RoomStateSnapshot`).
+   - `TeamAssignment.team_colors` (PO V2.2 §3.1) — cần thêm field `.proto` mới; KHÔNG còn bị chặn
+     bởi thiếu Maven như lúc viết Task 29 (đã tìm ra Maven bundled trong IntelliJ từ Task 30), chỉ
+     là chưa ai yêu cầu làm.
+   - `IndividualModeRules.evaluateTimeUp()` chưa implement `MOST_POINTS_WHEN_TIME_UP` (chỉ
+     `TeamModeRules` có, phát hiện phụ ở Task 30) — PO V2.2 §5.1 áp dụng tie-break cho cả team lẫn
+     individual.
+3. **Giới hạn nhỏ đã biết, chấp nhận được, không phải bug** (mỗi mục đã ghi rõ lý do trong task
+   gốc, không lặp lại chi tiết ở đây):
+   - Task 31: `teamsRespondedToCurrentQuestion` chưa serialize vào Hot Snapshot (sai lệch tie-break
+     rất nhỏ nếu crash đúng giữa 1 câu).
+   - Task 32: quy tắc "làm tròn lên" cho cúp chưa cần áp dụng thật vì `computeTeamScore()` luôn trả
+     `int`; cần PO/BA xác nhận lại nếu sau này có công thức điểm cho ra số lẻ.
+   - Task 33: chỉ áp dụng cho lần dựng phòng ĐẦU TIÊN của 1 `room_id`; không có auth trên endpoint
+     provisioning (dựa vào NetworkPolicy K8s nội bộ); TTL 7 ngày là placeholder chưa gắn với
+     lifecycle session thật; `QUESTION_STARTED` (MessageType 22, gap từ Task 28) vẫn chưa từng
+     được build/gửi ở bất kỳ đâu — client vẫn chỉ suy ra câu hỏi mới qua diff `ROOM_STATE_SNAPSHOT`.
 
 ---
 
